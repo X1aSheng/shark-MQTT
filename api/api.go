@@ -1,0 +1,210 @@
+// Package api provides the unified entry point for Shark-MQTT.
+package api
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	"github.com/X1aSheng/shark-mqtt/broker"
+	"github.com/X1aSheng/shark-mqtt/config"
+	"github.com/X1aSheng/shark-mqtt/pkg/logger"
+	"github.com/X1aSheng/shark-mqtt/pkg/metrics"
+	"github.com/X1aSheng/shark-mqtt/plugin"
+	"github.com/X1aSheng/shark-mqtt/store"
+)
+
+// Broker is the main MQTT broker that combines network server with broker core.
+type Broker struct {
+	srv    *broker.MQTTServer
+	broker *broker.Broker
+	cfg    *config.Config
+	auth   broker.Authenticator
+	authz  broker.Authorizer
+}
+
+// Option configures the broker.
+type Option func(*brokerOpts)
+
+type brokerOpts struct {
+	cfg         *config.Config
+	auth        broker.Authenticator
+	authorizer  broker.Authorizer
+	sessionStore    store.SessionStore
+	messageStore    store.MessageStore
+	retainedStore   store.RetainedStore
+	logger          logger.Logger
+	metrics         metrics.Metrics
+	pluginManager   *plugin.Manager
+}
+
+// WithAuth sets the authenticator.
+func WithAuth(a broker.Authenticator) Option {
+	return func(o *brokerOpts) {
+		o.auth = a
+	}
+}
+
+// WithAuthorizer sets the authorizer.
+func WithAuthorizer(a broker.Authorizer) Option {
+	return func(o *brokerOpts) {
+		o.authorizer = a
+	}
+}
+
+// WithConfig applies a custom config.
+func WithConfig(cfg *config.Config) Option {
+	return func(o *brokerOpts) {
+		o.cfg = cfg
+	}
+}
+
+// WithSessionStore sets the session store.
+func WithSessionStore(s store.SessionStore) Option {
+	return func(o *brokerOpts) {
+		o.sessionStore = s
+	}
+}
+
+// WithMessageStore sets the message store.
+func WithMessageStore(s store.MessageStore) Option {
+	return func(o *brokerOpts) {
+		o.messageStore = s
+	}
+}
+
+// WithRetainedStore sets the retained message store.
+func WithRetainedStore(s store.RetainedStore) Option {
+	return func(o *brokerOpts) {
+		o.retainedStore = s
+	}
+}
+
+// WithLogger sets the logger.
+func WithLogger(l logger.Logger) Option {
+	return func(o *brokerOpts) {
+		o.logger = l
+	}
+}
+
+// WithMetrics sets the metrics collector.
+func WithMetrics(m metrics.Metrics) Option {
+	return func(o *brokerOpts) {
+		o.metrics = m
+	}
+}
+
+// WithPluginManager sets the plugin manager.
+func WithPluginManager(m *plugin.Manager) Option {
+	return func(o *brokerOpts) {
+		o.pluginManager = m
+	}
+}
+
+// NewBroker creates a new MQTT broker with the given options.
+func NewBroker(opts ...Option) *Broker {
+	o := &brokerOpts{
+		cfg: config.DefaultConfig(),
+	}
+
+	// Apply options to collect config and auth components
+	for _, opt := range opts {
+		opt(o)
+	}
+
+	// Build broker options
+	bopts := []broker.Option{
+		broker.WithAuth(o.auth),
+		broker.WithAuthorizer(o.authorizer),
+		broker.WithPluginManager(o.pluginManager),
+	}
+
+	if o.sessionStore != nil {
+		bopts = append(bopts, broker.WithSessionStore(o.sessionStore))
+	}
+	if o.messageStore != nil {
+		bopts = append(bopts, broker.WithMessageStore(o.messageStore))
+	}
+	if o.retainedStore != nil {
+		bopts = append(bopts, broker.WithRetainedStore(o.retainedStore))
+	}
+	if o.logger != nil {
+		bopts = append(bopts, broker.WithLogger(o.logger))
+	}
+	if o.metrics != nil {
+		bopts = append(bopts, broker.WithMetrics(o.metrics))
+	}
+
+	// Create the broker core
+	brk := broker.New(bopts...)
+
+	// Create the network server
+	srv := broker.NewMQTTServer(o.cfg)
+
+	// Connect server to broker (broker.Broker implements broker.ConnectionHandler)
+	srv.SetHandler(brk)
+
+	return &Broker{
+		srv:    srv,
+		broker: brk,
+		cfg:    o.cfg,
+		auth:   o.auth,
+		authz:  o.authorizer,
+	}
+}
+
+// Start starts both the network server and the broker core.
+func (b *Broker) Start() error {
+	// Broker core manages client connections
+	if err := b.broker.Start(); err != nil {
+		return fmt.Errorf("api: broker start failed: %w", err)
+	}
+
+	// Network server accepts connections
+	if err := b.srv.Start(); err != nil {
+		b.broker.Stop()
+		return fmt.Errorf("api: server start failed: %w", err)
+	}
+
+	log.Printf("[api] Shark-MQTT started on %s", b.cfg.ListenAddr)
+	return nil
+}
+
+// Stop gracefully shuts down both the server and broker.
+func (b *Broker) Stop() {
+	b.srv.Stop()
+	b.broker.Stop()
+	log.Println("[api] Shark-MQTT stopped")
+}
+
+// Addr returns the listening address.
+func (b *Broker) Addr() string {
+	addr := b.srv.Addr()
+	if addr != nil {
+		return addr.String()
+	}
+	return ""
+}
+
+// ConnCount returns active connection count.
+func (b *Broker) ConnCount() int64 {
+	return b.srv.ConnCount()
+}
+
+// Broker returns the underlying broker core for advanced usage.
+func (b *Broker) Broker() *broker.Broker {
+	return b.broker
+}
+
+// Run creates and starts a broker, blocking until ctx is cancelled.
+func Run(ctx context.Context, opts ...Option) error {
+	b := NewBroker(opts...)
+
+	if err := b.Start(); err != nil {
+		return err
+	}
+
+	<-ctx.Done()
+	b.Stop()
+	return nil
+}
