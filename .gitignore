@@ -1,0 +1,36 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go workspace
+go.work
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Coverage
+coverage.out
+*.cover
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+shark-mqtt
+shark-mqtt.exe
+
+# Vendor (if used)
+vendor/
+
+# Temporary files
+*.log
+tmp/
