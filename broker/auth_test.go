@@ -1,4 +1,4 @@
-package auth
+package broker
 
 import (
 	"context"

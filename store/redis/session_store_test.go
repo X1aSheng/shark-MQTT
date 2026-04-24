@@ -45,7 +45,7 @@ func TestSessionStore_CRUD(t *testing.T) {
 	cleanupTestDB(t, client)
 
 	ctx := context.Background()
-	store := NewSessionStore(SessionStoreConfig{
+	ss := NewSessionStore(SessionStoreConfig{
 		Client:    client,
 		KeyPrefix: "test:session:",
 		TTL:       time.Hour,
@@ -61,13 +61,13 @@ func TestSessionStore_CRUD(t *testing.T) {
 		},
 	}
 
-	err := store.SaveSession(ctx, "test-client-1", data)
+	err := ss.SaveSession(ctx, "test-client-1", data)
 	if err != nil {
 		t.Fatalf("SaveSession failed: %v", err)
 	}
 
 	// Test GetSession
-	retrieved, err := store.GetSession(ctx, "test-client-1")
+	retrieved, err := ss.GetSession(ctx, "test-client-1")
 	if err != nil {
 		t.Fatalf("GetSession failed: %v", err)
 	}
@@ -82,13 +82,13 @@ func TestSessionStore_CRUD(t *testing.T) {
 	}
 
 	// Test GetSession not found
-	_, err = store.GetSession(ctx, "non-existent")
+	_, err = ss.GetSession(ctx, "non-existent")
 	if err != store.ErrSessionNotFound {
 		t.Errorf("expected ErrSessionNotFound, got %v", err)
 	}
 
 	// Test IsSessionExists
-	exists, err := store.IsSessionExists(ctx, "test-client-1")
+	exists, err := ss.IsSessionExists(ctx, "test-client-1")
 	if err != nil {
 		t.Fatalf("IsSessionExists failed: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestSessionStore_CRUD(t *testing.T) {
 		t.Error("expected session to exist")
 	}
 
-	exists, err = store.IsSessionExists(ctx, "non-existent")
+	exists, err = ss.IsSessionExists(ctx, "non-existent")
 	if err != nil {
 		t.Fatalf("IsSessionExists failed: %v", err)
 	}
@@ -105,8 +105,8 @@ func TestSessionStore_CRUD(t *testing.T) {
 	}
 
 	// Test ListSessions
-	store.SaveSession(ctx, "test-client-2", &store.SessionData{ClientID: "test-client-2"})
-	sessions, err := store.ListSessions(ctx)
+	ss.SaveSession(ctx, "test-client-2", &store.SessionData{ClientID: "test-client-2"})
+	sessions, err := ss.ListSessions(ctx)
 	if err != nil {
 		t.Fatalf("ListSessions failed: %v", err)
 	}
@@ -115,12 +115,12 @@ func TestSessionStore_CRUD(t *testing.T) {
 	}
 
 	// Test DeleteSession
-	err = store.DeleteSession(ctx, "test-client-1")
+	err = ss.DeleteSession(ctx, "test-client-1")
 	if err != nil {
 		t.Fatalf("DeleteSession failed: %v", err)
 	}
 
-	exists, err = store.IsSessionExists(ctx, "test-client-1")
+	exists, err = ss.IsSessionExists(ctx, "test-client-1")
 	if err != nil {
 		t.Fatalf("IsSessionExists failed: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestSessionStore_TTL(t *testing.T) {
 	cleanupTestDB(t, client)
 
 	ctx := context.Background()
-	store := NewSessionStore(SessionStoreConfig{
+	ss := NewSessionStore(SessionStoreConfig{
 		Client:    client,
 		KeyPrefix: "test:session:",
 		TTL:       100 * time.Millisecond,
@@ -145,13 +145,13 @@ func TestSessionStore_TTL(t *testing.T) {
 
 	data := &store.SessionData{ClientID: "test-ttl"}
 
-	err := store.SaveSession(ctx, "test-ttl", data)
+	err := ss.SaveSession(ctx, "test-ttl", data)
 	if err != nil {
 		t.Fatalf("SaveSession failed: %v", err)
 	}
 
 	// Session should exist immediately
-	exists, _ := store.IsSessionExists(ctx, "test-ttl")
+	exists, _ := ss.IsSessionExists(ctx, "test-ttl")
 	if !exists {
 		t.Error("expected session to exist immediately after save")
 	}
@@ -160,7 +160,7 @@ func TestSessionStore_TTL(t *testing.T) {
 	time.Sleep(150 * time.Millisecond)
 
 	// Session should be expired
-	exists, _ = store.IsSessionExists(ctx, "test-ttl")
+	exists, _ = ss.IsSessionExists(ctx, "test-ttl")
 	if exists {
 		t.Error("expected session to be expired after TTL")
 	}
@@ -174,7 +174,7 @@ func TestSessionStore_EmptySubscriptions(t *testing.T) {
 	cleanupTestDB(t, client)
 
 	ctx := context.Background()
-	store := NewSessionStore(SessionStoreConfig{
+	ss := NewSessionStore(SessionStoreConfig{
 		Client:    client,
 		KeyPrefix: "test:session:",
 		TTL:       time.Hour,
@@ -186,12 +186,12 @@ func TestSessionStore_EmptySubscriptions(t *testing.T) {
 		Subscriptions: []store.Subscription{},
 	}
 
-	err := store.SaveSession(ctx, "test-no-subs", data)
+	err := ss.SaveSession(ctx, "test-no-subs", data)
 	if err != nil {
 		t.Fatalf("SaveSession failed: %v", err)
 	}
 
-	retrieved, err := store.GetSession(ctx, "test-no-subs")
+	retrieved, err := ss.GetSession(ctx, "test-no-subs")
 	if err != nil {
 		t.Fatalf("GetSession failed: %v", err)
 	}
@@ -208,7 +208,7 @@ func TestSessionStore_InflightMessages(t *testing.T) {
 	cleanupTestDB(t, client)
 
 	ctx := context.Background()
-	store := NewSessionStore(SessionStoreConfig{
+	ss := NewSessionStore(SessionStoreConfig{
 		Client:    client,
 		KeyPrefix: "test:session:",
 		TTL:       time.Hour,
@@ -223,12 +223,12 @@ func TestSessionStore_InflightMessages(t *testing.T) {
 		},
 	}
 
-	err := store.SaveSession(ctx, "test-inflight", data)
+	err := ss.SaveSession(ctx, "test-inflight", data)
 	if err != nil {
 		t.Fatalf("SaveSession failed: %v", err)
 	}
 
-	retrieved, err := store.GetSession(ctx, "test-inflight")
+	retrieved, err := ss.GetSession(ctx, "test-inflight")
 	if err != nil {
 		t.Fatalf("GetSession failed: %v", err)
 	}
@@ -251,7 +251,7 @@ func BenchmarkSessionStore_Save(b *testing.B) {
 	defer client.Close()
 
 	ctx := context.Background()
-	store := NewSessionStore(SessionStoreConfig{
+	ss := NewSessionStore(SessionStoreConfig{
 		Client:    client,
 		KeyPrefix: "bench:session:",
 		TTL:       time.Hour,
@@ -273,7 +273,7 @@ func BenchmarkSessionStore_Save(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		clientID := "bench-client-" + string(rune(i))
 		data.ClientID = clientID
-		store.SaveSession(ctx, clientID, data)
+		ss.SaveSession(ctx, clientID, data)
 	}
 }
 
@@ -282,7 +282,7 @@ func BenchmarkSessionStore_Get(b *testing.B) {
 	defer client.Close()
 
 	ctx := context.Background()
-	store := NewSessionStore(SessionStoreConfig{
+	ss := NewSessionStore(SessionStoreConfig{
 		Client:    client,
 		KeyPrefix: "bench:session:",
 		TTL:       time.Hour,
@@ -295,13 +295,13 @@ func BenchmarkSessionStore_Get(b *testing.B) {
 		Subscriptions: []store.Subscription{{Topic: "bench/topic", QoS: 1}},
 	}
 	for i := 0; i < 1000; i++ {
-		store.SaveSession(ctx, "bench-get-"+string(rune(i)), data)
+		ss.SaveSession(ctx, "bench-get-"+string(rune(i)), data)
 	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		store.GetSession(ctx, "bench-get-"+string(rune(i%1000)))
+		ss.GetSession(ctx, "bench-get-"+string(rune(i%1000)))
 	}
 }

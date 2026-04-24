@@ -101,34 +101,63 @@ func TestPublishSubscribe(t *testing.T) {
 
 ### Benchmark Tests
 
-Benchmark tests measure performance characteristics.
+Benchmark tests measure performance characteristics across two tiers:
 
-**Location**: `test/bench/`
+#### E2E Benchmarks
 
-**Purpose**: Performance validation and regression detection
+**Location**: `test/bench/broker_bench_test.go`
+
+18 benchmarks covering the full MQTT stack through real TCP connections:
+
+- **Connection handling** — `BenchmarkConnect`, `BenchmarkConcurrentConnect`
+- **QoS levels** — `BenchmarkPublishQos0`, `BenchmarkPublishQos1`, `BenchmarkPublishQos2`
+- **Topic wildcards** — `BenchmarkWildcardMatch`, `BenchmarkMultiLevelWildcard`
+- **Persistent sessions** — `BenchmarkSessionResume`, `BenchmarkSessionPersistence`
+- **Payload sizes** — `BenchmarkPayload_64B` through `BenchmarkPayload_16KB`
+- **Fan-out** — `BenchmarkFanOut_1Sub`, `BenchmarkFanOut_10Sub`, `BenchmarkFanOut_100Sub`
+
+#### Micro-Benchmarks
+
+**Location**: `test/bench/micro_bench_test.go`
+
+23 benchmarks targeting individual components in isolation:
+
+- **TopicTree** — insert, match, unsubscribe performance
+- **Codec** — encode/decode throughput for CONNECT, PUBLISH, SUBSCRIBE packets
+- **QoSEngine** — message tracking, ACK processing, retry logic
+- **Session Manager** — create, lookup, remove, concurrent access
+- **BufferPool** — get/put, contention under parallel access
+- **MemoryStore** — read, write, delete, batch operations
+
+**Purpose**: Performance validation, regression detection, and component-level profiling
 
 **Run**:
 ```bash
+# All benchmarks
 go test -bench=. -benchmem -benchtime=10s ./test/bench/...
+
+# E2E benchmarks only
+go test -bench=BenchmarkConnect -benchmem ./test/bench/...
+
+# Micro-benchmarks only
+go test -bench=BenchmarkTopicTree -benchmem ./test/bench/...
 ```
 
 **Example**:
 ```go
 func BenchmarkPublishQos0(b *testing.B) {
-    // Setup
-    broker := api.NewBroker(api.WithAddr(":0"))
-    broker.Start()
-    defer broker.Stop()
-    
-    conn := dialBroker(b, broker)
-    codec := protocol.NewCodec(65536)
-    
-    // Reset timer to exclude setup
+    brk := setupBroker(b)
+    defer brk.Stop()
+    // subscriber with drain goroutine
+    subConn, subCodec := connectedClient(b, brk, "sub")
+    defer subConn.Close()
+    subscribeTopic(b, subConn, subCodec, "bench/topic", 0)
+    stop := drainConn(subConn)
+    defer stop()
+
     b.ResetTimer()
-    
-    for i := 0; i < b.N; i++ {
-        publish(conn, codec, "bench/topic", payload, 0)
-    }
+    b.ReportAllocs()
+    for i := 0; i < b.N; i++ { ... }
 }
 ```
 
@@ -183,6 +212,27 @@ make test-bench
 # Coverage
 make test-coverage
 ```
+
+### Running Benchmarks
+
+```bash
+# Quick benchmark (1s per test)
+make bench-quick
+
+# CPU profiling (generates cpu.prof)
+make bench-cpu
+# Analyze: go tool pprof cpu.prof
+
+# Memory profiling (generates mem.prof)
+make bench-mem
+# Analyze: go tool pprof mem.prof
+
+# Full profiling (CPU + Memory)
+make bench-profile
+# Analyze: go tool pprof cpu.prof / go tool pprof mem.prof
+```
+
+For detailed performance testing methodology and profiling workflows, see [Performance Guide](performance.md).
 
 ---
 
@@ -268,8 +318,7 @@ func TestSessionManager(t *testing.T) {
 func testBroker(t *testing.T) *api.Broker {
     t.Helper()
     broker := api.NewBroker(
-        api.WithAddr(":0"),
-        api.WithAuth(auth.AllowAllAuth{}),
+        api.WithAuth(broker.AllowAllAuth{}),
     )
     if err := broker.Start(); err != nil {
         t.Fatalf("failed to start broker: %v", err)
@@ -348,11 +397,31 @@ func TestQoS1MessageDelivery(t *testing.T) {
 
 ### Benchmark Test Patterns
 
+**Drain goroutine pattern** (used in E2E benchmarks):
+```go
+func BenchmarkXxx(b *testing.B) {
+    brk := setupBroker(b)
+    defer brk.Stop()
+    // subscriber with drain goroutine
+    subConn, subCodec := connectedClient(b, brk, "sub")
+    defer subConn.Close()
+    subscribeTopic(b, subConn, subCodec, "bench/topic", 0)
+    stop := drainConn(subConn)
+    defer stop()
+
+    b.ResetTimer()
+    b.ReportAllocs()
+    for i := 0; i < b.N; i++ { ... }
+}
+```
+
+The `drainConn` goroutine continuously reads from the subscriber connection so that backpressure from a full read buffer does not artificially throttle the publisher. This is critical for accurate QoS 0 throughput measurements where the broker does not wait for acknowledgements.
+
 **Include memory stats**:
 ```go
 func BenchmarkPublishQos1(b *testing.B) {
     // Setup (not measured)
-    broker := api.NewBroker(api.WithAddr(":0"))
+    broker := api.NewBroker()
     broker.Start()
     defer broker.Stop()
     
@@ -377,7 +446,7 @@ func BenchmarkPublishQos1(b *testing.B) {
 **Parallel benchmarks**:
 ```go
 func BenchmarkConcurrentPublish(b *testing.B) {
-    broker := api.NewBroker(api.WithAddr(":0"))
+    broker := api.NewBroker()
     broker.Start()
     defer broker.Stop()
     
@@ -451,9 +520,9 @@ fmt.Println(result.String())
 |--------|-----------------|
 | protocol/ | 80% |
 | broker/ | 75% |
-| session/ | 75% |
 | store/memory/ | 80% |
-| auth/ | 70% |
+| store/redis/ | 70% |
+| pkg/ | 90% |
 | Overall | 60% |
 
 ### Exclusions
@@ -499,4 +568,5 @@ go tool cover -func=coverage.out
 
 - [Development Guide](development.md)
 - [Configuration Guide](configuration.md)
+- [Performance Guide](performance.md)
 - [CONTRIBUTING.md](../CONTRIBUTING.md)

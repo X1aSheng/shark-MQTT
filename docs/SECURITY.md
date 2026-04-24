@@ -48,9 +48,12 @@ Shark-MQTT supports TLS 1.2 and TLS 1.3 for encrypted connections.
 
 ```go
 // Using API with TLS certificates
-broker := api.NewBroker(
-    api.WithTLSFromFiles("server.crt", "server.key"),
-)
+cfg := config.DefaultConfig()
+cfg.TLSEnabled = true
+cfg.TLSCertFile = "server.crt"
+cfg.TLSKeyFile = "server.key"
+
+broker := api.NewBroker(api.WithConfig(cfg))
 ```
 
 ### Recommended Cipher Suites
@@ -139,14 +142,23 @@ Internet → Load Balancer (TLS termination) → Shark-MQTT
 Implement rate limiting through the plugin system:
 
 ```go
-// Example rate limiting plugin
-pluginManager.Register(plugin.OnPublish, func(ctx *plugin.Context) error {
-    // Check rate limit
-    if !rateLimiter.Allow(ctx.ClientID) {
-        return fmt.Errorf("rate limit exceeded")
+type RateLimitPlugin struct{}
+
+func (p *RateLimitPlugin) Name() string { return "rate-limiter" }
+func (p *RateLimitPlugin) Hooks() []plugin.Hook {
+    return []plugin.Hook{plugin.OnMessage}
+}
+func (p *RateLimitPlugin) Execute(ctx context.Context, hook plugin.Hook, data *plugin.Context) error {
+    if hook == plugin.OnMessage {
+        if !rateLimiter.Allow(data.ClientID) {
+            return fmt.Errorf("rate limit exceeded for client %s", data.ClientID)
+        }
     }
     return nil
-})
+}
+
+mgr := plugin.NewManager()
+mgr.Register(&RateLimitPlugin{})
 ```
 
 ---

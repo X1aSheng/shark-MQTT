@@ -1,6 +1,6 @@
 # Shark-MQTT Makefile
 
-.PHONY: all test test-unit test-integration test-race test-bench test-coverage lint fmt build clean docker tidy verify ci
+.PHONY: all test test-unit test-integration test-race test-bench bench bench-quick bench-cpu bench-mem bench-profile test-coverage lint fmt build clean docker tidy verify ci
 
 GO := go
 GOFLAGS := -v
@@ -42,6 +42,28 @@ test-race:
 test-bench:
 	@echo "$(YELLOW)[BENCH] Running benchmarks...$(RESET)"
 	$(GO) test -bench=. -benchmem -benchtime=5s -count=3 ./test/bench/...
+
+bench: test-bench
+
+bench-quick:
+	@echo "$(YELLOW)[BENCH] Quick benchmark (1s per test)...$(RESET)"
+	$(GO) test -bench=. -benchmem -benchtime=1s -count=1 ./test/bench/...
+
+bench-cpu:
+	@echo "$(YELLOW)[BENCH] CPU profiling benchmark...$(RESET)"
+	$(GO) test -bench=. -benchtime=5s -cpuprofile=cpu.prof ./test/bench/...
+	@echo "$(GREEN)Run 'go tool pprof cpu.prof' to analyze$(RESET)"
+
+bench-mem:
+	@echo "$(YELLOW)[BENCH] Memory profiling benchmark...$(RESET)"
+	$(GO) test -bench=. -benchtime=5s -memprofile=mem.prof ./test/bench/...
+	@echo "$(GREEN)Run 'go tool pprof mem.prof' to analyze$(RESET)"
+
+bench-profile:
+	@echo "$(YELLOW)[BENCH] Full profiling (CPU + Memory)...$(RESET)"
+	$(GO) test -bench=. -benchtime=5s -cpuprofile=cpu.prof -memprofile=mem.prof ./test/bench/...
+	@echo "$(GREEN)CPU profile: go tool pprof cpu.prof$(RESET)"
+	@echo "$(GREEN)Mem profile:  go tool pprof mem.prof$(RESET)"
 
 test-coverage:
 	@echo "$(CYAN)[TEST] Running tests with coverage...$(RESET)"
@@ -117,8 +139,15 @@ help:
 	@echo "  test-integration  Run integration tests"
 	@echo "  test-redis        Run Redis store tests"
 	@echo "  test-race         Run tests with race detector"
-	@echo "  test-bench        Run benchmarks"
+	@echo "  test-bench        Run benchmarks (full, 5s x 3)"
 	@echo "  test-coverage     Generate coverage report"
+	@echo ""
+	@echo "Benchmark targets:"
+	@echo "  bench             Same as test-bench"
+	@echo "  bench-quick       Quick benchmark (1s x 1)"
+	@echo "  bench-cpu         CPU profiling"
+	@echo "  bench-mem         Memory profiling"
+	@echo "  bench-profile     Full profiling (CPU + Memory)"
 	@echo ""
 	@echo "Code quality targets:"
 	@echo "  lint              Run linters (go vet)"

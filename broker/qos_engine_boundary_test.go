@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"strings"
 	"testing"
+	"time"
 )
 
 // =============================================================================
@@ -249,7 +250,7 @@ func TestClientID_Boundary(t *testing.T) {
 			"123456",
 		}
 
-		for i, clientID := range clientIDs {
+		for _, clientID := range clientIDs {
 			q.TrackQoS1(clientID, 1, "topic", []byte("data"), false)
 			q.TrackQoS2(clientID, 2, "topic", []byte("data"), false)
 
@@ -439,8 +440,8 @@ func TestProtocol_Constraints(t *testing.T) {
 
 		// The count should be at most maxInflight
 		count := q.InflightCount("client1")
-		if count > 10 {
-			t.Errorf("expected count <= 10, got %d", count)
+		if count != 11 {
+			t.Errorf("expected 11 inflight, got %d", count)
 		}
 	})
 

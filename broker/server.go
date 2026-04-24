@@ -38,7 +38,7 @@ type ConnectionHandler interface {
 }
 
 // NewMQTTServer creates a new MQTT network server.
-func NewMQTTServer(cfg *config.Config, opts ...Option) *MQTTServer {
+func NewMQTTServer(cfg *config.Config, opts ...ServerOption) *MQTTServer {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	sopts := defaultServerOptions()
