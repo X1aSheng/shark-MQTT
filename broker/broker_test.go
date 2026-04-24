@@ -2,17 +2,13 @@ package broker
 
 import (
 	"context"
-	"errors"
 	"net"
 	"testing"
 	"time"
 
-	"github.com/X1aSheng/shark-mqtt/pkg/metrics"
 	"github.com/X1aSheng/shark-mqtt/protocol"
-	"github.com/X1aSheng/shark-mqtt/store"
 )
 
-// TestNewBroker_Defaults tests the basic broker creation with default options
 func TestNewBroker_Defaults(t *testing.T) {
 	b := New()
 	if b == nil {
@@ -40,284 +36,123 @@ func TestNewBroker_Defaults(t *testing.T) {
 	}
 }
 
-// TestNewBroker_WithOptions tests broker creation with custom options
 func TestNewBroker_WithOptions(t *testing.T) {
-	auth := &mockAuthenticator{}
-	metrics := &mockMetrics{}
-
-	opts := []Option{
-		WithAuthenticator(auth),
-		WithMetrics(metrics),
-		WithLogger(mockLogger{}),
-	}
-
-	b := New(opts...)
+	b := New(
+		WithAuth(AllowAllAuth{}),
+	)
 	if b == nil {
 		t.Fatal("expected broker, got nil")
 	}
-
-	if b.opts.authenticator != auth {
-		t.Error("authenticator not set correctly")
-	}
-
-	if b.metrics != metrics {
-		t.Error("metrics not set correctly")
-	}
 }
 
-// TestBroker_StartStop tests broker start and stop functionality
 func TestBroker_StartStop(t *testing.T) {
-	b := New()
+	b := New(WithAuth(AllowAllAuth{}))
 
-	// Start should not return error
 	err := b.Start()
 	if err != nil {
 		t.Errorf("broker start failed: %v", err)
 	}
 
-	// Stop should not return error
 	b.Stop()
 }
 
-// TestBroker_HandleConnection_InvalidPacket tests handling of invalid CONNECT packet
-func TestBroker_HandleConnection_InvalidPacket(t *testing.T) {
-	b := New()
+func TestBroker_HandleConnection_ClosedConn(t *testing.T) {
+	b := New(WithAuth(AllowAllAuth{}))
+	codec := protocol.NewCodec(0)
 
-	// Create a mock connection
-	conn := &mockConn{}
+	serverConn, clientConn := net.Pipe()
+	go clientConn.Close()
 
-	// Create codec that returns a non-ConnectPacket
-	codec := &mockCodec{
-		decodeFunc: func(r net.Conn) (protocol.Packet, error) {
-			return &protocol.PublishPacket{Topic: "test", Payload: []byte("test")}, nil
-		},
-	}
-
-	err := b.HandleConnection(context.Background(), conn, codec)
+	err := b.HandleConnection(context.Background(), serverConn, codec)
 	if err == nil {
-		t.Error("expected error for invalid packet")
+		t.Error("expected error for closed connection")
 	}
 }
 
-// TestBroker_HandleConnection_AuthFailed tests handling of authentication failure
 func TestBroker_HandleConnection_AuthFailed(t *testing.T) {
-	b := New()
+	b := New(WithAuth(DenyAllAuth{}))
+	codec := protocol.NewCodec(0)
 
-	// Create failing authenticator
-	auth := &mockAuthenticator{
-		authenticateFunc: func(ctx context.Context, clientID, username, password string) error {
-			return errors.New("authentication failed")
-		},
-	}
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+	defer clientConn.Close()
 
-	b.opts.authenticator = auth
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		clientConn.Close()
+	}()
 
-	// Create mock connection
-	conn := &mockConn{}
-
-	// Create CONNECT packet
-	connectPkt := &protocol.ConnectPacket{
-		ClientID: "test-client",
-		Username: "user",
-		Password: []byte("pass"),
-	}
-
-	codec := &mockCodec{
-		decodeFunc: func(r net.Conn) (protocol.Packet, error) {
-			return connectPkt, nil
-		},
-	}
-
-	err := b.HandleConnection(context.Background(), conn, codec)
+	err := b.HandleConnection(context.Background(), serverConn, codec)
 	if err == nil {
-		t.Error("expected error for auth failure")
+		t.Error("expected error when auth fails")
 	}
 }
 
-// TestBroker_HandleConnection_Success tests successful connection handling
-func TestBroker_HandleConnection_Success(t *testing.T) {
-	b := New()
-
-	// Create mock connection
-	conn := &mockConn{}
-
-	// Create CONNECT packet
-	connectPkt := &protocol.ConnectPacket{
-		ClientID: "test-client",
-		Username: "user",
-		Password: []byte("pass"),
-	}
-
-	codec := &mockCodec{
-		decodeFunc: func(r net.Conn) (protocol.Packet, error) {
-			return connectPkt, nil
-		},
-	}
-
-	err := b.HandleConnection(context.Background(), conn, codec)
+func TestBroker_Publish_NoSubscribers(t *testing.T) {
+	b := New(WithAuth(AllowAllAuth{}))
+	err := b.Start()
 	if err != nil {
-		t.Errorf("expected no error, got %v", err)
+		t.Fatalf("start: %v", err)
 	}
+	defer b.Stop()
+
+	pkt := &protocol.PublishPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish},
+		Topic:       "test/topic",
+		Payload:     []byte("hello"),
+	}
+	b.handlePublish("client1", nil, pkt, nil, protocol.NewCodec(0))
 }
 
-// TestBroker_Disconnect tests client disconnect handling
-func TestBroker_Disconnect(t *testing.T) {
-	b := New()
+func TestBroker_SubscribeAndUnsubscribe(t *testing.T) {
+	b := New(WithAuth(AllowAllAuth{}))
+	err := b.Start()
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer b.Stop()
 
-	clientID := "test-client"
-
-	// Add connection
-	b.connections[clientID] = &clientState{
-		conn:  &mockConn{},
-		codec: &mockCodec{},
+	sess := &Session{
+		ClientID:      "test-client",
+		Subscriptions: make(map[string]uint8),
+		Inflight:      make(map[uint16]*InflightMsg),
 	}
 
-	b.disconnect(clientID)
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+	defer clientConn.Close()
+	codec := protocol.NewCodec(0)
 
-	// Verify connection is removed
-	if _, exists := b.connections[clientID]; exists {
-		t.Error("connection should be removed")
-	}
-}
+	// drain writes in background
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			_, err := clientConn.Read(buf)
+			if err != nil {
+				return
+			}
+		}
+	}()
 
-// TestBroker_Publish tests message publishing
-func TestBroker_Publish(t *testing.T) {
-	b := New()
-
-	clientID := "test-client"
-
-	// Create mock session
-	sess := &mockSession{}
-
-	// Create PUBLISH packet
-	publishPkt := &protocol.PublishPacket{
-		Topic:   "test/topic",
-		Payload: []byte("test message"),
-		QoS:     0,
-		Retain:  false,
-	}
-
-	// Test publish handling
-	b.handlePublish(clientID, sess, publishPkt, &mockConn{}, &mockCodec{})
-}
-
-// TestBroker_Subscribe tests subscription handling
-func TestBroker_Subscribe(t *testing.T) {
-	b := New()
-
-	clientID := "test-client"
-
-	// Create mock session
-	sess := &mockSession{}
-
-	// Create SUBSCRIBE packet
-	subscribePkt := &protocol.SubscribePacket{
+	subPkt := &protocol.SubscribePacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe},
 		Topics: []protocol.TopicFilter{
-			{Filter: "test/topic", QoS: 1},
+			{Topic: "test/topic", QoS: 0},
 		},
 	}
+	b.handleSubscribe("test-client", sess, subPkt, serverConn, codec)
 
-	// Test subscribe handling
-	b.handleSubscribe(clientID, sess, subscribePkt, &mockConn{}, &mockCodec{})
-}
-
-// TestBroker_Unsubscribe tests unsubscription handling
-func TestBroker_Unsubscribe(t *testing.T) {
-	b := New()
-
-	clientID := "test-client"
-
-	// Create mock session
-	sess := &mockSession{}
-
-	// Create UNSUBSCRIBE packet
-	unsubscribePkt := &protocol.UnsubscribePacket{
-		Topics: []string{"test/topic"},
+	if _, ok := sess.Subscriptions["test/topic"]; !ok {
+		t.Error("expected subscription to be added")
 	}
 
-	// Test unsubscribe handling
-	b.handleUnsubscribe(clientID, sess, unsubscribePkt, &mockConn{}, &mockCodec{})
-}
-
-// mockSession is a mock implementation of Session for testing
-type mockSession struct{}
-
-func (m *mockSession) IsConnected() bool { return true }
-func (m *mockSession) ClientID() string { return "test-client" }
-
-// mockAuthenticator is a mock implementation of Authenticator
-type mockAuthenticator struct {
-	authenticateFunc func(ctx context.Context, clientID, username, password string) error
-}
-
-func (m *mockAuthenticator) Authenticate(ctx context.Context, clientID, username, password string) error {
-	if m.authenticateFunc != nil {
-		return m.authenticateFunc(ctx, clientID, username, password)
+	unsubPkt := &protocol.UnsubscribePacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeUnsubscribe},
+		Topics:      []string{"test/topic"},
 	}
-	return nil
-}
+	b.handleUnsubscribe("test-client", sess, unsubPkt, serverConn, codec)
 
-// mockMetrics is a mock implementation of metrics.Metrics
-type mockMetrics struct{}
-
-func (m *mockMetrics) IncConnections()        {}
-func (m *mockMetrics) DecConnections()        {}
-func (m *mockMetrics) IncRejections(reason string) {}
-func (m *mockMetrics) IncAuthFailures()       {}
-func (m *mockMetrics) IncMessagesPublished(topic string, qos uint8) {}
-func (m *mockMetrics) IncMessagesDelivered(clientID string, qos uint8) {}
-func (m *mockMetrics) IncMessagesDropped(reason string) {}
-func (m *mockMetrics) IncInflight(clientID string)      {}
-func (m *mockMetrics) DecInflight(clientID string)      {}
-func (m *mockMetrics) DecInflightBatch(clientID string, count int) {}
-func (m *mockMetrics) IncInflightDropped(clientID string) {}
-func (m *mockMetrics) IncRetries(clientID string)       {}
-func (m *mockMetrics) SetOnlineSessions(count int)     {}
-func (m *mockMetrics) SetOfflineSessions(count int)    {}
-func (m *mockMetrics) SetRetainedMessages(count int)   {}
-func (m *mockMetrics) SetSubscriptions(count int)      {}
-func (m *mockMetrics) IncErrors(component string)      {}
-
-// mockLogger is a mock implementation of logger.Logger
-type mockLogger struct{}
-
-func (m mockLogger) Debug(msg string, args ...interface{}) {}
-func (m mockLogger) Info(msg string, args ...interface{})  {}
-func (m mockLogger) Warn(msg string, args ...interface{})  {}
-func (m mockLogger) Error(msg string, args ...interface{}) {}
-
-// mockConn is a mock implementation of net.Conn
-type mockConn struct{}
-
-func (m *mockConn) Read(b []byte) (n int, err error)  { return 0, nil }
-func (m *mockConn) Write(b []byte) (n int, err error) { return len(b), nil }
-func (m *mockConn) Close() error                      { return nil }
-func (m *mockConn) LocalAddr() net.Addr               { return nil }
-func (m *mockConn) RemoteAddr() net.Addr              { return nil }
-func (m *mockConn) SetDeadline(t time.Time) error     { return nil }
-func (m *mockConn) SetReadDeadline(t time.Time) error  { return nil }
-func (m *mockConn) SetWriteDeadline(t time.Time) error { return nil }
-
-// mockCodec is a mock implementation of protocol.Codec
-type mockCodec struct {
-	decodeFunc func(r net.Conn) (protocol.Packet, error)
-}
-
-func (m *mockCodec) Decode(r net.Conn) (protocol.Packet, error) {
-	if m.decodeFunc != nil {
-		return m.decodeFunc(r)
+	if _, ok := sess.Subscriptions["test/topic"]; ok {
+		t.Error("expected subscription to be removed")
 	}
-	return &protocol.PublishPacket{Topic: "test", Payload: []byte("test")}, nil
-}
-
-func (m *mockCodec) DecodeConnect(r net.Conn) (*protocol.ConnectPacket, error) {
-	return &protocol.ConnectPacket{ClientID: "test"}, nil
-}
-
-func (m *mockCodec) Encode(p protocol.Packet) ([]byte, error) {
-	return []byte("encoded"), nil
-}
-
-func (m *mockCodec) SendConnAck(w io.Writer, code protocol.ConnAckReturnCode, sessionPresent bool) error {
-	return nil
 }

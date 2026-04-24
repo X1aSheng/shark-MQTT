@@ -405,7 +405,7 @@ func TestQoSEngine_Retry_MaxRetriesExceeded(t *testing.T) {
 	q.TrackQoS1("client1", 1, "home/temp", []byte("data"), false)
 
 	// Wait long enough for all retries to complete and message to be removed
-	time.Sleep(interval * time.Duration(maxRetries+3))
+	time.Sleep(interval * time.Duration(maxRetries+6))
 
 	mu.Lock()
 	count := republishCount

@@ -250,28 +250,3 @@ func TestSessionSaveRestore(t *testing.T) {
 		t.Errorf("expected 1 subscription, got %d", len(restored.Subscriptions))
 	}
 }
-
-func TestTopicMatch(t *testing.T) {
-	tests := []struct {
-		pattern string
-		topic   string
-		want    bool
-	}{
-		{"test/topic", "test/topic", true},
-		{"test/#", "test/topic", true},
-		{"test/#", "test/a/b/c", true},
-		{"sensor/+/temp", "sensor/room1/temp", true},
-		{"sensor/+/temp", "sensor/room1/humidity", false},
-		{"#", "anything/goes/here", true},
-		{"test/+", "test/topic", true},
-		{"test/+", "test/a/b", false},
-		{"+/test", "foo/test", true},
-		{"+/test", "foo/other", false},
-	}
-
-	for _, tt := range tests {
-		if got := topicMatch(tt.pattern, tt.topic); got != tt.want {
-			t.Errorf("topicMatch(%q, %q) = %v, want %v", tt.pattern, tt.topic, got, tt.want)
-		}
-	}
-}

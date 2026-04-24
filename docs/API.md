@@ -24,17 +24,27 @@ import (
     "context"
     "log"
     "os"
+    "os/signal"
 
     "github.com/X1aSheng/shark-mqtt/api"
+    "github.com/X1aSheng/shark-mqtt/config"
 )
 
 func main() {
-    broker := api.NewBroker()
+    cfg := config.DefaultConfig()
+    cfg.ListenAddr = ":1883"
+
+    broker := api.NewBroker(api.WithConfig(cfg))
     if err := broker.Start(); err != nil {
         log.Fatal(err)
     }
 
-    <-context.Canceled of os.Args
+    log.Printf("Broker started on %s", broker.Addr())
+
+    sig := make(chan os.Signal, 1)
+    signal.Notify(sig, os.Interrupt)
+    <-sig
+
     broker.Stop()
 }
 ```
@@ -147,14 +157,13 @@ cfg := config.DefaultConfig()
 ### Custom Configuration
 
 ```go
-cfg := &config.Config{
-    ListenAddr:      ":1883",
-    KeepAlive:       60,
-    MaxPacketSize:   262144,
-    MaxConnections:  10000,
-    TLSEnabled:      false,
-    LogLevel:        "info",
-}
+cfg := config.DefaultConfig()
+cfg.ListenAddr = ":1883"
+cfg.KeepAlive = 60
+cfg.MaxPacketSize = 262144
+cfg.MaxConnections = 10000
+cfg.TLSEnabled = false
+cfg.LogLevel = "info"
 ```
 
 ### From YAML
@@ -170,6 +179,8 @@ Environment variables with `MQTT_` prefix:
 - `MQTT_KEEP_ALIVE`
 - `MQTT_MAX_PACKET_SIZE`
 - `MQTT_LOG_LEVEL`
+
+See [configuration.md](configuration.md) for the full list.
 
 ---
 
@@ -201,13 +212,46 @@ broker := api.NewBroker(
 
 #### StaticAuth
 
-Static username/password authentication.
+Static username/password authentication with optional ACL support.
 
 ```go
 auth := broker.NewStaticAuth()
 auth.AddCredentials("admin", "secret")
+auth.AddCredentials("user1", "pass123")
+
+// Optional: Add ACL for a client
+auth.AddACL("client1", &broker.ACL{
+    PublishTopics:   []string{"data/#"},
+    SubscribeTopics: []string{"status/+"},
+})
+
 broker := api.NewBroker(
     api.WithAuth(auth),
+)
+```
+
+#### ChainAuth
+
+Try multiple authenticators in order.
+
+```go
+chain := broker.NewChainAuth(fileAuth, staticAuth)
+broker := api.NewBroker(
+    api.WithAuth(chain),
+)
+```
+
+#### FileAuth
+
+Load credentials from a YAML or JSON file.
+
+```go
+fileAuth, err := broker.NewFileAuth("credentials.yaml")
+if err != nil {
+    log.Fatal(err)
+}
+broker := api.NewBroker(
+    api.WithAuth(fileAuth),
 )
 ```
 
@@ -229,12 +273,23 @@ func (a *MyAuth) Authenticate(ctx context.Context, clientID, username, password 
     if username == "admin" && password == "secret" {
         return nil
     }
-    return errors.New("invalid credentials")
+    return broker.ErrAuthFailed
 }
 
 broker := api.NewBroker(
     api.WithAuth(&MyAuth{}),
 )
+```
+
+### Custom Authorizer
+
+Implement the `broker.Authorizer` interface for topic-level access control:
+
+```go
+type Authorizer interface {
+    CanPublish(ctx context.Context, clientID, topic string) bool
+    CanSubscribe(ctx context.Context, clientID, topic string) bool
+}
 ```
 
 ---
@@ -251,20 +306,35 @@ broker := api.NewBroker()
 ### Redis Store
 
 ```go
-import redisstore "github.com/X1aSheng/shark-mqtt/store/redis"
+import (
+    redisstore "github.com/X1aSheng/shark-mqtt/store/redis"
+    "github.com/redis/go-redis/v9"
+)
 
 client := redis.NewClient(&redis.Options{
     Addr: "localhost:6379",
 })
 
-sessionStore, _ := redisstore.NewSessionStore(client)
-messageStore, _ := redisstore.NewMessageStore(client)
-retainedStore, _ := redisstore.NewRetainedStore(client)
+ss := redisstore.NewSessionStore(redisstore.SessionStoreConfig{
+    Client:    client,
+    KeyPrefix: "mqtt:session:",
+    TTL:       time.Hour,
+})
+
+ms := redisstore.NewMessageStore(redisstore.MessageStoreConfig{
+    Client:    client,
+    KeyPrefix: "mqtt:message:",
+})
+
+rs := redisstore.NewRetainedStore(redisstore.RetainedStoreConfig{
+    Client:    client,
+    KeyPrefix: "mqtt:retained:",
+})
 
 broker := api.NewBroker(
-    api.WithSessionStore(sessionStore),
-    api.WithMessageStore(messageStore),
-    api.WithRetainedStore(retainedStore),
+    api.WithSessionStore(ss),
+    api.WithMessageStore(ms),
+    api.WithRetainedStore(rs),
 )
 ```
 
@@ -273,12 +343,14 @@ broker := api.NewBroker(
 ```go
 import badgerstore "github.com/X1aSheng/shark-mqtt/store/badger"
 
-sessionStore, _ := badgerstore.NewSessionStore("/path/to/db")
-messageStore, _ := badgerstore.NewMessageStore("/path/to/db")
+ss, _ := badgerstore.NewSessionStore("/path/to/db")
+ms, _ := badgerstore.NewMessageStore("/path/to/db")
+rs, _ := badgerstore.NewRetainedStore("/path/to/db")
 
 broker := api.NewBroker(
-    api.WithSessionStore(sessionStore),
-    api.WithMessageStore(messageStore),
+    api.WithSessionStore(ss),
+    api.WithMessageStore(ms),
+    api.WithRetainedStore(rs),
 )
 ```
 
@@ -299,16 +371,16 @@ type Logger interface {
 }
 ```
 
-**Example with slog:**
+**Example:**
 ```go
 broker := api.NewBroker(
-    api.WithLogger(slogLogger{}),
+    api.WithLogger(myLogger),
 )
 ```
 
 ### Custom Metrics
 
-Implement `metrics.Metrics` interface:
+Implement `metrics.Metrics` interface (17 methods):
 
 ```go
 type Metrics interface {
@@ -318,20 +390,40 @@ type Metrics interface {
     IncAuthFailures()
     IncMessagesPublished(topic string, qos uint8)
     IncMessagesDelivered(clientID string, qos uint8)
-    // ... more methods
+    IncMessagesDropped(reason string)
+    IncInflight(clientID string)
+    DecInflight(clientID string)
+    DecInflightBatch(clientID string, count int)
+    IncInflightDropped(clientID string)
+    IncRetries(clientID string)
+    SetOnlineSessions(count int)
+    SetOfflineSessions(count int)
+    SetRetainedMessages(count int)
+    SetSubscriptions(count int)
+    IncErrors(component string)
 }
 ```
 
 ### Plugin System
 
 ```go
-mgr := plugin.NewManager()
+import "github.com/X1aSheng/shark-mqtt/plugin"
 
-// Register hooks
-mgr.OnConnect(func(ctx context.Context, clientID string) error {
-    log.Printf("Client connected: %s", clientID)
+type MyPlugin struct{}
+
+func (p *MyPlugin) Name() string { return "my-plugin" }
+func (p *MyPlugin) Hooks() []plugin.Hook {
+    return []plugin.Hook{plugin.OnMessage, plugin.OnClose}
+}
+func (p *MyPlugin) Execute(ctx context.Context, hook plugin.Hook, data *plugin.Context) error {
+    if hook == plugin.OnMessage {
+        log.Printf("Message from %s on %s", data.ClientID, data.Topic)
+    }
     return nil
-})
+}
+
+mgr := plugin.NewManager()
+mgr.Register(&MyPlugin{})
 
 broker := api.NewBroker(
     api.WithPluginManager(mgr),
@@ -340,10 +432,9 @@ broker := api.NewBroker(
 
 **Available Hooks:**
 - `OnAccept` - Connection accepted
-- `OnConnect` - Client authenticated
-- `OnPublish` - Message published
-- `OnSubscribe` - Topic subscribed
-- `OnDisconnect` - Client disconnected
+- `OnConnected` - Client connected
+- `OnMessage` - Message published
+- `OnClose` - Connection closed
 
 ---
 

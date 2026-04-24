@@ -434,15 +434,27 @@ Recommended metrics to monitor:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `MQTT_LISTEN_ADDR` | Listen address | `:1883` |
-| `MQTT_KEEP_ALIVE` | Keep alive timeout (seconds) | `60` |
-| `MQTT_MAX_PACKET_SIZE` | Max packet size | `262144` |
-| `MQTT_MAX_CONNECTIONS` | Max concurrent connections | `10000` |
-| `MQTT_STORAGE_BACKEND` | Storage type (memory/redis/badger) | `memory` |
-| `MQTT_REDIS_ADDR` | Redis address | `localhost:6379` |
 | `MQTT_TLS_ENABLED` | Enable TLS | `false` |
 | `MQTT_TLS_CERT_FILE` | TLS certificate file | - |
 | `MQTT_TLS_KEY_FILE` | TLS key file | - |
+| `MQTT_CONNECT_TIMEOUT` | Connection timeout | `10s` |
+| `MQTT_KEEP_ALIVE` | Keep alive timeout (seconds) | `60` |
+| `MQTT_MAX_CONNECTIONS` | Max concurrent connections | `10000` |
+| `MQTT_MAX_PACKET_SIZE` | Max packet size | `262144` |
+| `MQTT_WRITE_QUEUE_SIZE` | Per-connection write queue size | `256` |
+| `MQTT_QOS_RETRY_INTERVAL` | QoS retry interval | `10s` |
+| `MQTT_QOS_MAX_RETRIES` | Max QoS retry attempts | `3` |
+| `MQTT_QOS_MAX_INFLIGHT` | Max in-flight messages | `100` |
+| `MQTT_STORAGE_BACKEND` | Storage type (memory/redis/badger) | `memory` |
+| `MQTT_SESSION_EXPIRY_INTERVAL` | Session expiration time | `24h` |
+| `MQTT_REDIS_ADDR` | Redis address | `localhost:6379` |
+| `MQTT_REDIS_PASSWORD` | Redis password | - |
+| `MQTT_REDIS_DB` | Redis database number | `0` |
+| `MQTT_BADGER_PATH` | BadgerDB data directory | `badger-data` |
 | `MQTT_LOG_LEVEL` | Log level (debug/info/warn/error) | `info` |
+| `MQTT_LOG_FORMAT` | Log format (text/json) | `text` |
+| `MQTT_METRICS_ENABLED` | Enable Prometheus metrics | `false` |
+| `MQTT_METRICS_ADDR` | Metrics server address | `:9090` |
 
 ---
 
@@ -451,4 +463,4 @@ Recommended metrics to monitor:
 - [Configuration Guide](configuration.md)
 - [API Reference](API.md)
 - [Examples](../examples/)
-- [Project Status](../PROJECT_STATUS.md)
+- [Project Status](PROJECT_STATUS.md)

@@ -14,7 +14,7 @@
 ### Unit Tests (per package)
 - **errs/**: Error sentinel values, `Is()` / `As()` behavior
 - **protocol/**: Round-trip encode/decode for every packet type; malformed input rejection
-- **session/**: Session lifecycle, subscription matching, expiration
+- **broker/**: Session lifecycle, subscription matching, expiration, auth, authorization
 - **store/**: CRUD operations for each backend, consistency, concurrent access
 - **broker/**: TopicTree matching, QoSEngine state transitions, will message triggers
 
@@ -26,8 +26,8 @@
 - `will_test.go`: Last will triggered on ungraceful disconnect
 
 ### Benchmarks (`test/bench/`)
-- `throughput_test.go`: Messages/sec for QoS 0/1/2
-- `latency_test.go`: P50/P99 publish-to-delivery latency
+- `broker_bench_test.go`: End-to-end benchmarks (connect, publish QoS 0/1/2, concurrent, fan-out, payload sizes)
+- `micro_bench_test.go`: Component micro-benchmarks (TopicTree, Codec, QoSEngine, Manager, BufferPool, MemoryStore)
 
 ## Test Patterns
 
@@ -79,7 +79,7 @@ func testBroker(t *testing.T) *api.Broker {
 |-------|--------|
 | errs/ | 100% |
 | protocol/ | 95%+ |
-| session/ | 90%+ |
 | broker/ | 90%+ |
 | store/memory/ | 95%+ |
-| server/ | 80%+ |
+| pkg/ | 95%+ |
+| plugin/ | 100% |

@@ -317,7 +317,6 @@ func main() {
 
 | Option | Description |
 |--------|-------------|
-| `WithAddr(addr)` | Set listen address |
 | `WithConfig(cfg)` | Set custom config |
 | `WithAuth(a)` | Set authenticator |
 | `WithAuthorizer(z)` | Set authorizer |
@@ -405,5 +404,5 @@ Shark-MQTT validates configuration on startup:
 
 - [Development Guide](development.md)
 - [Testing Guide](testing.md)
-- [API Reference](api-reference.md)
+- [API Reference](API.md)
 - [SECURITY.md](../SECURITY.md)

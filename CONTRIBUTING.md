@@ -19,7 +19,7 @@ Thank you for your interest in contributing to Shark-MQTT! This document provide
 
 ### Prerequisites
 
-- **Go 1.21+** - Required for building and running tests
+- **Go 1.22+** - Required for building and running tests
 - **Git** - For version control
 - **Make** - For running build tasks (optional but recommended)
 - **Docker** - For integration tests with Redis
@@ -236,13 +236,23 @@ go test -race -tags=integration ./test/integration/...
 
 Run benchmarks to verify performance:
 ```bash
-go test -bench=. -benchmem -benchtime=10s ./test/bench/...
+# Quick benchmark
+make bench-quick
+
+# Full benchmark suite
+make bench
+
+# With CPU/memory profiling
+make bench-cpu
+make bench-mem
 ```
+
+See [docs/performance.md](../docs/performance.md) for detailed profiling workflows.
 
 ### Coverage Requirements
 
 - Overall coverage ≥ 60%
-- Core modules (broker/, session/, protocol/) ≥ 70%
+- Core modules (broker/, protocol/, store/) ≥ 70%
 
 Generate coverage report:
 ```bash

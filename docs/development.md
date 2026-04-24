@@ -19,20 +19,25 @@ This guide helps developers understand the Shark-MQTT codebase and get started w
 ```
 shark-mqtt/
 ├── api/              # Unified public API and factory methods
-├── broker/           # Core business logic (TopicTree, QoSEngine, WillHandler)
-├── server/           # Network layer (TCP/TLS, connection management)
-├── protocol/         # MQTT 3.1.1 & 5.0 codec
-├── session/          # Session management (Attach/Detach model)
+├── broker/           # Core broker: MQTTServer, Broker, TopicTree, QoSEngine,
+│                     #   WillHandler, Session (Manager), Auth, Authorizer
+├── protocol/         # MQTT 3.1.1 & 5.0 codec (packets, properties)
 ├── store/            # Storage interfaces + Memory/Redis/BadgerDB implementations
-├── auth/             # Authentication (noop, file, chain)
-├── plugin/           # Plugin system (ACL, rate limit, audit)
-├── infra/            # Infrastructure (logger, metrics, bufferpool)
+│   ├── memory/       # In-memory store (default)
+│   ├── redis/        # Redis store (distributed)
+│   └── badger/       # BadgerDB store (embedded)
+├── pkg/              # Infrastructure (logger, metrics, bufferpool)
 ├── config/           # Configuration loading (YAML/ENV)
-├── integration/      # shark-socket adapter
+├── plugin/           # Plugin system (hook-based architecture)
 ├── client/           # MQTT client implementation
+├── errs/             # Centralized error definitions
 ├── test/             # Integration and benchmark tests
+│   ├── integration/  # End-to-end MQTT workflow tests
+│   └── bench/        # Performance benchmarks
 ├── examples/         # Usage examples
-└── cmd/              # Command-line tools
+├── cmd/              # Command-line tools
+├── testutils/        # Test utilities (mock implementations)
+└── docs/             # Documentation
 ```
 
 ---
@@ -41,7 +46,7 @@ shark-mqtt/
 
 ### Broker and Server Separation
 
-Shark-MQTT maintains a clear separation between the network layer and business logic:
+Shark-MQTT maintains a clear separation between the network layer and business logic, both within the `broker/` package:
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -52,17 +57,17 @@ Shark-MQTT maintains a clear separation between the network layer and business l
          ┌────────────┴────────────┐
          ▼                         ▼
 ┌──────────────────┐    ┌────────────────────┐
-│ server.MQTTServer│    │ broker.Broker      │
+│broker.MQTTServer │    │ broker.Broker      │
 │                  │    │                    │
 │ - TCP/TLS        │    │ - TopicTree        │
 │ - Accept loop    │◄──►│ - QoSEngine        │
 │ - Connection mgmt│    │ - WillHandler      │
-│ - Codec          │    │ - Sessions         │
+│ - Codec          │    │ - Manager          │
 └──────────────────┘    └────────────────────┘
 ```
 
-- **server**: Handles network I/O, TLS, connection lifecycle
-- **broker**: Handles MQTT semantics (publish/subscribe, QoS, sessions)
+- **MQTTServer**: Handles network I/O, TLS, connection lifecycle
+- **Broker**: Handles MQTT semantics (publish/subscribe, QoS, sessions)
 
 ### Session Attach/Detach Model
 
@@ -100,8 +105,8 @@ root
     └── living-room
         └── temperature
 
-Subscription: "home/+/temperature" matches ✓
-Subscription: "home/living-room/#" matches ✓
+Subscription: "home/+/temperature" matches
+Subscription: "home/living-room/#" matches
 Subscription: "home/kitchen/#" does NOT match
 ```
 
@@ -109,14 +114,14 @@ Subscription: "home/kitchen/#" does NOT match
 
 ```
 QoS 0: Fire and forget
-        PUBLISH → delivered
+        PUBLISH -> delivered
 
 QoS 1: At least once
-        PUBLISH → PUBACK
+        PUBLISH -> PUBACK
         (retry on timeout)
 
 QoS 2: Exactly once (4-way handshake)
-        PUBLISH → PUBREC → PUBREL → PUBCOMP
+        PUBLISH -> PUBREC -> PUBREL -> PUBCOMP
 ```
 
 ---
@@ -129,76 +134,100 @@ MQTT packet encoding/decoding according to spec.
 
 **Key files:**
 - `codec.go` - Encoder and decoder
-- `packets.go` - Packet type definitions
+- `packets.go` - Packet type definitions (15 packet types)
 - `connect.go`, `publish.go`, `subscribe.go` - Specific packet handling
+- `properties.go` - MQTT 5.0 properties
+- `constants.go` - Protocol constants and version info
 
 **Adding new packet types:**
 1. Define packet struct in `packets.go`
-2. Implement `Packet` interface
-3. Add encode/decode logic in `codec.go`
+2. Implement encode/decode logic in `codec.go`
+3. Add test in `codec_test.go`
 
 ### broker/
 
-Core message broker logic.
+Core message broker logic, including network server.
 
 **Key components:**
-- `broker.go` - Main broker orchestration
-- `topic_tree.go` - Topic subscription management
-- `qos_engine.go` - QoS 1/2 retry and tracking
+- `broker.go` - Main broker orchestration (HandleConnection, publish, subscribe)
+- `server.go` - MQTTServer (TCP/TLS accept loop, connection management)
+- `topic_tree.go` - Topic subscription management (O(log n) matching)
+- `qos_engine.go` - QoS 1/2 retry and inflight tracking
 - `will_handler.go` - Last will message management
+- `session.go` - Session struct with state machine, statistics, Manager
+- `auth.go` - Authenticator and Authorizer interfaces + StaticAuth, ACL
+- `auth_noop.go` - NoopAuth, AllowAllAuth, DenyAllAuth
+- `auth_chain.go` - ChainAuth (multiple authenticators)
+- `auth_file.go` - FileAuth (YAML/JSON credentials file)
+- `options.go` - Broker option functions
+- `options_server.go` - Server option functions
 
 **Broker startup flow:**
 ```go
-func (b *Broker) Start() error {
-    b.qos.Start()  // Start retry worker
-    return nil
-}
+broker := api.NewBroker(api.WithConfig(cfg))
+broker.Start()  // Starts MQTTServer + QoSEngine retry loop
 ```
 
-### session/
+### Session Management (in broker/)
 
-Client session management.
+Client session management is handled by `Manager` in `broker/session.go`.
 
 **Session states:**
 - `StateConnected` - Active and handling messages
 - `StateDisconnecting` - Graceful disconnect in progress
-- `StateDisconnected` - Session ended
 
 **Session data:**
 - Client ID, username, protocol version
-- Subscriptions (topic → QoS)
+- Subscriptions (topic -> QoS)
 - Inflight messages (QoS 1/2)
 - Statistics (bytes sent/received, message counts)
+
+**Manager methods:**
+- `CreateSession(clientID, connectPkt, isResuming)` - Create or resume session
+- `GetSession(clientID)` - Retrieve session
+- `RemoveSession(clientID)` - Remove session
+- `Save/Restore` - Persist to/reload from store
 
 ### store/
 
 Storage abstraction with multiple backends.
 
-**Interfaces:**
-- `SessionStore` - Session persistence
-- `MessageStore` - QoS message persistence
-- `RetainedStore` - Retained message storage
+**Interfaces (store/interfaces.go):**
+- `SessionStore` - Session persistence (5 methods)
+- `MessageStore` - QoS message persistence (5 methods)
+- `RetainedStore` - Retained message storage (4 methods)
 
 **Backends:**
 - `memory/` - In-memory (default)
 - `redis/` - Redis (distributed)
 - `badger/` - BadgerDB (embedded, persistent)
 
-### auth/
+### Authentication (in broker/)
 
-Authentication and authorization.
+Authentication and authorization are in the `broker/` package.
 
 **Authenticator interface:**
 ```go
 type Authenticator interface {
-    Authenticate(ctx context.Context, clientID, username string, password []byte) error
+    Authenticate(ctx context.Context, clientID, username, password string) error
 }
 ```
 
-**Built-in implementations:**
-- `noop/` - Allow all (development only)
-- `file/` - File-based credentials
-- `chain/` - Chain multiple authenticators
+**Authorizer interface:**
+```go
+type Authorizer interface {
+    CanPublish(ctx context.Context, clientID, topic string) bool
+    CanSubscribe(ctx context.Context, clientID, topic string) bool
+}
+```
+
+**Built-in implementations (all in broker/):**
+- `NoopAuth` - No-op authenticator
+- `AllowAllAuth` - Allow all (development only)
+- `DenyAllAuth` - Deny all
+- `StaticAuth` - Static credentials with ACL support
+- `ChainAuth` - Chain multiple authenticators
+- `FileAuth` - File-based credentials (YAML/JSON)
 
 ### plugin/
 
@@ -206,53 +235,26 @@ Extensible hooks for broker events.
 
 **Available hooks:**
 - `OnAccept` - New connection accepted
-- `OnConnect` - CONNECT packet received
 - `OnConnected` - Client connected
-- `OnPublish` - Message published
-- `OnSubscribe` - Subscription requested
-- `OnDisconnect` - Client disconnected
+- `OnMessage` - Message published
 - `OnClose` - Connection closed
 
 ---
 
 ## Adding New Features
 
-### Adding a New MQTT Packet Type
-
-1. **Define the packet** in `protocol/packets.go`:
-```go
-type AuthPacket struct {
-    FixedHeader
-    AuthMethod    string
-    AuthData      []byte
-    Properties    []Property
-}
-```
-
-2. **Implement encoding** in `protocol/codec.go`:
-```go
-func (c *Codec) encodeAuth(pkt *AuthPacket, buf *bytes.Buffer) error {
-    // Write variable header
-    writeString(buf, pkt.AuthMethod)
-    writeBinary(buf, pkt.AuthData)
-    writeProperties(buf, pkt.Properties)
-    return nil
-}
-```
-
-3. **Add test** in `protocol/codec_test.go`
-
 ### Adding a New Storage Backend
 
-1. **Implement interfaces** in `store/interfaces.go`:
+1. **Implement interfaces** from `store/interfaces.go`:
 ```go
-type MyDBStore struct {
-    // MyDB connection
-}
+package mydb
 
-func (s *MyDBStore) SaveSession(ctx context.Context, clientID string, data *SessionData) error {
+type SessionStore struct { /* ... */ }
+
+func (s *SessionStore) SaveSession(ctx context.Context, clientID string, data *store.SessionData) error {
     // Implementation
 }
+// ... implement all interface methods
 ```
 
 2. **Add tests** in `store/mydb/`
@@ -261,18 +263,28 @@ func (s *MyDBStore) SaveSession(ctx context.Context, clientID string, data *Sess
 
 ### Adding a New Authentication Method
 
-1. **Implement interface** in `auth/auth.go`:
+1. **Implement interface** in `broker/`:
 ```go
-type LDAPAuthenticator struct {
-    Server string
-}
+type MyAuth struct{}
 
-func (a *LDAPAuthenticator) Authenticate(ctx context.Context, clientID, username string, password []byte) error {
-    // LDAP authentication logic
+func (a *MyAuth) Authenticate(ctx context.Context, clientID, username, password string) error {
+    // Custom authentication logic
+    return nil // or ErrAuthFailed
 }
 ```
 
-2. **Add example** in `examples/custom_auth/`
+2. **Optionally implement Authorizer** for ACL:
+```go
+func (a *MyAuth) CanPublish(ctx context.Context, clientID, topic string) bool {
+    return true
+}
+
+func (a *MyAuth) CanSubscribe(ctx context.Context, clientID, topic string) bool {
+    return true
+}
+```
+
+3. **Add example** in `examples/`
 
 ---
 
@@ -288,7 +300,7 @@ log_format: text
 Or programmatically:
 ```go
 broker := api.NewBroker(
-    api.WithLogger(logger.NewDebugLogger()),
+    api.WithLogger(myDebugLogger),
 )
 ```
 
@@ -301,10 +313,11 @@ metrics_addr: ":9090"
 ```
 
 Key metrics to monitor:
-- `sharkmqtt_connections_total` - Total connections
-- `sharkmqtt_messages_published_total` - Messages published
-- `sharkmqtt_messages_delivered_total` - Messages delivered
-- `sharkmqtt_qos_retries_total` - QoS retries
+- Connections (active/rejected)
+- Messages (published/delivered/dropped)
+- QoS (inflight/retries)
+- Sessions (online/offline)
+- Errors (by component)
 
 Access metrics:
 ```bash
@@ -343,5 +356,5 @@ curl http://localhost:9090/metrics
 
 - [Testing Guide](testing.md)
 - [Configuration Guide](configuration.md)
-- [API Reference](api-reference.md)
+- [API Reference](API.md)
 - [CONTRIBUTING.md](../CONTRIBUTING.md)

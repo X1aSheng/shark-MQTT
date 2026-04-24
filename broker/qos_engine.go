@@ -264,7 +264,11 @@ func (q *QoSEngine) InflightCount(clientID string) int {
 // retryLoop periodically retries unacknowledged QoS messages.
 func (q *QoSEngine) retryLoop() {
 	defer q.wg.Done()
-	ticker := time.NewTicker(q.retryInterval)
+	interval := q.retryInterval
+	if interval <= 0 {
+		interval = time.Second
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {

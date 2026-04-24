@@ -44,24 +44,24 @@ func TestConnectEncodeDecode(t *testing.T) {
 - Edge cases: malformed input, buffer boundaries, max sizes
 - Property-based tests for field validation
 
-**Server layer** (`server/`):
+**Server layer** (`broker/`):
 - Start/stop lifecycle tests
 - Connection acceptance and rejection
 - Handler integration tests with mock connections
 - TLS handshake tests
 
-**Session layer** (`session/`):
+**Session layer** (`broker/`):
 - Session creation and retrieval
 - Subscription management with wildcard topics
 - Inflight message tracking
 - Session expiration
 
-**Auth layer** (`auth/`):
+**Auth layer** (`broker/`):
 - Static credential verification
 - AllowAll/DenyAll test doubles
 - ACL topic matching
 
-**Broker** (`infra/broker/`):
+**Broker** (`broker/`):
 - Full CONNECT handshake
 - Client registration and deregistration
 - Session persistence
