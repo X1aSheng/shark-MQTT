@@ -4,6 +4,7 @@ package broker
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -23,6 +24,7 @@ type MQTTServer struct {
 	handler    ConnectionHandler
 	codec      *protocol.Codec
 	connCount  atomic.Int64
+	earlyClose atomic.Int64
 	tlsConfig  *tls.Config
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -116,6 +118,10 @@ func (s *MQTTServer) Stop() {
 	}
 	s.conns = make(map[net.Conn]struct{})
 	s.mu.Unlock()
+
+	if n := s.earlyClose.Load(); n > 0 {
+		log.Printf("[server] %d connections closed before CONNECT", n)
+	}
 }
 
 // Addr returns the server's listening address.
@@ -170,7 +176,11 @@ func (s *MQTTServer) acceptLoop() {
 
 			if s.handler != nil {
 				if err := s.handler.HandleConnection(s.ctx, c, s.codec); err != nil {
-					log.Printf("[server] connection handler error: %v", err)
+					if isEarlyClose(err) {
+						s.earlyClose.Add(1)
+					} else {
+						log.Printf("[server] connection handler error: %v", err)
+					}
 				}
 			}
 		}(conn)
@@ -199,4 +209,21 @@ func DrainAndClose(conn net.Conn, timeout time.Duration) {
 	conn.SetReadDeadline(time.Now().Add(timeout))
 	io.Copy(io.Discard, conn)
 	conn.Close()
+}
+
+// isEarlyClose returns true if the error indicates the client disconnected
+// before completing the MQTT handshake (e.g., closed without sending CONNECT).
+func isEarlyClose(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) {
+		return true
+	}
+	// "use of closed network connection" — client closed before/during CONNECT decode
+	var oe *net.OpError
+	if errors.As(err, &oe) && oe.Op == "read" {
+		return true
+	}
+	return false
 }
