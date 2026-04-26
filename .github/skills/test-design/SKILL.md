@@ -18,14 +18,14 @@
 - **store/**: CRUD operations for each backend, consistency, concurrent access
 - **broker/**: TopicTree matching, QoSEngine state transitions, will message triggers
 
-### Integration Tests (`test/integration/`)
+### Integration Tests (`tests/integration/`)
 - `connect_test.go`: CONNECT/CONNACK flow with all reason codes
 - `pubsub_test.go`: PUBLISH → SUBSCRIBE → message delivery
 - `qos_test.go`: QoS 0/1/2 publish flows with ACK sequences
 - `persistent_session_test.go`: Disconnect → reconnect, session restoration
 - `will_test.go`: Last will triggered on ungraceful disconnect
 
-### Benchmarks (`test/bench/`)
+### Benchmarks (`tests/bench/`)
 - `broker_bench_test.go`: End-to-end benchmarks (connect, publish QoS 0/1/2, concurrent, fan-out, payload sizes)
 - `micro_bench_test.go`: Component micro-benchmarks (TopicTree, Codec, QoSEngine, Manager, BufferPool, MemoryStore)
 

@@ -10,7 +10,7 @@ import (
 	"syscall"
 
 	"github.com/X1aSheng/shark-mqtt/config"
-	mqttadapter "github.com/X1aSheng/shark-mqtt/test/integration/sharksocket"
+	mqttadapter "github.com/X1aSheng/shark-mqtt/tests/integration/sharksocket"
 )
 
 func main() {

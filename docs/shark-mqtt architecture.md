@@ -66,7 +66,7 @@ Module path: `github.com/X1aSheng/shark-mqtt`
 |  +-----------------------------------------------------+ |
 |                                                           |
 |  +-----------------------------------------------------+ |
-|  |           test/integration/sharksocket/              | |
+|  |           tests/integration/sharksocket/              | |
 |  |    shark-socket integration tests (adapter)          | |
 |  +-----------------------------------------------------+ |
 +-----------------------------------------------------------+
@@ -1643,15 +1643,15 @@ Unit tests (no network):
   config/config_test.go          -> test config loading
 
 Integration tests (real connections):
-  test/integration/connect_test.go            -> CONNECT/CONNACK flow
-  test/integration/pubsub_test.go             -> PUBLISH/SUBSCRIBE end-to-end
-  test/integration/qos_test.go                -> QoS 0/1/2 complete flow
-  test/integration/persistent_session_test.go -> disconnect/reconnect persistent sessions
-  test/integration/will_test.go               -> will message trigger
+  tests/integration/connect_test.go            -> CONNECT/CONNACK flow
+  tests/integration/pubsub_test.go             -> PUBLISH/SUBSCRIBE end-to-end
+  tests/integration/qos_test.go                -> QoS 0/1/2 complete flow
+  tests/integration/persistent_session_test.go -> disconnect/reconnect persistent sessions
+  tests/integration/will_test.go               -> will message trigger
 
 Benchmark tests:
-  test/integration/broker_bench_test.go       -> broker-level benchmarks
-  test/integration/micro_bench_test.go        -> micro-benchmarks
+  tests/integration/broker_bench_test.go       -> broker-level benchmarks
+  tests/integration/micro_bench_test.go        -> micro-benchmarks
 ```
 
 ### Test Utilities (testutils/)
@@ -1697,10 +1697,10 @@ go test -race ./...
 go test -race ./broker/... ./protocol/... ./store/... ./config/... ./pkg/...
 
 # Integration tests
-go test -race ./test/integration/...
+go test -race ./tests/integration/...
 
 # Benchmarks
-go test -bench=. -benchmem -benchtime=10s ./test/integration/...
+go test -bench=. -benchmem -benchtime=10s ./tests/integration/...
 
 # Coverage
 go test -coverprofile=coverage.out ./...
@@ -1719,7 +1719,7 @@ go tool cover -html=coverage.out -o coverage.html
 - MQTT code volume is substantial and self-contained
 - Optional external dependencies (Redis/BadgerDB) should not pollute other frameworks
 - Supports independent versioning, deployment, and scaling
-- Integration with shark-socket via `test/integration/sharksocket/` adapter
+- Integration with shark-socket via `tests/integration/sharksocket/` adapter
 
 ---
 

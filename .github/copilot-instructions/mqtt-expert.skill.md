@@ -80,8 +80,8 @@ gopkg.in/yaml.v3                   → Config YAML loading
 
 ## Testing Strategy
 - **Unit tests**: Per package (`broker`, `protocol`, `store/memory`, `store/badger`, `config`, `api`, `plugin`, `pkg/`, `client`, `errs`)
-- **Integration tests**: `test/integration/` (connect, pubsub, QoS 0/1/2, will, persistent sessions)
-- **Benchmark tests**: `test/bench/` (E2E benchmarks in `broker_bench_test.go`, micro-benchmarks in `micro_bench_test.go`)
+- **Integration tests**: `tests/integration/` (connect, pubsub, QoS 0/1/2, will, persistent sessions)
+- **Benchmark tests**: `tests/bench/` (E2E benchmarks in `broker_bench_test.go`, micro-benchmarks in `micro_bench_test.go`)
 - **Boundary tests**: `broker/qos_engine_boundary_test.go` (PacketID, Topic, ClientID, QoS, Payload, Retain)
 - **Mock implementations**: `testutils/`
 
