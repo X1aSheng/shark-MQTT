@@ -1,5 +1,5 @@
 // Package integration provides end-to-end QoS flow tests.
-// Run with: go test -race -tags=integration ./test/integration/...
+// Run with: go test -race -tags=integration ./tests/integration/...
 package integration
 
 import (

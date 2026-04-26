@@ -25,7 +25,7 @@ test-unit:
 
 test-integration:
 	@echo "$(CYAN)[TEST] Running integration tests...$(RESET)"
-	$(GO) test $(GOFLAGS) -tags=integration -count=1 ./test/integration/...
+	$(GO) test $(GOFLAGS) -tags=integration -count=1 ./tests/integration/...
 
 test-redis:
 	@echo "$(CYAN)[TEST] Running Redis store tests...$(RESET)"
@@ -41,27 +41,27 @@ test-race:
 
 test-bench:
 	@echo "$(YELLOW)[BENCH] Running benchmarks...$(RESET)"
-	$(GO) test -bench=. -benchmem -benchtime=5s -count=3 ./test/bench/...
+	$(GO) test -bench=. -benchmem -benchtime=5s -count=3 ./tests/bench/...
 
 bench: test-bench
 
 bench-quick:
 	@echo "$(YELLOW)[BENCH] Quick benchmark (1s per test)...$(RESET)"
-	$(GO) test -bench=. -benchmem -benchtime=1s -count=1 ./test/bench/...
+	$(GO) test -bench=. -benchmem -benchtime=1s -count=1 ./tests/bench/...
 
 bench-cpu:
 	@echo "$(YELLOW)[BENCH] CPU profiling benchmark...$(RESET)"
-	$(GO) test -bench=. -benchtime=5s -cpuprofile=cpu.prof ./test/bench/...
+	$(GO) test -bench=. -benchtime=5s -cpuprofile=cpu.prof ./tests/bench/...
 	@echo "$(GREEN)Run 'go tool pprof cpu.prof' to analyze$(RESET)"
 
 bench-mem:
 	@echo "$(YELLOW)[BENCH] Memory profiling benchmark...$(RESET)"
-	$(GO) test -bench=. -benchtime=5s -memprofile=mem.prof ./test/bench/...
+	$(GO) test -bench=. -benchtime=5s -memprofile=mem.prof ./tests/bench/...
 	@echo "$(GREEN)Run 'go tool pprof mem.prof' to analyze$(RESET)"
 
 bench-profile:
 	@echo "$(YELLOW)[BENCH] Full profiling (CPU + Memory)...$(RESET)"
-	$(GO) test -bench=. -benchtime=5s -cpuprofile=cpu.prof -memprofile=mem.prof ./test/bench/...
+	$(GO) test -bench=. -benchtime=5s -cpuprofile=cpu.prof -memprofile=mem.prof ./tests/bench/...
 	@echo "$(GREEN)CPU profile: go tool pprof cpu.prof$(RESET)"
 	@echo "$(GREEN)Mem profile:  go tool pprof mem.prof$(RESET)"
 

@@ -27,7 +27,7 @@ Shark-MQTT uses a layered testing approach:
 ├────────────────────────────────────────┤
 │           Integration Tests            │
 │  (End-to-end MQTT workflows)           │
-│  → test/integration/                   │
+│  → tests/integration/                   │
 │  → Run with: -tags=integration         │
 ├────────────────────────────────────────┤
 │           Unit Tests                   │
@@ -36,7 +36,7 @@ Shark-MQTT uses a layered testing approach:
 ├────────────────────────────────────────┤
 │           Benchmark Tests              │
 │  (Performance validation)              │
-│  → test/bench/                         │
+│  → tests/bench/                         │
 └────────────────────────────────────────┘
 ```
 
@@ -69,13 +69,13 @@ func TestTopicTree_Subscribe(t *testing.T) {
 
 Integration tests use real TCP connections and verify end-to-end workflows.
 
-**Location**: `test/integration/`
+**Location**: `tests/integration/`
 
 **Purpose**: Test complete MQTT workflows
 
 **Run**:
 ```bash
-go test -race -tags=integration -v ./test/integration/...
+go test -race -tags=integration -v ./tests/integration/...
 ```
 
 **Example**:
@@ -105,7 +105,7 @@ Benchmark tests measure performance characteristics across two tiers:
 
 #### E2E Benchmarks
 
-**Location**: `test/bench/broker_bench_test.go`
+**Location**: `tests/bench/broker_bench_test.go`
 
 18 benchmarks covering the full MQTT stack through real TCP connections:
 
@@ -118,7 +118,7 @@ Benchmark tests measure performance characteristics across two tiers:
 
 #### Micro-Benchmarks
 
-**Location**: `test/bench/micro_bench_test.go`
+**Location**: `tests/bench/micro_bench_test.go`
 
 23 benchmarks targeting individual components in isolation:
 
@@ -134,13 +134,13 @@ Benchmark tests measure performance characteristics across two tiers:
 **Run**:
 ```bash
 # All benchmarks
-go test -bench=. -benchmem -benchtime=10s ./test/bench/...
+go test -bench=. -benchmem -benchtime=10s ./tests/bench/...
 
 # E2E benchmarks only
-go test -bench=BenchmarkConnect -benchmem ./test/bench/...
+go test -bench=BenchmarkConnect -benchmem ./tests/bench/...
 
 # Micro-benchmarks only
-go test -bench=BenchmarkTopicTree -benchmem ./test/bench/...
+go test -bench=BenchmarkTopicTree -benchmem ./tests/bench/...
 ```
 
 **Example**:
@@ -185,7 +185,7 @@ go test -coverprofile=coverage.out ./...
 go tool cover -html=coverage.out -o coverage.html
 
 # Benchmarks
-go test -bench=. -benchmem -benchtime=10s ./test/bench/...
+go test -bench=. -benchmem -benchtime=10s ./tests/bench/...
 
 # Redis store tests (requires Redis running)
 MQTT_REDIS_ADDR=localhost:6379 go test ./store/redis/...

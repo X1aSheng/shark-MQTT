@@ -4,7 +4,7 @@
 //
 //	import (
 //	    ss "github.com/yourorg/shark-socket/api"
-//	    mqttadapter "github.com/X1aSheng/shark-mqtt/test/integration/sharksocket"
+//	    mqttadapter "github.com/X1aSheng/shark-mqtt/tests/integration/sharksocket"
 //	)
 //
 //	adapter := mqttadapter.New(":1883", cfg)

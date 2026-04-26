@@ -14,7 +14,7 @@ make bench-quick
 make bench
 
 # Run a specific benchmark
-go test -bench=BenchmarkPublishQos0 -benchmem ./test/bench/...
+go test -bench=BenchmarkPublishQos0 -benchmem ./tests/bench/...
 ```
 
 ---
@@ -23,7 +23,7 @@ go test -bench=BenchmarkPublishQos0 -benchmem ./test/bench/...
 
 ### End-to-End Benchmarks
 
-Located in `test/bench/broker_bench_test.go`. These tests start a real broker on a random port and measure actual network throughput.
+Located in `tests/bench/broker_bench_test.go`. These tests start a real broker on a random port and measure actual network throughput.
 
 | Benchmark | Description |
 |-----------|-------------|
@@ -40,7 +40,7 @@ Located in `test/bench/broker_bench_test.go`. These tests start a real broker on
 
 ### Micro-Benchmarks
 
-Located in `test/bench/micro_bench_test.go`. These benchmark individual components in isolation.
+Located in `tests/bench/micro_bench_test.go`. These benchmark individual components in isolation.
 
 | Benchmark | Component | What it measures |
 |-----------|-----------|------------------|
@@ -64,16 +64,16 @@ Located in `test/bench/micro_bench_test.go`. These benchmark individual componen
 
 ```bash
 # All benchmarks with memory allocation stats
-go test -bench=. -benchmem ./test/bench/...
+go test -bench=. -benchmem ./tests/bench/...
 
 # Specific benchmark
-go test -bench=BenchmarkPublishQos1 -benchmem ./test/bench/...
+go test -bench=BenchmarkPublishQos1 -benchmem ./tests/bench/...
 
 # Longer run for more stable results
-go test -bench=. -benchmem -benchtime=10s ./test/bench/...
+go test -bench=. -benchmem -benchtime=10s ./tests/bench/...
 
 # Multiple iterations
-go test -bench=. -benchmem -benchtime=5s -count=5 ./test/bench/...
+go test -bench=. -benchmem -benchtime=5s -count=5 ./tests/bench/...
 ```
 
 ### Makefile Targets
@@ -114,7 +114,7 @@ go tool pprof mem.prof
 
 ```bash
 go test -bench=BenchmarkConcurrentPublish -benchtime=3s \
-    -trace=trace.out ./test/bench/...
+    -trace=trace.out ./tests/bench/...
 go tool trace trace.out
 ```
 
@@ -219,10 +219,10 @@ func BenchmarkComponent(b *testing.B) {
 
 ```bash
 # Save baseline
-go test -bench=. -benchmem -count=5 ./test/bench/... > old.txt
+go test -bench=. -benchmem -count=5 ./tests/bench/... > old.txt
 
 # After changes
-go test -bench=. -benchmem -count=5 ./test/bench/... > new.txt
+go test -bench=. -benchmem -count=5 ./tests/bench/... > new.txt
 
 # Compare (requires benchstat)
 go install golang.org/x/perf/cmd/benchstat@latest
@@ -236,7 +236,7 @@ Add to your CI pipeline:
 ```yaml
 - name: Benchmark
   run: |
-    go test -bench=. -benchmem -benchtime=1s -count=3 ./test/bench/... | tee bench-results.txt
+    go test -bench=. -benchmem -benchtime=1s -count=3 ./tests/bench/... | tee bench-results.txt
 ```
 
 ---

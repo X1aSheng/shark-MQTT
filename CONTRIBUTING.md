@@ -43,7 +43,7 @@ Thank you for your interest in contributing to Shark-MQTT! This document provide
    go test -race ./...
 
    # Integration tests (requires Redis running)
-   go test -race -tags=integration ./test/integration/...
+   go test -race -tags=integration ./tests/integration/...
 
    # Or use Make
    make test
@@ -229,7 +229,7 @@ Integration tests require Redis running locally:
 docker run -d -p 6379:6379 redis:7-alpine
 
 # Run integration tests
-go test -race -tags=integration ./test/integration/...
+go test -race -tags=integration ./tests/integration/...
 ```
 
 ### Benchmark Tests

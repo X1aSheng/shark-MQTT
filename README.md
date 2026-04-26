@@ -74,8 +74,8 @@ A high-performance MQTT Broker written in Go, supporting both **MQTT 3.1.1** and
 | `plugin/` | Plugin system with hook-based architecture |
 | `client/` | MQTT client implementation |
 | `errs/` | Centralized error definitions |
-| `test/integration/` | 47 end-to-end integration tests |
-| `test/bench/` | 46 benchmarks (broker + micro) |
+| `tests/integration/` | 47 end-to-end integration tests |
+| `tests/bench/` | 46 benchmarks (broker + micro) |
 | `examples/` | Runnable example programs (standalone, TLS, custom auth, shark-socket) |
 | `docs/` | Architecture, deployment, performance, and improvement docs |
 | `scripts/` | Test runner scripts (Windows/Linux/macOS) |
