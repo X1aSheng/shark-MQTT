@@ -33,15 +33,18 @@ func (c *Codec) decodeSubscribe(r io.Reader, fh *FixedHeader) (*SubscribePacket,
 		for reader.Len() > 0 {
 			topic, err := readStringFromReader(reader)
 			if err != nil {
-				break
+				return nil, err
 			}
-			qosByte, err := reader.ReadByte()
+			optsByte, err := reader.ReadByte()
 			if err != nil {
-				break
+				return nil, err
 			}
 			topics = append(topics, TopicFilter{
-				Topic: topic,
-				QoS:   qosByte & 0x03,
+				Topic:             topic,
+				QoS:               optsByte & 0x03,
+				NoLocal:           (optsByte & 0x04) != 0,
+				RetainAsPublished: (optsByte & 0x08) != 0,
+				RetainHandling:    (optsByte >> 4) & 0x03,
 			})
 		}
 
@@ -104,7 +107,15 @@ func (c *Codec) encodeSubscribe(w io.Writer, pkt *SubscribePacket) error {
 			return err
 		}
 		// Subscription Options byte
-		if err := buf.WriteByte(topic.QoS); err != nil {
+		var opts byte = topic.QoS & 0x03
+		if topic.NoLocal {
+			opts |= 0x04
+		}
+		if topic.RetainAsPublished {
+			opts |= 0x08
+		}
+		opts |= (topic.RetainHandling & 0x03) << 4
+		if err := buf.WriteByte(opts); err != nil {
 			return err
 		}
 	}

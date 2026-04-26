@@ -104,14 +104,72 @@ const (
 	ReasonCodeGrantedQoS0              = 0x00
 	ReasonCodeGrantedQoS1              = 0x01
 	ReasonCodeGrantedQoS2              = 0x02
+
+	// Failure reason codes (MQTT 5.0)
 	ReasonCodeUnspecifiedError         = 0x80
-	ReasonCodeInvalidTopic             = 0x8F
-	ReasonCodePacketIdentifierInUse    = 0x91
-	ReasonCodeQuotaExceeded            = 0x97
+	ReasonCodeMalformedPacket          = 0x81
+	ReasonCodeProtocolError            = 0x82
+	ReasonCodeImplementationSpecific   = 0x83
 	ReasonCodeNotAuthorized            = 0x87
+	ReasonCodeServerBusy               = 0x89
+	ReasonCodeBadAuthMethod             = 0x8C
+	ReasonCodeTopicFilterInvalid       = 0x8F
+	ReasonCodePacketIdentifierInUse    = 0x91
+	ReasonCodePacketIdentifierNotFound = 0x92
+	ReasonCodeReceiveMaxExceeded       = 0x93
+	ReasonCodeTopicAliasInvalid        = 0x94
+	ReasonCodePacketTooLarge           = 0x95
+	ReasonCodeMessageRateTooHigh       = 0x96
+	ReasonCodeQuotaExceeded            = 0x97
+	ReasonCodeAdministrativeAction     = 0x98
+	ReasonCodePayloadFormatInvalid     = 0x99
+	ReasonCodeRetainNotSupported       = 0xA0
+	ReasonCodeQoSNotSupported          = 0xA1
+	ReasonCodeUseAnotherServer         = 0x9C
+	ReasonCodeServerMoved              = 0x9D
+	ReasonCodeSharedSubNotSupported    = 0xA2
+	ReasonCodeConnectionRateExceeded   = 0x9F
+	ReasonCodeMaxConnectTime           = 0xA3
+	ReasonCodeSubscriptionIDsNotSupported = 0xA4
+	ReasonCodeWildcardSubNotSupported  = 0xA5
 )
 
 // SubAck failure codes.
 const (
 	SubAckFailure = 0x80
+)
+
+// DISCONNECT reason codes (MQTT 5.0).
+const (
+	DisconnectNormalDisconnection     = 0x00
+	DisconnectClientReasonUnspecified  = 0x04
+	DisconnectProtocolError            = 0x82
+	DisconnectImplementationError      = 0x83
+	DisconnectKeepAliveTimeout         = 0x8D
+	DisconnectSessionTakenOver         = 0x8E
+	DisconnectTopicFilterInvalid       = 0x8F
+	DisconnectTopicNameInvalid         = 0x90
+	DisconnectReceiveMaximumExceeded   = 0x93
+	DisconnectTopicAliasInvalid        = 0x94
+	DisconnectPacketTooLarge           = 0x95
+	DisconnectMessageRateTooHigh       = 0x96
+	DisconnectQuotaExceeded            = 0x97
+	DisconnectAdministrativeAction     = 0x98
+	DisconnectPayloadFormatInvalid     = 0x99
+	DisconnectRetainNotSupported       = 0xA0
+	DisconnectQoSNotSupported          = 0xA1
+	DisconnectUseAnotherServer         = 0x9C
+	DisconnectServerMoved              = 0x9D
+	DisconnectSharedSubNotSupported    = 0xA2
+	DisconnectConnectionRateExceeded   = 0x9F
+	DisconnectMaxConnectTime           = 0xA3
+	DisconnectSubscriptionIDsNotSupported = 0xA4
+	DisconnectWildcardSubNotSupported  = 0xA5
+)
+
+// AUTH reason codes (MQTT 5.0).
+const (
+	AuthSuccess            = 0x18
+	AuthContinueAuth       = 0x19
+	AuthReAuth             = 0x1A
 )
