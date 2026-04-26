@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
+	"net/http"
 
 	"github.com/X1aSheng/shark-mqtt/broker"
 	"github.com/X1aSheng/shark-mqtt/config"
@@ -16,26 +18,28 @@ import (
 
 // Broker is the main MQTT broker that combines network server with broker core.
 type Broker struct {
-	srv    *broker.MQTTServer
-	broker *broker.Broker
-	cfg    *config.Config
-	auth   broker.Authenticator
-	authz  broker.Authorizer
+	srv       *broker.MQTTServer
+	broker    *broker.Broker
+	cfg       *config.Config
+	auth      broker.Authenticator
+	authz     broker.Authorizer
+	healthSrv *http.Server
 }
 
 // Option configures the broker.
 type Option func(*brokerOpts)
 
 type brokerOpts struct {
-	cfg         *config.Config
-	auth        broker.Authenticator
-	authorizer  broker.Authorizer
-	sessionStore    store.SessionStore
-	messageStore    store.MessageStore
-	retainedStore   store.RetainedStore
-	logger          logger.Logger
-	metrics         metrics.Metrics
-	pluginManager   *plugin.Manager
+	cfg            *config.Config
+	auth           broker.Authenticator
+	authorizer     broker.Authorizer
+	sessionStore   store.SessionStore
+	messageStore   store.MessageStore
+	retainedStore  store.RetainedStore
+	logger         logger.Logger
+	metrics        metrics.Metrics
+	pluginManager  *plugin.Manager
+	maxConnections int
 }
 
 // WithAuth sets the authenticator.
@@ -101,6 +105,13 @@ func WithPluginManager(m *plugin.Manager) Option {
 	}
 }
 
+// WithMaxConnections sets the maximum concurrent connections (0 = unlimited).
+func WithMaxConnections(n int) Option {
+	return func(o *brokerOpts) {
+		o.maxConnections = n
+	}
+}
+
 // NewBroker creates a new MQTT broker with the given options.
 func NewBroker(opts ...Option) *Broker {
 	o := &brokerOpts{
@@ -117,6 +128,10 @@ func NewBroker(opts ...Option) *Broker {
 		broker.WithAuth(o.auth),
 		broker.WithAuthorizer(o.authorizer),
 		broker.WithPluginManager(o.pluginManager),
+	}
+
+	if o.maxConnections > 0 {
+		bopts = append(bopts, broker.WithMaxConnections(o.maxConnections))
 	}
 
 	if o.sessionStore != nil {
@@ -166,12 +181,18 @@ func (b *Broker) Start() error {
 		return fmt.Errorf("api: server start failed: %w", err)
 	}
 
+	// Health check endpoint
+	b.startHealthServer()
+
 	log.Printf("[api] Shark-MQTT started on %s", b.cfg.ListenAddr)
 	return nil
 }
 
 // Stop gracefully shuts down both the server and broker.
 func (b *Broker) Stop() {
+	if b.healthSrv != nil {
+		b.healthSrv.Close()
+	}
 	b.srv.Stop()
 	b.broker.Stop()
 	log.Println("[api] Shark-MQTT stopped")
@@ -207,4 +228,30 @@ func Run(ctx context.Context, opts ...Option) error {
 	<-ctx.Done()
 	b.Stop()
 	return nil
+}
+
+func (b *Broker) startHealthServer() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, "ok")
+	})
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if b.srv.Addr() != nil {
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, "ok")
+		} else {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprintf(w, "not ready")
+		}
+	})
+
+	ln, err := net.Listen("tcp", b.cfg.MetricsAddr)
+	if err != nil {
+		log.Printf("[api] health server: %v (skipped)", err)
+		return
+	}
+	b.healthSrv = &http.Server{Handler: mux}
+	go b.healthSrv.Serve(ln)
+	log.Printf("[api] health endpoint on %s", b.cfg.MetricsAddr)
 }

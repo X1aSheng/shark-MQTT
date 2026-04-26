@@ -18,6 +18,7 @@ import (
 type clientState struct {
 	conn  net.Conn
 	codec *protocol.Codec
+	wmu   sync.Mutex // serializes writes to this connection
 }
 
 // Broker is the core MQTT message broker that orchestrates TopicTree, QoSEngine,
@@ -26,7 +27,7 @@ type Broker struct {
 	topics   *TopicTree
 	qos      *QoSEngine
 	will     *WillHandler
-	sessions      *Manager
+	sessions *Manager
 
 	sessionStore  store.SessionStore
 	messageStore  store.MessageStore
@@ -102,7 +103,19 @@ func New(opts ...Option) *Broker {
 func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *protocol.Codec) error {
 	c := codec
 	if c == nil {
-		c = b.codec
+		c = protocol.NewCodec(256 * 1024)
+	}
+
+	// Check connection limit
+	if b.opts.maxConnections > 0 {
+		b.mu.RLock()
+		count := len(b.connections)
+		b.mu.RUnlock()
+		if count >= b.opts.maxConnections {
+			b.metrics.IncRejections("max_connections")
+			conn.Close()
+			return fmt.Errorf("broker: max connections (%d) reached", b.opts.maxConnections)
+		}
 	}
 
 	// Plugin hook: OnAccept
@@ -151,7 +164,11 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 
 	// Register will message
 	if connectPkt.Flags.WillFlag {
-		b.will.RegisterWill(clientID, connectPkt.WillTopic, connectPkt.WillMessage, connectPkt.Flags.WillQoS, connectPkt.Flags.WillRetain, 0)
+		var willDelay time.Duration
+		if connectPkt.WillProperties != nil && connectPkt.WillProperties.WillDelayInterval != nil {
+			willDelay = time.Duration(*connectPkt.WillProperties.WillDelayInterval) * time.Second
+		}
+		b.will.RegisterWill(clientID, connectPkt.WillTopic, connectPkt.WillMessage, connectPkt.Flags.WillQoS, connectPkt.Flags.WillRetain, willDelay)
 	}
 
 	// Plugin hook: OnConnected
@@ -182,8 +199,34 @@ func (b *Broker) Start() error {
 }
 
 // Stop stops the broker's internal subsystems and closes all sessions.
+// It waits up to drainTimeout for in-flight QoS messages to complete.
 func (b *Broker) Stop() {
 	b.cancel()
+
+	// Drain in-flight messages with a timeout
+	drainTimeout := 5 * time.Second
+	deadline := time.Now().Add(drainTimeout)
+	for time.Now().Before(deadline) {
+		total := 0
+		b.mu.RLock()
+		for _, id := range b.connections {
+			total += b.qos.InflightCount(id.conn.RemoteAddr().String())
+		}
+		b.mu.RUnlock()
+		if total == 0 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// Close all client connections
+	b.mu.Lock()
+	for id, cs := range b.connections {
+		cs.conn.Close()
+		delete(b.connections, id)
+	}
+	b.mu.Unlock()
+
 	b.qos.Stop()
 	b.will.Stop()
 }
@@ -339,7 +382,10 @@ func (b *Broker) handleSubscribe(clientID string, sess *Session, pkt *protocol.S
 			continue
 		}
 
-		b.topics.Subscribe(topic.Topic, clientID, topic.QoS)
+		if !b.topics.Subscribe(topic.Topic, clientID, topic.QoS) {
+			reasonCodes[i] = protocol.SubAckFailure
+			continue
+		}
 		sess.AddSubscription(topic.Topic, topic.QoS)
 		reasonCodes[i] = topic.QoS
 	}
@@ -421,6 +467,11 @@ func (b *Broker) deliverRetainedMessages(clientID string, sess *Session, topicFi
 
 	for _, msg := range retained {
 		deliverQoS := msg.QoS
+		// Downgrade QoS to the lower of stored and subscribed QoS
+		_, subQoS := sess.MatchesSubscription(msg.Topic)
+		if subQoS < deliverQoS {
+			deliverQoS = subQoS
+		}
 		pubPkt := &protocol.PublishPacket{
 			FixedHeader: protocol.FixedHeader{
 				PacketType: protocol.PacketTypePublish,
@@ -458,7 +509,10 @@ func (b *Broker) writePacketTo(clientID string, pkt protocol.Packet) {
 	if !ok {
 		return
 	}
-	if err := cs.codec.Encode(cs.conn, pkt); err != nil {
+	cs.wmu.Lock()
+	err := cs.codec.Encode(cs.conn, pkt)
+	cs.wmu.Unlock()
+	if err != nil {
 		b.logger.Debug("write error", "clientID", clientID, "error", err)
 	}
 }
@@ -477,7 +531,9 @@ func (b *Broker) sendConnAck(clientID string, reasonCode byte, sessionPresent bo
 		ReasonCode:     reasonCode,
 		SessionPresent: sessionPresent,
 	}
+	cs.wmu.Lock()
 	cs.codec.Encode(cs.conn, pkt)
+	cs.wmu.Unlock()
 }
 
 func (b *Broker) sendConnAckRaw(conn net.Conn, reasonCode byte, sessionPresent bool) {

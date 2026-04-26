@@ -3,6 +3,7 @@ package config
 
 import (
 	"crypto/tls"
+	"fmt"
 	"time"
 )
 
@@ -43,8 +44,8 @@ type Config struct {
 	LogFormat string `yaml:"log_format" toml:"log_format" env:"MQTT_LOG_FORMAT"`
 
 	// Metrics
-	MetricsEnabled  bool   `yaml:"metrics_enabled" toml:"metrics_enabled" env:"MQTT_METRICS_ENABLED"`
-	MetricsAddr     string `yaml:"metrics_addr" toml:"metrics_addr" env:"MQTT_METRICS_ADDR"`
+	MetricsEnabled bool   `yaml:"metrics_enabled" toml:"metrics_enabled" env:"MQTT_METRICS_ENABLED"`
+	MetricsAddr    string `yaml:"metrics_addr" toml:"metrics_addr" env:"MQTT_METRICS_ADDR"`
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -67,6 +68,42 @@ func DefaultConfig() *Config {
 		MetricsEnabled:        false,
 		MetricsAddr:           ":9090",
 	}
+}
+
+// Validate checks that configuration values are valid.
+func (c *Config) Validate() error {
+	if c.MaxPacketSize <= 0 {
+		return fmt.Errorf("max_packet_size must be > 0, got %d", c.MaxPacketSize)
+	}
+	if c.MaxConnections < 0 {
+		return fmt.Errorf("max_connections must be >= 0, got %d", c.MaxConnections)
+	}
+	if c.QoSMaxRetries < 0 {
+		return fmt.Errorf("qos_max_retries must be >= 0, got %d", c.QoSMaxRetries)
+	}
+	if c.QoSMaxInflight <= 0 {
+		return fmt.Errorf("qos_max_inflight must be > 0, got %d", c.QoSMaxInflight)
+	}
+	if c.QoSRetryInterval <= 0 {
+		return fmt.Errorf("qos_retry_interval must be > 0, got %v", c.QoSRetryInterval)
+	}
+	if c.TLSEnabled {
+		if c.TLSCertFile == "" {
+			return fmt.Errorf("tls_cert_file is required when TLS is enabled")
+		}
+		if c.TLSKeyFile == "" {
+			return fmt.Errorf("tls_key_file is required when TLS is enabled")
+		}
+	}
+	switch c.StorageBackend {
+	case "memory", "redis", "badger", "":
+	default:
+		return fmt.Errorf("unknown storage_backend: %q (must be memory, redis, or badger)", c.StorageBackend)
+	}
+	if c.StorageBackend == "redis" && c.RedisAddr == "" {
+		return fmt.Errorf("redis_addr is required when storage_backend is redis")
+	}
+	return nil
 }
 
 // TLSConfig builds a *tls.Config from the configuration.

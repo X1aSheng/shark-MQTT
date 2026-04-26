@@ -155,7 +155,11 @@ func topicMatch(pattern, topic string) bool {
 	}
 
 	if len(patternParts) > len(topicParts) {
-		return false
+		// # can match zero remaining levels, so a pattern ending with # is
+		// allowed to be one element longer than the topic.
+		if len(patternParts) != len(topicParts)+1 || patternParts[len(patternParts)-1] != "#" {
+			return false
+		}
 	}
 
 	for i, pp := range patternParts {

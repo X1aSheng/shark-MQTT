@@ -29,22 +29,30 @@ func NewTopicTree() *TopicTree {
 }
 
 // Subscribe adds a subscription for a client to a topic filter.
-func (tt *TopicTree) Subscribe(topic string, clientID string, qos uint8) {
+func (tt *TopicTree) Subscribe(topic string, clientID string, qos uint8) bool {
+	if !ValidateTopicFilter(topic) {
+		return false
+	}
 	tt.mu.Lock()
 	defer tt.mu.Unlock()
 
 	parts := splitTopic(topic)
 	tt.subscribeNode(tt.root, parts, clientID, qos, 0)
+	return true
 }
 
 // SubscribeSystem adds a subscription for a system topic ($SYS).
 // System topics are protected from wildcard matching.
-func (tt *TopicTree) SubscribeSystem(topic string, clientID string, qos uint8) {
+func (tt *TopicTree) SubscribeSystem(topic string, clientID string, qos uint8) bool {
+	if !ValidateTopicFilter(topic) {
+		return false
+	}
 	tt.mu.Lock()
 	defer tt.mu.Unlock()
 
 	parts := splitTopic(topic)
 	tt.subscribeNode(tt.root, parts, clientID, qos, 0)
+	return true
 }
 
 // Unsubscribe removes a client's subscription from a topic filter.
@@ -193,6 +201,37 @@ func (tt *TopicTree) collectAllSubscribers(node *TopicNode, results *[]Subscribe
 	for _, child := range node.children {
 		tt.collectAllSubscribers(child, results, visited)
 	}
+}
+
+// ValidateTopicFilter checks whether a topic filter conforms to MQTT spec rules.
+// Rules: '#' must be last character and preceded by '/' or be the entire filter;
+// '+' must occupy an entire level (bounded by '/' or string start/end).
+func ValidateTopicFilter(filter string) bool {
+	if len(filter) == 0 {
+		return false
+	}
+	for i := 0; i < len(filter); i++ {
+		switch filter[i] {
+		case '#':
+			// '#' must be the last character
+			if i != len(filter)-1 {
+				return false
+			}
+			// '#' must be preceded by '/' or be the first character
+			if i > 0 && filter[i-1] != '/' {
+				return false
+			}
+		case '+':
+			// '+' must be bounded by '/' or string boundaries
+			if i > 0 && filter[i-1] != '/' {
+				return false
+			}
+			if i < len(filter)-1 && filter[i+1] != '/' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // splitTopic splits a topic string by '/'.

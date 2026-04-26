@@ -21,6 +21,7 @@ func (c *Codec) decodeConnect(r io.Reader, fh *FixedHeader) (*ConnectPacket, err
 	if err != nil {
 		return nil, err
 	}
+	c.protocolVersion = protoVer
 
 	connectFlags, err := reader.ReadByte()
 	if err != nil {
@@ -28,13 +29,13 @@ func (c *Codec) decodeConnect(r io.Reader, fh *FixedHeader) (*ConnectPacket, err
 	}
 
 	flags := ConnectFlags{
-		UsernameFlag:  (connectFlags & 0x80) != 0,
-		PasswordFlag:  (connectFlags & 0x40) != 0,
-		WillRetain:    (connectFlags & 0x20) != 0,
-		WillQoS:       (connectFlags >> 3) & 0x03,
-		WillFlag:      (connectFlags & 0x04) != 0,
-		CleanSession:  (connectFlags & 0x02) != 0,
-		Reserved:      (connectFlags & 0x01) != 0,
+		UsernameFlag: (connectFlags & 0x80) != 0,
+		PasswordFlag: (connectFlags & 0x40) != 0,
+		WillRetain:   (connectFlags & 0x20) != 0,
+		WillQoS:      (connectFlags >> 3) & 0x03,
+		WillFlag:     (connectFlags & 0x04) != 0,
+		CleanSession: (connectFlags & 0x02) != 0,
+		Reserved:     (connectFlags & 0x01) != 0,
 	}
 	// For MQTT 5.0, CleanSession bit means CleanStart
 	if protoVer == Version50 {
@@ -129,6 +130,9 @@ func (c *Codec) decodeConnect(r io.Reader, fh *FixedHeader) (*ConnectPacket, err
 func (c *Codec) encodeConnect(w io.Writer, pkt *ConnectPacket) error {
 	var buf bytes.Buffer
 
+	// Track protocol version for subsequent encode/decode
+	c.protocolVersion = pkt.ProtocolVersion
+
 	// Protocol name
 	if err := writeString(&buf, pkt.ProtocolName); err != nil {
 		return err
@@ -187,9 +191,16 @@ func (c *Codec) encodeConnect(w io.Writer, pkt *ConnectPacket) error {
 
 	// Will
 	if pkt.Flags.WillFlag {
-		if pkt.ProtocolVersion == Version50 && pkt.WillProperties != nil {
-			if err := c.encodeProperties(&buf, pkt.WillProperties); err != nil {
-				return err
+		if pkt.ProtocolVersion == Version50 {
+			if pkt.WillProperties != nil {
+				if err := c.encodeProperties(&buf, pkt.WillProperties); err != nil {
+					return err
+				}
+			} else {
+				// MQTT 5.0 requires Property Length field for will properties (0 if none)
+				if err := writeVarInt(&buf, 0); err != nil {
+					return err
+				}
 			}
 		}
 		if err := writeString(&buf, pkt.WillTopic); err != nil {
@@ -288,6 +299,10 @@ func (c *Codec) encodeConnAck(w io.Writer, pkt *ConnAckPacket) error {
 	// Properties (MQTT 5.0)
 	if pkt.Properties != nil {
 		if err := c.encodeProperties(&buf, pkt.Properties); err != nil {
+			return err
+		}
+	} else if c.protocolVersion == Version50 {
+		if err := writeVarInt(&buf, 0); err != nil {
 			return err
 		}
 	}

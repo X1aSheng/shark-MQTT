@@ -11,28 +11,61 @@ func (c *Codec) decodePublish(r io.Reader, fh *FixedHeader) (*PublishPacket, err
 		return nil, err
 	}
 
+	bytesRead := 2 + len(topic) // topic length prefix + topic string
+
 	var packetID uint16
 	if fh.QoS > 0 {
 		packetID, err = readUint16(r)
 		if err != nil {
 			return nil, err
 		}
+		bytesRead += 2
 	}
 
 	// MQTT 5.0 properties
 	var props *Properties
-	if fh.RemainingLength > len(topic)+2 { // +2 for topic length
-		if fh.QoS > 0 {
-			// Already read packetID
+	var propBytesRead int
+	if c.protocolVersion == Version50 {
+		// Read remaining bytes into buffer for property parsing
+		remaining := fh.RemainingLength - bytesRead
+		if remaining > 0 {
+			data := make([]byte, remaining)
+			if _, err := io.ReadFull(r, data); err != nil {
+				return nil, err
+			}
+			reader := bytes.NewReader(data)
+
+			props, err = c.decodeProperties(reader)
+			if err != nil {
+				// If properties fail to parse, treat all as payload
+				reader.Reset(data)
+			}
+			propBytesRead = remaining - reader.Len()
+
+			// Rest is payload
+			payloadLen := reader.Len()
+			var payload []byte
+			if payloadLen > 0 {
+				payload = make([]byte, payloadLen)
+				if _, err := reader.Read(payload); err != nil {
+					return nil, err
+				}
+			}
+			return &PublishPacket{
+				FixedHeader: *fh,
+				PacketID:    packetID,
+				Topic:       topic,
+				Payload:     payload,
+				Properties:  props,
+			}, nil
 		}
-		// This is simplified; full implementation would track bytes read
 	}
 
-	payload := make([]byte, fh.RemainingLength-len(topic)-2)
-	if fh.QoS > 0 {
-		payload = make([]byte, fh.RemainingLength-len(topic)-4)
-	}
-	if len(payload) > 0 {
+	// MQTT 3.1.1: remaining bytes are all payload
+	payloadLen := fh.RemainingLength - bytesRead - propBytesRead
+	var payload []byte
+	if payloadLen > 0 {
+		payload = make([]byte, payloadLen)
 		if _, err := io.ReadFull(r, payload); err != nil {
 			return nil, err
 		}
@@ -63,6 +96,10 @@ func (c *Codec) encodePublish(w io.Writer, pkt *PublishPacket) error {
 	// Properties (MQTT 5.0)
 	if pkt.Properties != nil {
 		if err := c.encodeProperties(&buf, pkt.Properties); err != nil {
+			return err
+		}
+	} else if c.protocolVersion == Version50 {
+		if err := writeVarInt(&buf, 0); err != nil {
 			return err
 		}
 	}

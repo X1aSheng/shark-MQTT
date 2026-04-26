@@ -13,31 +13,33 @@ import (
 type Option func(*brokerOptions)
 
 type brokerOptions struct {
-	sessionStore  store.SessionStore
-	messageStore  store.MessageStore
-	retainedStore store.RetainedStore
-	authenticator Authenticator
-	authorizer    Authorizer
-	pluginManager *plugin.Manager
-	logger        logger.Logger
-	metrics       metrics.Metrics
-	qosOpts       []QoSOption
-	maxInflight   int
-	retryInterval time.Duration
-	maxRetries    int
+	sessionStore   store.SessionStore
+	messageStore   store.MessageStore
+	retainedStore  store.RetainedStore
+	authenticator  Authenticator
+	authorizer     Authorizer
+	pluginManager  *plugin.Manager
+	logger         logger.Logger
+	metrics        metrics.Metrics
+	qosOpts        []QoSOption
+	maxInflight    int
+	retryInterval  time.Duration
+	maxRetries     int
+	maxConnections int
 }
 
 func defaultBrokerOptions() brokerOptions {
 	return brokerOptions{
-		authenticator: DenyAllAuth{},
-		authorizer:    AllowAllAuth{},
-		pluginManager: plugin.NewManager(),
-		logger:        logger.Noop(),
-		metrics:       metrics.Default(),
-		qosOpts:       []QoSOption{},
-		maxInflight:   100,
-		retryInterval: 10 * time.Second,
-		maxRetries:    3,
+		authenticator:  DenyAllAuth{},
+		authorizer:     AllowAllAuth{},
+		pluginManager:  plugin.NewManager(),
+		logger:         logger.Noop(),
+		metrics:        metrics.Default(),
+		qosOpts:        []QoSOption{},
+		maxInflight:    100,
+		retryInterval:  10 * time.Second,
+		maxRetries:     3,
+		maxConnections: 10000,
 	}
 }
 
@@ -101,5 +103,13 @@ func WithMetrics(m metrics.Metrics) Option {
 func WithQoSOptions(opts ...QoSOption) Option {
 	return func(o *brokerOptions) {
 		o.qosOpts = opts
+	}
+}
+
+// WithMaxConnections sets the maximum number of concurrent connections.
+// Set to 0 to disable the limit.
+func WithMaxConnections(n int) Option {
+	return func(o *brokerOptions) {
+		o.maxConnections = n
 	}
 }

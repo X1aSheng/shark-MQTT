@@ -83,6 +83,62 @@ func TestConnectFlow(t *testing.T) {
 		t.Errorf("expected CONNACK accepted, got %d", connAck.ReasonCode)
 	}
 
+	// Subscribe and verify data delivery
+	subPkt := &protocol.SubscribePacket{
+		FixedHeader: protocol.FixedHeader{
+			PacketType: protocol.PacketTypeSubscribe,
+			QoS:        1,
+		},
+		PacketID: 1,
+		Topics: []protocol.TopicFilter{
+			{Topic: "connect/topic", QoS: 0},
+		},
+	}
+	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := codec.Encode(conn, subPkt); err != nil {
+		t.Fatalf("SUBSCRIBE failed: %v", err)
+	}
+	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	pkt, err = codec.Decode(conn)
+	if err != nil {
+		t.Fatalf("SUBACK failed: %v", err)
+	}
+	if _, ok := pkt.(*protocol.SubAckPacket); !ok {
+		t.Fatalf("expected SUBACK, got %T", pkt)
+	}
+
+	// Publish from a second connection
+	pubConn := dialTestBroker(t, broker)
+	pubCodec := protocol.NewCodec(0)
+	connectClient(t, pubConn, pubCodec, "connect-publisher")
+	pubPkt := &protocol.PublishPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 0},
+		Topic:   "connect/topic",
+		Payload: []byte("connect-test"),
+	}
+	pubConn.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := pubCodec.Encode(pubConn, pubPkt); err != nil {
+		t.Fatalf("PUBLISH failed: %v", err)
+	}
+
+	// Subscriber receives PUBLISH
+	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	pkt, err = codec.Decode(conn)
+	if err != nil {
+		t.Fatalf("subscriber did not receive PUBLISH: %v", err)
+	}
+	delivered, ok := pkt.(*protocol.PublishPacket)
+	if !ok {
+		t.Fatalf("expected PUBLISH, got %T", pkt)
+	}
+	if delivered.Topic != "connect/topic" {
+		t.Errorf("expected topic connect/topic, got %s", delivered.Topic)
+	}
+	if string(delivered.Payload) != "connect-test" {
+		t.Errorf("expected payload connect-test, got %s", delivered.Payload)
+	}
+	t.Logf("data delivery verified: topic=%s payload=%s", delivered.Topic, delivered.Payload)
+
 	// Send PINGREQ
 	pingPkt := &protocol.PingReqPacket{
 		FixedHeader: protocol.FixedHeader{
