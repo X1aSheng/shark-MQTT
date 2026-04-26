@@ -48,11 +48,19 @@ func setupBroker(b *testing.B) *api.Broker {
 
 func dialBroker(b *testing.B, brk *api.Broker) net.Conn {
 	b.Helper()
-	conn, err := net.DialTimeout("tcp", brk.Addr(), 2*time.Second)
-	if err != nil {
-		b.Fatalf("dial %s: %v", brk.Addr(), err)
+	addr := brk.Addr()
+	for attempt := 0; attempt < 10; attempt++ {
+		conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+		if err == nil {
+			return conn
+		}
+		if attempt < 9 {
+			time.Sleep(time.Duration(attempt+1) * 20 * time.Millisecond)
+		} else {
+			b.Fatalf("dial %s after %d retries: %v", addr, attempt+1, err)
+		}
 	}
-	return conn
+	return nil
 }
 
 func connectedClient(b *testing.B, brk *api.Broker, clientID string) (net.Conn, *protocol.Codec) {

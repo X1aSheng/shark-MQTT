@@ -75,7 +75,7 @@ A high-performance MQTT Broker written in Go, supporting both **MQTT 3.1.1** and
 | `client/` | MQTT client implementation |
 | `errs/` | Centralized error definitions |
 | `tests/integration/` | 47 end-to-end integration tests |
-| `tests/bench/` | 46 benchmarks (broker + micro) |
+| `tests/bench/` | 57 benchmarks (broker + E2E data verify + micro) |
 | `examples/` | Runnable example programs (standalone, TLS, custom auth, shark-socket) |
 | `docs/` | Architecture, deployment, performance, and improvement docs |
 | `scripts/` | Test runner scripts (Windows/Linux/macOS) |
@@ -285,10 +285,10 @@ Full results: `make bench` or see `docs/performance.md`.
 
 | Type | Count | Status |
 |------|-------|--------|
-| Unit Tests | 197 | All pass |
+| Unit Tests | 224 | All pass |
 | Integration Tests | 47 | All pass |
-| Benchmarks | 46 | All pass |
-| **Total** | **290** | **0 failures** |
+| Benchmarks | 57 | All pass |
+| **Total** | **328** | **0 failures** |
 
 > 13 Redis tests skipped when `MQTT_REDIS_ADDR` is not set.
 
@@ -301,38 +301,95 @@ Full results: `make bench` or see `docs/performance.md`.
 | Will Messages | 4 | Abnormal/graceful disconnect, QoS 0/1 |
 | Topic Wildcards | 5 | `+`, `#`, root, mixed, multiple subscribers |
 | Retained Messages | 5 | New subscriber, update, delete, wildcard, QoS downgrade |
-| Multi-subscriber | 12 | Same topic, mixed QoS, ordering, burst, large/binary/empty/unicode payload, overlapping |
-| Unsubscribe | 4 | Stop delivery, multi-topic, wildcard, resubscribe |
-| QoS Details | 3 | Publisher ACK, full QoS 2 handshake, no-subscriber publish |
-| System Topics | 1 | Normal client exclusion |
+| Multi-subscriber | 12 | Same topic, mixed QoS, ordering, burst, large/binary/empty/unicode payload, overlapping, publish-to-self, structured binary |
+| Unsubscribe & QoS | 8 | Stop delivery, multi-topic, wildcard, resubscribe, system topic, QoS 1 ACK, QoS 2 handshake, no-subscriber publish |
 | Edge Cases | 5 | Auth failure, duplicate clientID, invalid filter, max connections, empty clientID |
 
 All integration tests with subscriptions verify **end-to-end data delivery**: publish a message after subscribe and confirm the subscriber receives the correct topic and payload.
 
 ### Running Tests
 
+All test runs automatically save timestamped logs to the `logs/` directory.
+
+#### Cross-Platform Test Scripts
+
+Three scripts provide identical functionality across platforms. Every target produces a log file named `logs/{YYYYMMDD_HHmmss}_{type}.log`.
+
+| Platform | Script |
+|----------|--------|
+| Linux / macOS / Git Bash / WSL | `./scripts/test.sh <target>` |
+| Windows CMD | `scripts\test.bat <target>` |
+| Windows PowerShell | `.\scripts\test.ps1 <target>` |
+
+**Targets:**
+
+| Target | Description | Log File |
+|--------|-------------|----------|
+| `all` | Unit + integration + benchmark with summary | Per-package unit + integration + benchmark + summary |
+| `unit` | Run all unit tests | `{ts}_unit.log` |
+| `integration` | Run integration tests | `{ts}_integration.log` |
+| `bench` | Run benchmarks (set `BENCHTIME`, default 1s) | `{ts}_benchmark.log` |
+| `quick` | Quick benchmark (500ms) | `{ts}_benchmark.log` |
+| `race` | Unit tests with race detector | `{ts}_race.log` |
+| `coverage` | Generate coverage report | `{ts}_coverage.log` |
+| `redis` | Redis store tests (set `MQTT_REDIS_ADDR`) | `{ts}_redis.log` |
+| `ci` | Full CI pipeline (vet + race + build) | `{ts}_ci.log` |
+
 ```bash
-# Unit tests
-make test
+# Run all tests (default)
+./scripts/test.sh
 
-# Integration tests
-make test-integration
+# Individual targets
+./scripts/test.sh unit
+./scripts/test.sh integration
+./scripts/test.sh bench
+./scripts/test.sh race
+./scripts/test.sh coverage
+./scripts/test.sh ci
 
-# With race detector
-make test-race
+# Windows CMD
+scripts\test.bat all
+scripts\test.bat unit
 
-# Benchmarks
-make bench-quick          # 1s per test
-make bench                # 5s x 3 runs
+# Windows PowerShell
+.\scripts\test.ps1 all
+.\scripts\test.ps1 unit
 
-# Coverage report
-make test-coverage
+# With custom benchmark duration
+BENCHTIME=5s ./scripts/test.sh bench
 
 # Redis tests
-MQTT_REDIS_ADDR=localhost:6379 make test-redis
+MQTT_REDIS_ADDR=localhost:6379 ./scripts/test.sh redis
+```
 
-# Full CI pipeline
-make ci
+The `all` target produces per-package unit logs and a summary:
+
+```
+logs/
+├── 20260426_194022_unit_api.log
+├── 20260426_194022_unit_broker.log
+├── 20260426_194022_unit_client.log
+├── 20260426_194022_unit_config.log
+├── 20260426_194022_unit_errs.log
+├── 20260426_194022_unit_pkg.log
+├── 20260426_194022_unit_plugin.log
+├── 20260426_194022_unit_protocol.log
+├── 20260426_194022_unit_store.log
+├── 20260426_194035_integration.log
+├── 20260426_194042_benchmark.log
+└── 20260426_194205_summary.log
+```
+
+#### Makefile Targets
+
+```bash
+make test              # Unit tests
+make test-integration  # Integration tests
+make test-race         # With race detector
+make bench-quick       # 1s per benchmark
+make bench             # 5s x 3 runs
+make test-coverage     # Coverage report
+make ci                # Full CI pipeline
 ```
 
 ## Examples
@@ -386,7 +443,7 @@ All critical and high-severity issues resolved. See [docs/IMPROVEMENT_ROADMAP.md
 - TLS support
 - Health endpoints (`/healthz`, `/readyz`)
 - Config validation
-- Comprehensive test suite (290 tests)
+- Comprehensive test suite (328 tests)
 
 ### Future Improvements
 

@@ -80,7 +80,11 @@
       "Bash(awk '{sum += $1} END {print sum}' echo \"\" echo \"client:\" grep -c \"func Test\" \"G:/shark-mqtt/client/\"*_test.go)",
       "Bash(awk '{sum += $1} END {print sum}' echo \"\" echo \"store/redis:\" grep -c \"func Test\" \"G:/shark-mqtt/store/redis/\"*_test.go)",
       "Bash(awk '{sum += $1} END {print sum}')",
-      "Bash(git reset *)"
+      "Bash(git reset *)",
+      "Bash(cmd //c scripts\\\\\\\\test.bat)",
+      "Bash(cmd /c \"scripts\\\\test.bat\")",
+      "Bash(bash scripts/test.sh all)",
+      "Bash(grep -v \"^#\\\\|^$\\\\|server\\\\|api\\\\|codec\\\\|memory\")"
     ]
   }
 }
