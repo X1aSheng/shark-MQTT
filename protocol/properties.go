@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"bytes"
+	"encoding/binary"
 	"io"
 )
 
@@ -67,6 +68,47 @@ const (
 	PropReasonString           byte = 0x1F
 )
 
+// propertyType maps property ID to its data type size for skipping unknowns.
+// MQTT 5.0 spec Table 2-6: Property data types.
+type propType int
+
+const (
+	propTypeByte       propType = iota // 1 byte
+	propTypeUInt16                      // 2 bytes big-endian
+	propTypeUInt32                      // 4 bytes big-endian
+	propTypeVarInt                      // variable byte integer
+	propTypeUTF8String                  // 2-byte length + string
+	propTypeBinaryData                  // 2-byte length + data
+	propTypeUTF8StringPair              // 2-byte length + string, twice
+)
+
+var propTypeMap = map[byte]propType{
+	PropPayloadFormat:          propTypeByte,
+	PropMessageExpiryInterval:  propTypeUInt32,
+	PropContentType:            propTypeUTF8String,
+	PropResponseTopic:          propTypeUTF8String,
+	PropCorrelationData:        propTypeBinaryData,
+	PropSubscriptionIdentifier: propTypeVarInt,
+	PropSessionExpiryInterval:  propTypeUInt32,
+	PropAssignedClientID:       propTypeUTF8String,
+	PropServerKeepAlive:        propTypeUInt16,
+	PropAuthMethod:             propTypeUTF8String,
+	PropAuthData:               propTypeBinaryData,
+	PropRequestProblemInfo:     propTypeByte,
+	PropWillDelayInterval:      propTypeUInt32,
+	PropReceiveMaximum:         propTypeUInt16,
+	PropTopicAliasMax:          propTypeUInt16,
+	PropTopicAlias:             propTypeUInt16,
+	PropMaximumQoS:             propTypeByte,
+	PropRetainAvailable:        propTypeByte,
+	PropUserProperty:           propTypeUTF8StringPair,
+	PropMaximumPacketSize:      propTypeUInt32,
+	PropWildcardSubAvailable:   propTypeByte,
+	PropSubIDAvailable:         propTypeByte,
+	PropSharedSubAvailable:     propTypeByte,
+	PropReasonString:           propTypeUTF8String,
+}
+
 func (c *Codec) decodeProperties(r io.Reader) (*Properties, error) {
 	propLen, err := readVarInt(r)
 	if err != nil {
@@ -96,7 +138,7 @@ func (c *Codec) decodeProperties(r io.Reader) (*Properties, error) {
 			}
 			props.PayloadFormat = &v
 		case PropMessageExpiryInterval:
-			v, err := readVarIntFromReader(reader)
+			v, err := readUint32FromReader(reader)
 			if err != nil {
 				return nil, err
 			}
@@ -119,78 +161,84 @@ func (c *Codec) decodeProperties(r io.Reader) (*Properties, error) {
 				return nil, err
 			}
 			props.CorrelationData = v
-		case PropSubscriptionIdentifier, PropSessionExpiryInterval, PropWillDelayInterval, PropMaximumPacketSize:
+		case PropSubscriptionIdentifier:
 			v, err := readVarIntFromReader(reader)
 			if err != nil {
 				return nil, err
 			}
-			// Assign to correct field based on type
-			switch propType {
-			case PropSubscriptionIdentifier:
-				props.SubscriptionIdentifier = &v
-			case PropSessionExpiryInterval:
-				props.SessionExpiryInterval = &v
-			case PropWillDelayInterval:
-				props.WillDelayInterval = &v
-			case PropMaximumPacketSize:
-				props.MaximumPacketSize = &v
+			props.SubscriptionIdentifier = &v
+		case PropSessionExpiryInterval:
+			v, err := readUint32FromReader(reader)
+			if err != nil {
+				return nil, err
 			}
-		case PropAssignedClientID, PropAuthMethod, PropReasonString:
+			props.SessionExpiryInterval = &v
+		case PropAssignedClientID:
 			v, err := readStringFromReader(reader)
 			if err != nil {
 				return nil, err
 			}
-			switch propType {
-			case PropAssignedClientID:
-				props.AssignedClientID = v
-			case PropAuthMethod:
-				props.AuthenticationMethod = v
-			case PropReasonString:
-				props.ReasonString = v
-			}
+			props.AssignedClientID = v
 		case PropServerKeepAlive:
-			// Simplified: skip 2 bytes
-			var v [2]byte
-			if _, err := reader.Read(v[:]); err != nil {
+			v, err := readUint16FromReader(reader)
+			if err != nil {
 				return nil, err
 			}
-			val := uint16(v[0])<<8 | uint16(v[1])
-			props.ServerKeepAlive = &val
-		case PropReceiveMaximum, PropTopicAliasMax, PropTopicAlias:
-			// Simplified: skip 2 bytes
-			var v [2]byte
-			if _, err := reader.Read(v[:]); err != nil {
+			props.ServerKeepAlive = &v
+		case PropAuthMethod:
+			v, err := readStringFromReader(reader)
+			if err != nil {
 				return nil, err
 			}
-			val := uint16(v[0])<<8 | uint16(v[1])
-			switch propType {
-			case PropReceiveMaximum:
-				props.ReceiveMaximum = &val
-			case PropTopicAliasMax:
-				props.TopicAliasMaximum = &val
-			case PropTopicAlias:
-				props.TopicAlias = &val
+			props.AuthenticationMethod = v
+		case PropAuthData:
+			v, err := readBinaryDataFromReader(reader)
+			if err != nil {
+				return nil, err
 			}
-		case PropRequestProblemInfo, PropMaximumQoS, PropRetainAvailable,
-			PropWildcardSubAvailable, PropSubIDAvailable, PropSharedSubAvailable:
+			props.AuthenticationData = v
+		case PropRequestProblemInfo:
 			v, err := reader.ReadByte()
 			if err != nil {
 				return nil, err
 			}
-			switch propType {
-			case PropRequestProblemInfo:
-				props.RequestProblemInfo = &v
-			case PropMaximumQoS:
-				props.MaximumQoS = &v
-			case PropRetainAvailable:
-				props.RetainAvailable = &v
-			case PropWildcardSubAvailable:
-				props.WildcardSubAvailable = &v
-			case PropSubIDAvailable:
-				props.SubIDAvailable = &v
-			case PropSharedSubAvailable:
-				props.SharedSubAvailable = &v
+			props.RequestProblemInfo = &v
+		case PropWillDelayInterval:
+			v, err := readUint32FromReader(reader)
+			if err != nil {
+				return nil, err
 			}
+			props.WillDelayInterval = &v
+		case PropReceiveMaximum:
+			v, err := readUint16FromReader(reader)
+			if err != nil {
+				return nil, err
+			}
+			props.ReceiveMaximum = &v
+		case PropTopicAliasMax:
+			v, err := readUint16FromReader(reader)
+			if err != nil {
+				return nil, err
+			}
+			props.TopicAliasMaximum = &v
+		case PropTopicAlias:
+			v, err := readUint16FromReader(reader)
+			if err != nil {
+				return nil, err
+			}
+			props.TopicAlias = &v
+		case PropMaximumQoS:
+			v, err := reader.ReadByte()
+			if err != nil {
+				return nil, err
+			}
+			props.MaximumQoS = &v
+		case PropRetainAvailable:
+			v, err := reader.ReadByte()
+			if err != nil {
+				return nil, err
+			}
+			props.RetainAvailable = &v
 		case PropUserProperty:
 			k, err := readStringFromReader(reader)
 			if err != nil {
@@ -201,18 +249,79 @@ func (c *Codec) decodeProperties(r io.Reader) (*Properties, error) {
 				return nil, err
 			}
 			props.UserProperties = append(props.UserProperties, UserProperty{Key: k, Value: v})
-		case PropAuthData:
-			v, err := readBinaryDataFromReader(reader)
+		case PropMaximumPacketSize:
+			v, err := readUint32FromReader(reader)
 			if err != nil {
 				return nil, err
 			}
-			props.AuthenticationData = v
+			props.MaximumPacketSize = &v
+		case PropWildcardSubAvailable:
+			v, err := reader.ReadByte()
+			if err != nil {
+				return nil, err
+			}
+			props.WildcardSubAvailable = &v
+		case PropSubIDAvailable:
+			v, err := reader.ReadByte()
+			if err != nil {
+				return nil, err
+			}
+			props.SubIDAvailable = &v
+		case PropSharedSubAvailable:
+			v, err := reader.ReadByte()
+			if err != nil {
+				return nil, err
+			}
+			props.SharedSubAvailable = &v
+		case PropReasonString:
+			v, err := readStringFromReader(reader)
+			if err != nil {
+				return nil, err
+			}
+			props.ReasonString = v
 		default:
-			// Unknown property, skip
-			return nil, nil
+			// Unknown property — skip per MQTT-1.5.5-1
+			if err := skipPropertyValue(reader, propType); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return props, nil
+}
+
+// skipPropertyValue skips an unknown property's value based on its type.
+func skipPropertyValue(r *bytes.Reader, propID byte) error {
+	pt, ok := propTypeMap[propID]
+	if !ok {
+		// Completely unknown property ID — can't determine length.
+		// Best effort: try to skip as VarInt (smallest safe default).
+		_, _ = readVarIntFromReader(r)
+		return nil
+	}
+	switch pt {
+	case propTypeByte:
+		_, err := r.ReadByte()
+		return err
+	case propTypeUInt16:
+		_, err := r.Seek(2, 1)
+		return err
+	case propTypeUInt32:
+		_, err := r.Seek(4, 1)
+		return err
+	case propTypeVarInt:
+		_, err := readVarIntFromReader(r)
+		return err
+	case propTypeUTF8String, propTypeBinaryData:
+		_, err := readBinaryDataFromReader(r) // same format: 2-byte len + data
+		return err
+	case propTypeUTF8StringPair:
+		if _, err := readBinaryDataFromReader(r); err != nil {
+			return err
+		}
+		_, err := readBinaryDataFromReader(r)
+		return err
+	}
+	return nil
 }
 
 func (c *Codec) encodeProperties(w io.Writer, props *Properties) error {
@@ -224,7 +333,7 @@ func (c *Codec) encodeProperties(w io.Writer, props *Properties) error {
 	}
 	if props.MessageExpiryInterval != nil {
 		buf.WriteByte(PropMessageExpiryInterval)
-		writeVarInt(&buf, *props.MessageExpiryInterval)
+		writeUint32ToWriter(&buf, *props.MessageExpiryInterval)
 	}
 	if props.ContentType != "" {
 		buf.WriteByte(PropContentType)
@@ -238,26 +347,84 @@ func (c *Codec) encodeProperties(w io.Writer, props *Properties) error {
 		buf.WriteByte(PropCorrelationData)
 		writeBinaryData(&buf, props.CorrelationData)
 	}
+	if props.SubscriptionIdentifier != nil {
+		buf.WriteByte(PropSubscriptionIdentifier)
+		writeVarInt(&buf, *props.SubscriptionIdentifier)
+	}
 	if props.SessionExpiryInterval != nil {
 		buf.WriteByte(PropSessionExpiryInterval)
-		writeVarInt(&buf, *props.SessionExpiryInterval)
+		writeUint32ToWriter(&buf, *props.SessionExpiryInterval)
 	}
 	if props.AssignedClientID != "" {
 		buf.WriteByte(PropAssignedClientID)
 		writeString(&buf, props.AssignedClientID)
 	}
-	if props.ReasonString != "" {
-		buf.WriteByte(PropReasonString)
-		writeString(&buf, props.ReasonString)
+	if props.ServerKeepAlive != nil {
+		buf.WriteByte(PropServerKeepAlive)
+		writeUint16(&buf, *props.ServerKeepAlive)
+	}
+	if props.AuthenticationMethod != "" {
+		buf.WriteByte(PropAuthMethod)
+		writeString(&buf, props.AuthenticationMethod)
+	}
+	if props.AuthenticationData != nil {
+		buf.WriteByte(PropAuthData)
+		writeBinaryData(&buf, props.AuthenticationData)
+	}
+	if props.RequestProblemInfo != nil {
+		buf.WriteByte(PropRequestProblemInfo)
+		buf.WriteByte(*props.RequestProblemInfo)
+	}
+	if props.WillDelayInterval != nil {
+		buf.WriteByte(PropWillDelayInterval)
+		writeUint32ToWriter(&buf, *props.WillDelayInterval)
+	}
+	if props.ReceiveMaximum != nil {
+		buf.WriteByte(PropReceiveMaximum)
+		writeUint16(&buf, *props.ReceiveMaximum)
+	}
+	if props.TopicAliasMaximum != nil {
+		buf.WriteByte(PropTopicAliasMax)
+		writeUint16(&buf, *props.TopicAliasMaximum)
+	}
+	if props.TopicAlias != nil {
+		buf.WriteByte(PropTopicAlias)
+		writeUint16(&buf, *props.TopicAlias)
+	}
+	if props.MaximumQoS != nil {
+		buf.WriteByte(PropMaximumQoS)
+		buf.WriteByte(*props.MaximumQoS)
+	}
+	if props.RetainAvailable != nil {
+		buf.WriteByte(PropRetainAvailable)
+		buf.WriteByte(*props.RetainAvailable)
 	}
 	for _, up := range props.UserProperties {
 		buf.WriteByte(PropUserProperty)
 		writeString(&buf, up.Key)
 		writeString(&buf, up.Value)
 	}
+	if props.MaximumPacketSize != nil {
+		buf.WriteByte(PropMaximumPacketSize)
+		writeUint32ToWriter(&buf, *props.MaximumPacketSize)
+	}
+	if props.WildcardSubAvailable != nil {
+		buf.WriteByte(PropWildcardSubAvailable)
+		buf.WriteByte(*props.WildcardSubAvailable)
+	}
+	if props.SubIDAvailable != nil {
+		buf.WriteByte(PropSubIDAvailable)
+		buf.WriteByte(*props.SubIDAvailable)
+	}
+	if props.SharedSubAvailable != nil {
+		buf.WriteByte(PropSharedSubAvailable)
+		buf.WriteByte(*props.SharedSubAvailable)
+	}
+	if props.ReasonString != "" {
+		buf.WriteByte(PropReasonString)
+		writeString(&buf, props.ReasonString)
+	}
 
-	// Write property length as varint first, then the buffer
-	// This is a simplification; real implementation should prepend the length
 	data := buf.Bytes()
 	if len(data) == 0 {
 		return writeVarInt(w, 0)
@@ -269,7 +436,8 @@ func (c *Codec) encodeProperties(w io.Writer, props *Properties) error {
 	return err
 }
 
-// Helper functions for reading from io.Reader (bytes.Reader).
+// --- Helper functions for reading from bytes.Reader ---
+
 func readByte(r io.Reader) (byte, error) {
 	var buf [1]byte
 	if _, err := io.ReadFull(r, buf[:]); err != nil {
@@ -300,6 +468,22 @@ func readStringFromReader(r *bytes.Reader) (string, error) {
 		return "", err
 	}
 	return string(buf), nil
+}
+
+func readUint16FromReader(r *bytes.Reader) (uint16, error) {
+	var buf [2]byte
+	if _, err := r.Read(buf[:]); err != nil {
+		return 0, err
+	}
+	return binary.BigEndian.Uint16(buf[:]), nil
+}
+
+func readUint32FromReader(r *bytes.Reader) (uint32, error) {
+	var buf [4]byte
+	if _, err := r.Read(buf[:]); err != nil {
+		return 0, err
+	}
+	return binary.BigEndian.Uint32(buf[:]), nil
 }
 
 func readVarIntFromReader(r *bytes.Reader) (uint32, error) {
@@ -339,6 +523,8 @@ func readBinaryDataFromReader(r *bytes.Reader) ([]byte, error) {
 	return buf, nil
 }
 
+// --- Helper functions for writing ---
+
 func writeBinaryData(w io.Writer, data []byte) error {
 	var lenBuf [2]byte
 	lenBuf[0] = byte(len(data) >> 8)
@@ -351,4 +537,11 @@ func writeBinaryData(w io.Writer, data []byte) error {
 		return err
 	}
 	return nil
+}
+
+func writeUint32ToWriter(w io.Writer, v uint32) error {
+	var buf [4]byte
+	binary.BigEndian.PutUint32(buf[:], v)
+	_, err := w.Write(buf[:])
+	return err
 }

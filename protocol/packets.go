@@ -88,10 +88,13 @@ type SubscribePacket struct {
 	Properties *Properties // MQTT 5.0 only
 }
 
-// TopicFilter represents a subscription topic with QoS.
+// TopicFilter represents a subscription topic with QoS and MQTT 5.0 options.
 type TopicFilter struct {
-	Topic string
-	QoS   uint8
+	Topic             string
+	QoS               uint8
+	NoLocal           bool // MQTT 5.0: don't forward to own subscriptions
+	RetainAsPublished bool // MQTT 5.0: preserve retain flag
+	RetainHandling    uint8 // MQTT 5.0: 0=send retained, 1=send if new, 2=don't send
 }
 
 // SubAckPacket represents a SUBACK packet.
