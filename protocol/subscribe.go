@@ -11,13 +11,50 @@ func (c *Codec) decodeSubscribe(r io.Reader, fh *FixedHeader) (*SubscribePacket,
 		return nil, err
 	}
 
+	bytesRead := 2 // packetID
+
+	// MQTT 5.0 properties
 	var props *Properties
-	if fh.RemainingLength > 2 {
-		// Simplified: skip properties for now
+	if c.protocolVersion == Version50 && fh.RemainingLength > 2 {
+		// Read remaining into buffer for proper property + topic parsing
+		remaining := fh.RemainingLength - bytesRead
+		data := make([]byte, remaining)
+		if _, err := io.ReadFull(r, data); err != nil {
+			return nil, err
+		}
+		reader := bytes.NewReader(data)
+
+		props, err = c.decodeProperties(reader)
+		if err != nil {
+			reader.Reset(data)
+		}
+
+		var topics []TopicFilter
+		for reader.Len() > 0 {
+			topic, err := readStringFromReader(reader)
+			if err != nil {
+				break
+			}
+			qosByte, err := reader.ReadByte()
+			if err != nil {
+				break
+			}
+			topics = append(topics, TopicFilter{
+				Topic: topic,
+				QoS:   qosByte & 0x03,
+			})
+		}
+
+		return &SubscribePacket{
+			FixedHeader: *fh,
+			PacketID:    packetID,
+			Topics:      topics,
+			Properties:  props,
+		}, nil
 	}
 
+	// MQTT 3.1.1: no properties, just topic filters
 	var topics []TopicFilter
-	bytesRead := 2 // packetID
 	for bytesRead < fh.RemainingLength {
 		topic, err := readString(r)
 		if err != nil {
@@ -56,6 +93,10 @@ func (c *Codec) encodeSubscribe(w io.Writer, pkt *SubscribePacket) error {
 		if err := c.encodeProperties(&buf, pkt.Properties); err != nil {
 			return err
 		}
+	} else if c.protocolVersion == Version50 {
+		if err := writeVarInt(&buf, 0); err != nil {
+			return err
+		}
 	}
 
 	for _, topic := range pkt.Topics {
@@ -85,14 +126,26 @@ func (c *Codec) decodeSubAck(r io.Reader, fh *FixedHeader) (*SubAckPacket, error
 	var props *Properties
 	var reasonCodes []byte
 
-	// Simplified: read remaining bytes as reason codes
 	remaining := fh.RemainingLength - 2
 	if remaining > 0 {
-		buf := make([]byte, remaining)
-		if _, err := io.ReadFull(r, buf); err != nil {
+		data := make([]byte, remaining)
+		if _, err := io.ReadFull(r, data); err != nil {
 			return nil, err
 		}
-		reasonCodes = buf
+		reader := bytes.NewReader(data)
+
+		if c.protocolVersion == Version50 {
+			props, err = c.decodeProperties(reader)
+			if err != nil {
+				reader.Reset(data)
+			}
+		}
+
+		reasonLen := reader.Len()
+		if reasonLen > 0 {
+			reasonCodes = make([]byte, reasonLen)
+			reader.Read(reasonCodes)
+		}
 	}
 
 	return &SubAckPacket{
@@ -112,6 +165,10 @@ func (c *Codec) encodeSubAck(w io.Writer, pkt *SubAckPacket) error {
 
 	if pkt.Properties != nil {
 		if err := c.encodeProperties(&buf, pkt.Properties); err != nil {
+			return err
+		}
+	} else if c.protocolVersion == Version50 {
+		if err := writeVarInt(&buf, 0); err != nil {
 			return err
 		}
 	}
@@ -139,8 +196,38 @@ func (c *Codec) decodeUnsubscribe(r io.Reader, fh *FixedHeader) (*UnsubscribePac
 	var props *Properties
 	var topics []string
 
-	// Read topics
+	// MQTT 5.0: read properties first
 	bytesRead := 2
+	if c.protocolVersion == Version50 && fh.RemainingLength > 2 {
+		remaining := fh.RemainingLength - bytesRead
+		data := make([]byte, remaining)
+		if _, err := io.ReadFull(r, data); err != nil {
+			return nil, err
+		}
+		reader := bytes.NewReader(data)
+
+		props, err = c.decodeProperties(reader)
+		if err != nil {
+			reader.Reset(data)
+		}
+
+		for reader.Len() > 0 {
+			topic, err := readStringFromReader(reader)
+			if err != nil {
+				break
+			}
+			topics = append(topics, topic)
+		}
+
+		return &UnsubscribePacket{
+			FixedHeader: *fh,
+			PacketID:    packetID,
+			Topics:      topics,
+			Properties:  props,
+		}, nil
+	}
+
+	// MQTT 3.1.1: read topics directly
 	for bytesRead < fh.RemainingLength {
 		topic, err := readString(r)
 		if err != nil {
@@ -167,6 +254,10 @@ func (c *Codec) encodeUnsubscribe(w io.Writer, pkt *UnsubscribePacket) error {
 
 	if pkt.Properties != nil {
 		if err := c.encodeProperties(&buf, pkt.Properties); err != nil {
+			return err
+		}
+	} else if c.protocolVersion == Version50 {
+		if err := writeVarInt(&buf, 0); err != nil {
 			return err
 		}
 	}
@@ -196,11 +287,24 @@ func (c *Codec) decodeUnsubAck(r io.Reader, fh *FixedHeader) (*UnsubAckPacket, e
 
 	remaining := fh.RemainingLength - 2
 	if remaining > 0 {
-		buf := make([]byte, remaining)
-		if _, err := io.ReadFull(r, buf); err != nil {
+		data := make([]byte, remaining)
+		if _, err := io.ReadFull(r, data); err != nil {
 			return nil, err
 		}
-		reasonCodes = buf
+		reader := bytes.NewReader(data)
+
+		if c.protocolVersion == Version50 {
+			props, err = c.decodeProperties(reader)
+			if err != nil {
+				reader.Reset(data)
+			}
+		}
+
+		reasonLen := reader.Len()
+		if reasonLen > 0 {
+			reasonCodes = make([]byte, reasonLen)
+			reader.Read(reasonCodes)
+		}
 	}
 
 	return &UnsubAckPacket{
@@ -220,6 +324,10 @@ func (c *Codec) encodeUnsubAck(w io.Writer, pkt *UnsubAckPacket) error {
 
 	if pkt.Properties != nil {
 		if err := c.encodeProperties(&buf, pkt.Properties); err != nil {
+			return err
+		}
+	} else if c.protocolVersion == Version50 {
+		if err := writeVarInt(&buf, 0); err != nil {
 			return err
 		}
 	}

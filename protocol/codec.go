@@ -7,7 +7,8 @@ import (
 
 // Codec handles encoding and decoding of MQTT packets.
 type Codec struct {
-	maxPacketSize int
+	maxPacketSize   int
+	protocolVersion uint8 // set after CONNECT is decoded
 }
 
 // NewCodec creates a new Codec with the specified maximum packet size.
@@ -15,7 +16,7 @@ func NewCodec(maxPacketSize int) *Codec {
 	if maxPacketSize <= 0 {
 		maxPacketSize = 256 * 1024 // 256KB default
 	}
-	return &Codec{maxPacketSize: maxPacketSize}
+	return &Codec{maxPacketSize: maxPacketSize, protocolVersion: 4} // default MQTT 3.1.1
 }
 
 // Decode reads a packet from the reader and returns the appropriate Packet type.

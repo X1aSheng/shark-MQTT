@@ -33,30 +33,32 @@ type InflightMessage struct {
 
 // QoSMessage represents a message to be delivered with QoS.
 type QoSMessage struct {
-	ClientID  string
-	PacketID  uint16
-	Topic     string
-	Payload   []byte
-	QoS       uint8
-	Retain    bool
+	ClientID string
+	PacketID uint16
+	Topic    string
+	Payload  []byte
+	QoS      uint8
+	Retain   bool
 }
 
 // QoSEngine manages QoS 1/2 message state machines.
 // It handles retry logic, inflight tracking, and state transitions.
 type QoSEngine struct {
-	mu           sync.RWMutex
-	inflight     map[string]map[uint16]*InflightMessage // clientID -> packetID -> msg
-	maxInflight  int
+	mu            sync.RWMutex
+	inflight      map[string]map[uint16]*InflightMessage // clientID -> packetID -> msg
+	maxInflight   int
 	retryInterval time.Duration
 	maxRetries    int
 
 	// Callback to deliver PUBACK/PUBREC/PUBREL/PUBCOMP to clients
-	sendPubAck func(clientID string, packetID uint16) error
-	sendPubRel func(clientID string, packetID uint16) error
+	sendPubAck  func(clientID string, packetID uint16) error
+	sendPubRel  func(clientID string, packetID uint16) error
 	sendPubComp func(clientID string, packetID uint16) error
 
 	// Callback to resend PUBLISH payload on retry
 	republish func(clientID string, packetID uint16, topic string, payload []byte, qos uint8, retain bool) error
+
+	onError func(clientID string, packetID uint16, err error)
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -132,6 +134,19 @@ func (q *QoSEngine) SetCallbacks(
 	q.sendPubRel = sendPubRel
 	q.sendPubComp = sendPubComp
 	q.republish = republish
+}
+
+// SetErrorCallback sets a callback invoked when a QoS send fails.
+func (q *QoSEngine) SetErrorCallback(fn func(clientID string, packetID uint16, err error)) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.onError = fn
+}
+
+func (q *QoSEngine) reportError(clientID string, packetID uint16, err error) {
+	if q.onError != nil {
+		q.onError(clientID, packetID, err)
+	}
 }
 
 // Start begins the retry loop.
@@ -216,7 +231,9 @@ func (q *QoSEngine) AckPubRec(clientID string, packetID uint16) {
 
 	// Send PUBREL
 	if sendPubRel != nil {
-		_ = sendPubRel(clientID, packetID)
+		if err := sendPubRel(clientID, packetID); err != nil {
+			q.reportError(clientID, packetID, err)
+		}
 	}
 }
 
@@ -228,7 +245,9 @@ func (q *QoSEngine) AckPubRel(clientID string, packetID uint16) {
 
 	// Send PUBCOMP
 	if sendPubComp != nil {
-		_ = sendPubComp(clientID, packetID)
+		if err := sendPubComp(clientID, packetID); err != nil {
+			q.reportError(clientID, packetID, err)
+		}
 	}
 
 	q.AckQoS1(clientID, packetID) // Remove from inflight
@@ -305,17 +324,23 @@ func (q *QoSEngine) doRetry() {
 
 			// For QoS 1/2, first retry the actual PUBLISH message
 			if republish != nil {
-				_ = republish(clientID, msg.PacketID, msg.Topic, msg.Payload, msg.QoS, msg.Retain)
+				if err := republish(clientID, msg.PacketID, msg.Topic, msg.Payload, msg.QoS, msg.Retain); err != nil {
+					q.reportError(clientID, packetID, err)
+				}
 			}
 
 			// Also send the acknowledgment packet (PUBACK for QoS 1, PUBREL for QoS 2)
 			if msg.State == StateSent {
 				if sendPubAck != nil {
-					_ = sendPubAck(clientID, packetID)
+					if err := sendPubAck(clientID, packetID); err != nil {
+						q.reportError(clientID, packetID, err)
+					}
 				}
 			} else if msg.State == StateAcked {
 				if sendPubRel != nil {
-					_ = sendPubRel(clientID, packetID)
+					if err := sendPubRel(clientID, packetID); err != nil {
+						q.reportError(clientID, packetID, err)
+					}
 				}
 			}
 		}

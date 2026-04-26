@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"sync/atomic"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/X1aSheng/shark-mqtt/store"
@@ -135,13 +136,8 @@ func (s *MessageStore) GenerateMessageID() string {
 	return strconv.FormatUint(uint64(generateID()), 10)
 }
 
-// generateID is a simple incrementing ID generator.
 var messageIDCounter uint64
 
 func generateID() uint64 {
-	return atomicAddUint64(&messageIDCounter, 1)
-}
-
-func atomicAddUint64(addr *uint64, delta uint64) uint64 {
-	return *addr + delta // Simple implementation; use sync/atomic in production
+	return atomic.AddUint64(&messageIDCounter, 1)
 }
