@@ -93,6 +93,9 @@ func (c *MQTTClient) Connect(ctx context.Context) error {
 
 	// Build CONNECT packet
 	pkt := &protocol.ConnectPacket{
+		FixedHeader: protocol.FixedHeader{
+			PacketType: protocol.PacketTypeConnect,
+		},
 		ProtocolName:    protocol.ProtocolNameMQTT,
 		ProtocolVersion: protocol.Version311,
 		Flags: protocol.ConnectFlags{
