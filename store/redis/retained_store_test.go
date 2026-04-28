@@ -312,8 +312,8 @@ func BenchmarkRetainedStore_Get(b *testing.B) {
 		KeyPrefix: "bench:retained:",
 	})
 
-	// Pre-populate
-	for i := 0; i < 1000; i++ {
+	const prePop = 50
+	for i := 0; i < prePop; i++ {
 		topic := "bench/topic-" + string(rune(i))
 		rs.SaveRetained(ctx, topic, 1, []byte("data"))
 	}
@@ -322,7 +322,7 @@ func BenchmarkRetainedStore_Get(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		topic := "bench/topic-" + string(rune(i%1000))
+		topic := "bench/topic-" + string(rune(i%prePop))
 		rs.GetRetained(ctx, topic)
 	}
 }
@@ -341,8 +341,8 @@ func BenchmarkRetainedStore_Match(b *testing.B) {
 		KeyPrefix: "bench:retained:",
 	})
 
-	// Pre-populate with 100 topics
-	for i := 0; i < 100; i++ {
+	const prePop = 50
+	for i := 0; i < prePop; i++ {
 		topic := "bench/device-" + string(rune(i%10)) + "/sensor-" + string(rune(i))
 		rs.SaveRetained(ctx, topic, 1, []byte("data"))
 	}

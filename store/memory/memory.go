@@ -26,6 +26,10 @@ func NewSessionStore() store.SessionStore {
 func (s *sessionStore) SaveSession(ctx context.Context, clientID string, data *store.SessionData) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if data == nil {
+		delete(s.sessions, clientID)
+		return nil
+	}
 	// Store a copy to prevent callers from modifying internal state
 	copied := *data
 	if data.Inflight != nil {
