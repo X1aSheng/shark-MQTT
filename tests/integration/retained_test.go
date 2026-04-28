@@ -16,6 +16,7 @@ func testBrokerWithRetain(t *testing.T) *api.Broker {
 	t.Helper()
 	cfg := config.DefaultConfig()
 	cfg.ListenAddr = ":0"
+	cfg.MetricsAddr = ":0"
 	brk := api.NewBroker(
 		api.WithConfig(cfg),
 		api.WithRetainedStore(memory.NewRetainedStore()),
