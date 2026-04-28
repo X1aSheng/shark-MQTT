@@ -355,18 +355,22 @@ shark-mqtt/
 |   |-- tls_broker.go                 # TLS broker example
 |   |-- sharksocket.go                # Shark-socket integration example
 |
-|-- test/
+|-- tests/
 |   |-- integration/
-|   |   |-- connect_test.go           # CONNECT/CONNACK flow
-|   |   |-- pubsub_test.go            # PUBLISH/SUBSCRIBE end-to-end
-|   |   |-- qos_test.go               # QoS 0/1/2 complete flow
-|   |   |-- persistent_session_test.go # Disconnect/reconnect persistent sessions
-|   |   |-- will_test.go              # Will message trigger
-|   |   |-- broker_bench_test.go      # Broker benchmarks
-|   |   |-- micro_bench_test.go       # Micro-benchmarks
-|   |   |-- sharksocket/
-|   |       |-- adapter.go            # Shark-socket integration adapter test
+|   |   |-- connect_test.go
+|   |   |-- pubsub_test.go
+|   |   |-- delivery_test.go
+|   |   |-- qos_test.go
+|   |   |-- persistent_session_test.go
+|   |   |-- will_test.go
+|   |   |-- topic_wildcard_test.go
+|   |   |-- unsubscribe_test.go
+|   |   |-- retained_test.go
+|   |   |-- edge_case_test.go
 |   |-- bench/
+|   |   |-- broker_bench_test.go
+|   |   |-- data_delivery_bench_test.go
+|   |   |-- micro_bench_test.go
 ```
 
 ---

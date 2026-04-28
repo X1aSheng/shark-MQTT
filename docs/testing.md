@@ -1,6 +1,6 @@
 # Testing Guide
 
-Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试和基准测试共 328 项。
+Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试和基准测试共 323 项。
 
 ---
 
@@ -22,7 +22,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 
 ```
 ┌────────────────────────────────────────────────────────────┐
-│  Benchmark Tests (57)                                     │
+│  Benchmark Tests (69)                                     │
 │  tests/bench/                                             │
 │  ├── broker_bench_test.go    — 全栈 TCP 基准              │
 │  ├── data_delivery_bench_test.go — E2E 数据验证基准       │
@@ -41,7 +41,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 │  ├── retained_test.go        — 保留消息                   │
 │  └── edge_case_test.go       — 边界与异常                 │
 ├────────────────────────────────────────────────────────────┤
-│  Unit Tests (224)                                          │
+│  Unit Tests (207)                                          │
 │  各包内 *_test.go 文件                                     │
 │  broker/ protocol/ store/ pkg/ api/ client/ config/       │
 │  plugin/ errs/                                             │
@@ -54,16 +54,16 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 
 | 类型 | 数量 | 位置 |
 |------|------|------|
-| 单元测试 | 224 | 各包 `*_test.go` |
+| 单元测试 | 207 | 各包 `*_test.go` |
 | 集成测试 | 47 | `tests/integration/` |
-| 基准测试 | 57 | `tests/bench/` |
-| **合计** | **328** | |
+| 基准测试 | 69 | `tests/bench/`, `store/redis/`, `plugin/` |
+| **合计** | **323** | |
 
 ### 各包测试明细
 
 | 包 | 测试数 | 基准测试数 | 说明 |
 |----|--------|-----------|------|
-| broker/ | 99 | 0 | 核心逻辑：TopicTree、QoS引擎、会话、遗嘱、认证、服务器 |
+| broker/ | 98 | 0 | 核心逻辑：TopicTree、QoS引擎、会话、遗嘱、认证、服务器 |
 | store/memory/ | 20 | 0 | 内存存储：会话、消息、保留消息 |
 | store/redis/ | 13 | 9 | Redis 存储：消息、保留、会话 |
 | store/badger/ | 9 | 0 | BadgerDB 持久化存储 |
@@ -334,77 +334,59 @@ go tool pprof cpu.prof
 
 ## 测试脚本
 
-三套跨平台测试脚本提供完全一致的功能，所有测试运行均自动保存带毫秒时间戳的日志到 `logs/` 目录。
+一个 Go 编写的跨平台测试运行器，搭配轻量级 shell 包装脚本，提供统一的测试执行体验。所有测试运行自动保存 JSON（原始 `go test -json` 输出）和 `.log`（解析后的报告）到 `logs/` 目录。
 
-日志格式：`logs/{YYYYMMDD_HHmmss_fff}_{type}.log`
+日志格式：`logs/{YYYYMMDD_HHmmss}_{type}.{json,log}`
 
 ### 脚本对应关系
 
 | 平台 | 脚本 |
 |------|------|
-| Linux / macOS / Git Bash / WSL | `./scripts/test.sh <target>` |
-| Windows CMD | `scripts\test.bat <target>` |
-| Windows PowerShell | `.\scripts\test.ps1 <target>` |
+| 通用（Go 运行器） | `go run scripts/run_tests.go -mode <mode>` |
+| Linux / macOS / Git Bash / WSL | `bash scripts/run_tests.sh [--unit\|--integration\|--benchmark\|--cover\|--all]` |
+| Windows CMD | `scripts\run_tests.bat [--unit\|--integration\|--benchmark\|--cover\|--all]` |
 
-### 目标
+### 模式
 
-| 目标 | 说明 | 日志文件 |
+| 模式 | 说明 | 日志文件 |
 |------|------|----------|
-| `all` | 单元 + 集成 + 基准 + 汇总（默认） | 逐包日志 + 集成 + 基准 + 汇总 |
-| `unit` | 全部单元测试 | `{ts}_unit.log` |
-| `integration` | 集成测试（180s 超时） | `{ts}_integration.log` |
-| `bench` | 基准测试（`BENCHTIME`，默认 1s） | `{ts}_benchmark.log` |
-| `quick` | 快速基准（500ms） | `{ts}_benchmark.log` |
-| `race` | 单元测试 + race 检测 | `{ts}_race.log` |
-| `coverage` | 覆盖率报告（HTML + 文本） | `{ts}_coverage.log` |
-| `redis` | Redis 存储测试（需 `MQTT_REDIS_ADDR`） | `{ts}_redis.log` |
-| `ci` | CI 完整流水线（vet + race + build） | `{ts}_ci.log` |
+| `all`（默认） | 单元 + 集成 + 基准 | `{ts}_unit.{json,log}`, `{ts}_integration.{json,log}`, `{ts}_benchmark.{json,log}` |
+| `unit` | 全部单元测试 | `{ts}_unit.{json,log}` |
+| `integration` | 集成测试 | `{ts}_integration.{json,log}` |
+| `benchmark` | 基准测试 | `{ts}_benchmark.{json,log}` |
+| `cover` | 覆盖率报告 | `{ts}_cover.log` |
 
 ### 示例
 
 ```bash
-# 运行全部
-./scripts/test.sh
+# 运行全部（默认）
+bash scripts/run_tests.sh
 
-# 单独目标
-./scripts/test.sh unit
-./scripts/test.sh integration
-./scripts/test.sh bench
-./scripts/test.sh race
-./scripts/test.sh coverage
-./scripts/test.sh ci
+# 单独模式
+bash scripts/run_tests.sh --unit
+bash scripts/run_tests.sh --integration
+bash scripts/run_tests.sh --benchmark
+bash scripts/run_tests.sh --cover
 
 # Windows CMD
-scripts\test.bat all
-scripts\test.bat unit
+scripts\run_tests.bat --all
+scripts\run_tests.bat --unit
 
-# Windows PowerShell
-.\scripts\test.ps1 all
-.\scripts\test.ps1 unit
-
-# 自定义基准时长
-BENCHTIME=5s ./scripts/test.sh bench
-
-# Redis 测试
-MQTT_REDIS_ADDR=localhost:6379 ./scripts/test.sh redis
+# 或直接用 Go 运行器（跨平台通用）
+go run scripts/run_tests.go -mode unit
+go run scripts/run_tests.go -mode cover -timeout 10m
 ```
 
-### `all` 目标日志结构
+### `all` 模式日志结构
 
 ```
 logs/
-├── 20260426_194022_123_unit_api.log
-├── 20260426_194022_123_unit_broker.log
-├── 20260426_194022_123_unit_client.log
-├── 20260426_194022_123_unit_config.log
-├── 20260426_194022_123_unit_errs.log
-├── 20260426_194022_123_unit_pkg.log
-├── 20260426_194022_123_unit_plugin.log
-├── 20260426_194022_123_unit_protocol.log
-├── 20260426_194022_123_unit_store.log
-├── 20260426_194035_456_integration.log
-├── 20260426_194042_789_benchmark.log
-└── 20260426_194205_012_summary.log
+├── 20260428_190627_unit.json
+├── 20260428_190627_unit.log
+├── 20260428_190635_integration.json
+├── 20260428_190635_integration.log
+├── 20260428_190642_benchmark.json
+└── 20260428_190642_benchmark.log
 ```
 
 ---
@@ -428,7 +410,7 @@ make ci                # CI 完整流水线
 所有运行时日志和测试日志的时间戳精度为 **毫秒**。
 
 - Go 运行时日志：`log.SetFlags(log.LstdFlags | log.Lmicroseconds)`（`pkg/logger/slog.go`）
-- 测试脚本日志：`{YYYYMMDD_HHmmss_fff}` 毫秒时间戳
+- 测试脚本日志：`{YYYYMMDD_HHmmss}` 时间戳
 - Broker 连接日志：EOF/早关连接使用原子计数器汇总，每轮测试结束时输出 1 条统计（如 `[server] 10000 connections closed before CONNECT`）
 
 ---
@@ -446,7 +428,7 @@ go tool cover -func=coverage.out
 go tool cover -html=coverage.out -o coverage.html
 
 # 使用脚本（自动保存日志）
-./scripts/test.sh coverage
+go run scripts/run_tests.go -mode cover
 ```
 
 ### 覆盖率阈值

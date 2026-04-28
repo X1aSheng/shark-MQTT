@@ -32,5 +32,6 @@ shark-mqtt.exe
 vendor/
 
 # Temporary files
+logs/
 *.log
 tmp/

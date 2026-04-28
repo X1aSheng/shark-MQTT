@@ -46,9 +46,9 @@
       "Bash(tee logs/integration_all.log)",
       "Bash(tee logs/integration_all_final.log)",
       "Bash(tee logs/unit_all_final.log)",
-      "Bash(bash scripts/test.sh unit)",
-      "Bash(bash scripts/test.sh integration)",
-      "Bash(bash scripts/test.sh log)",
+      "Bash(bash scripts/run_tests.sh --unit)",
+      "Bash(bash scripts/run_tests.sh --integration)",
+      "Bash(bash scripts/run_tests.sh --all)",
       "Bash(gofmt -w broker/qos_engine.go)",
       "Bash(gofmt -w broker/broker.go)",
       "Bash(go version *)",
@@ -58,7 +58,7 @@
       "Bash(gofmt -w api/api.go)",
       "Bash(gofmt -w api/api.go test/integration/edge_case_test.go)",
       "Bash(gofmt -w test/integration/edge_case_test.go)",
-      "Bash(powershell -ExecutionPolicy Bypass -File scripts/test.ps1 log)",
+      "Bash(powershell -ExecutionPolicy Bypass -File scripts/run_tests.bat)",
       "Bash(echo \"exit: $?\")",
       "Bash(awk '{printf \"%-45s %s\\\\n\", $NF, $5}')",
       "Bash(xxd \"G:/shark-mqtt/test/integration/persistent_session_test.go\")",
@@ -81,10 +81,13 @@
       "Bash(awk '{sum += $1} END {print sum}' echo \"\" echo \"store/redis:\" grep -c \"func Test\" \"G:/shark-mqtt/store/redis/\"*_test.go)",
       "Bash(awk '{sum += $1} END {print sum}')",
       "Bash(git reset *)",
-      "Bash(cmd //c scripts\\\\\\\\test.bat)",
-      "Bash(cmd /c \"scripts\\\\test.bat\")",
-      "Bash(bash scripts/test.sh all)",
-      "Bash(grep -v \"^#\\\\|^$\\\\|server\\\\|api\\\\|codec\\\\|memory\")"
+      "Bash(cmd //c scripts\\\\\\\\run_tests.bat)",
+      "Bash(cmd /c \"scripts\\\\run_tests.bat\")",
+      "Bash(bash scripts/run_tests.sh --all)",
+      "Bash(grep -v \"^#\\\\|^$\\\\|server\\\\|api\\\\|codec\\\\|memory\")",
+      "Bash(sort -t/ -k2)",
+      "Bash(git restore *)",
+      "Bash(go run *)"
     ]
   }
 }
