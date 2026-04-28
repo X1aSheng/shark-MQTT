@@ -76,6 +76,9 @@ func (s *SessionStore) DeleteSession(ctx context.Context, clientID string) error
 }
 
 func (s *SessionStore) ListSessions(ctx context.Context) ([]string, error) {
+	if s.keyPrefix == "" {
+		return nil, fmt.Errorf("cannot list sessions with empty key prefix: would scan entire database")
+	}
 	var clientIDs []string
 	var cursor uint64
 	pattern := s.keyPrefix + "*"

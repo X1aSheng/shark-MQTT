@@ -2,6 +2,7 @@
 package testutils
 
 import (
+	"fmt"
 	"net"
 	"time"
 
@@ -130,7 +131,7 @@ func WaitReady(ch <-chan struct{}, timeout time.Duration) bool {
 func GenerateClientIDs(prefix string, n int) []string {
 	ids := make([]string, n)
 	for i := 0; i < n; i++ {
-		ids[i] = prefix
+		ids[i] = fmt.Sprintf("%s-%d", prefix, i)
 	}
 	return ids
 }
