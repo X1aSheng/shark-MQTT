@@ -3,6 +3,7 @@ package plugin
 
 import (
 	"context"
+	"fmt"
 	"sync"
 )
 
@@ -59,14 +60,24 @@ func (pm *Manager) Register(p Plugin) {
 }
 
 // Dispatch dispatches a hook event to all registered plugins.
-// It returns the first error encountered from any plugin.
-func (pm *Manager) Dispatch(ctx context.Context, hook Hook, data *Context) error {
+// It recovers from panics in plugins and returns the first error encountered.
+func (pm *Manager) Dispatch(ctx context.Context, hook Hook, data *Context) (err error) {
 	pm.mu.RLock()
 	plugins := pm.plugins[hook]
 	pm.mu.RUnlock()
 
 	for _, p := range plugins {
-		if err := p.Execute(ctx, hook, data); err != nil {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf("plugin %s panic: %v", p.Name(), r)
+				}
+			}()
+			if e := p.Execute(ctx, hook, data); e != nil {
+				err = e
+			}
+		}()
+		if err != nil {
 			return err
 		}
 	}

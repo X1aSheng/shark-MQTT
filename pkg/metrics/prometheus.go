@@ -1,6 +1,8 @@
 package metrics
 
 import (
+	"strconv"
+
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -146,10 +148,10 @@ func (m *prometheusMetrics) IncRejections(reason string) {
 }
 func (m *prometheusMetrics) IncAuthFailures() { m.authFailures.Inc() }
 func (m *prometheusMetrics) IncMessagesPublished(qos uint8) {
-	m.messagesPublished.WithLabelValues(string(rune('0' + qos))).Inc()
+	m.messagesPublished.WithLabelValues(qosLabel(qos)).Inc()
 }
 func (m *prometheusMetrics) IncMessagesDelivered(qos uint8) {
-	m.messagesDelivered.WithLabelValues(string(rune('0' + qos))).Inc()
+	m.messagesDelivered.WithLabelValues(qosLabel(qos)).Inc()
 }
 func (m *prometheusMetrics) IncMessagesDropped(reason string) {
 	m.messagesDropped.WithLabelValues(reason).Inc()
@@ -183,4 +185,12 @@ func (m *prometheusMetrics) SetSubscriptions(count int) {
 }
 func (m *prometheusMetrics) IncErrors(component string) {
 	m.errors.WithLabelValues(component).Inc()
+}
+
+// qosLabel returns a safe Prometheus label for a QoS value.
+func qosLabel(qos uint8) string {
+	if qos > 2 {
+		return "unknown"
+	}
+	return strconv.FormatUint(uint64(qos), 10)
 }

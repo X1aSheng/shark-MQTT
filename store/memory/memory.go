@@ -37,7 +37,9 @@ func (s *sessionStore) GetSession(ctx context.Context, clientID string) (*store.
 	if !ok {
 		return nil, store.ErrSessionNotFound
 	}
-	return data, nil
+	// Return a copy to prevent callers from modifying internal state without locking
+	copied := *data
+	return &copied, nil
 }
 
 func (s *sessionStore) DeleteSession(ctx context.Context, clientID string) error {

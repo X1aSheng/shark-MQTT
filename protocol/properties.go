@@ -3,6 +3,7 @@ package protocol
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 )
 
@@ -290,13 +291,11 @@ func (c *Codec) decodeProperties(r io.Reader) (*Properties, error) {
 }
 
 // skipPropertyValue skips an unknown property's value based on its type.
+// Returns an error for completely unrecognized property IDs.
 func skipPropertyValue(r *bytes.Reader, propID byte) error {
 	pt, ok := propTypeMap[propID]
 	if !ok {
-		// Completely unknown property ID — can't determine length.
-		// Best effort: try to skip as VarInt (smallest safe default).
-		_, _ = readVarIntFromReader(r)
-		return nil
+		return fmt.Errorf("protocol: unknown property ID 0x%02X with unrecognized data type", propID)
 	}
 	switch pt {
 	case propTypeByte:
