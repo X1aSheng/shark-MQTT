@@ -21,7 +21,6 @@ type MQTTServer struct {
 	cfg        *config.Config
 	listener   net.Listener
 	handler    ConnectionHandler
-	codec      *protocol.Codec
 	connCount  atomic.Int64
 	earlyClose atomic.Int64
 	tlsConfig  *tls.Config
@@ -49,7 +48,6 @@ func NewMQTTServer(cfg *config.Config, opts ...ServerOption) *MQTTServer {
 
 	s := &MQTTServer{
 		cfg:    cfg,
-		codec:  protocol.NewCodec(cfg.MaxPacketSize),
 		ctx:    ctx,
 		cancel: cancel,
 		conns:  make(map[net.Conn]struct{}),
@@ -174,7 +172,7 @@ func (s *MQTTServer) acceptLoop() {
 			}()
 
 			if s.handler != nil {
-				if err := s.handler.HandleConnection(s.ctx, c, s.codec); err != nil {
+				if err := s.handler.HandleConnection(s.ctx, c, nil); err != nil {
 					if isEarlyClose(err) {
 						s.earlyClose.Add(1)
 					} else {

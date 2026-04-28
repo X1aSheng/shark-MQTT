@@ -2,7 +2,10 @@ package protocol
 
 import (
 	"encoding/binary"
+	"fmt"
 	"io"
+	"math"
+	"unicode/utf8"
 )
 
 // Codec handles encoding and decoding of MQTT packets.
@@ -186,10 +189,34 @@ func readString(r io.Reader) (string, error) {
 	if _, err := io.ReadFull(r, buf); err != nil {
 		return "", err
 	}
-	return string(buf), nil
+	s := string(buf)
+	if err := validateUTF8(s); err != nil {
+		return "", err
+	}
+	return s, nil
+}
+
+func validateUTF8(s string) error {
+	if !utf8.ValidString(s) {
+		return fmt.Errorf("protocol: invalid UTF-8 byte sequence")
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] == 0x00 {
+			return fmt.Errorf("protocol: null character U+0000 not allowed in MQTT UTF-8 string")
+		}
+	}
+	return nil
 }
 
 func writeString(w io.Writer, s string) error {
+	if len(s) > math.MaxUint16 {
+		return fmt.Errorf("protocol: string length %d exceeds MQTT max 65535", len(s))
+	}
+	if len(s) > 0 {
+		if err := validateUTF8(s); err != nil {
+			return fmt.Errorf("protocol: %w", err)
+		}
+	}
 	var lenBuf [2]byte
 	binary.BigEndian.PutUint16(lenBuf[:], uint16(len(s)))
 	if _, err := w.Write(lenBuf[:]); err != nil {
@@ -224,18 +251,18 @@ func writeUint16(w io.Writer, v uint16) error {
 func readVarInt(r io.Reader) (uint32, error) {
 	var val uint32
 	var multiplier uint32 = 1
-	for {
+	for i := 0; i < 4; i++ {
 		var buf [1]byte
 		if _, err := io.ReadFull(r, buf[:]); err != nil {
 			return 0, err
 		}
 		val += uint32(buf[0]&0x7F) * multiplier
 		if (buf[0] & 0x80) == 0 {
-			break
+			return val, nil
 		}
 		multiplier *= 128
 	}
-	return val, nil
+	return 0, fmt.Errorf("protocol: varint exceeds 4 bytes")
 }
 
 func writeVarInt(w io.Writer, val uint32) error {

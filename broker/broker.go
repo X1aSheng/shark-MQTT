@@ -36,7 +36,6 @@ type Broker struct {
 	logger    logger.Logger
 	metrics   metrics.Metrics
 	pluginMgr *plugin.Manager
-	codec     *protocol.Codec
 
 	mu sync.RWMutex
 	// connections maps clientID -> clientState
@@ -67,7 +66,6 @@ func New(opts ...Option) *Broker {
 		logger:        o.logger,
 		metrics:       o.metrics,
 		pluginMgr:     o.pluginManager,
-		codec:         protocol.NewCodec(o.maxPacketSize),
 		connections:   make(map[string]*clientState),
 		ctx:           ctx,
 		cancel:        cancel,
@@ -209,8 +207,8 @@ func (b *Broker) Stop() {
 	for time.Now().Before(deadline) {
 		total := 0
 		b.mu.RLock()
-		for _, id := range b.connections {
-			total += b.qos.InflightCount(id.conn.RemoteAddr().String())
+		for clientID := range b.connections {
+			total += b.qos.InflightCount(clientID)
 		}
 		b.mu.RUnlock()
 		if total == 0 {
