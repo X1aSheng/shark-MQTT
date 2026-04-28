@@ -88,7 +88,14 @@
       "Bash(sort -t/ -k2)",
       "Bash(git restore *)",
       "Bash(go run *)",
-      "Bash(kubectl kustomize *)"
+      "Bash(kubectl kustomize *)",
+      "Bash(git commit *)",
+      "Bash(go fmt *)",
+      "Bash(git mv *)",
+      "Bash(kill %1)",
+      "Bash(wait)",
+      "Bash(gh run *)",
+      "Bash(git check-ignore *)"
     ]
   }
 }
