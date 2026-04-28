@@ -21,8 +21,8 @@ type Authenticator interface {
 
 // Authorizer handles topic-level authorization.
 type Authorizer interface {
-	CanPublish(ctx context.Context, clientID, topic string) bool
-	CanSubscribe(ctx context.Context, clientID, topic string) bool
+	CanPublish(ctx context.Context, username, topic string) bool
+	CanSubscribe(ctx context.Context, username, topic string) bool
 }
 
 // StaticAuth implements both Authenticator and Authorizer with static credentials.
@@ -75,11 +75,11 @@ func (s *StaticAuth) Authenticate(ctx context.Context, clientID, username, passw
 	return nil
 }
 
-func (s *StaticAuth) CanPublish(ctx context.Context, clientID, topic string) bool {
+func (s *StaticAuth) CanPublish(ctx context.Context, username, topic string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	acl, ok := s.acls[clientID]
+	acl, ok := s.acls[username]
 	if !ok {
 		return false
 	}
@@ -91,11 +91,11 @@ func (s *StaticAuth) CanPublish(ctx context.Context, clientID, topic string) boo
 	return false
 }
 
-func (s *StaticAuth) CanSubscribe(ctx context.Context, clientID, topic string) bool {
+func (s *StaticAuth) CanSubscribe(ctx context.Context, username, topic string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	acl, ok := s.acls[clientID]
+	acl, ok := s.acls[username]
 	if !ok {
 		return false
 	}
@@ -114,11 +114,11 @@ func (AllowAllAuth) Authenticate(ctx context.Context, clientID, username, passwo
 	return nil
 }
 
-func (AllowAllAuth) CanPublish(ctx context.Context, clientID, topic string) bool {
+func (AllowAllAuth) CanPublish(ctx context.Context, username, topic string) bool {
 	return true
 }
 
-func (AllowAllAuth) CanSubscribe(ctx context.Context, clientID, topic string) bool {
+func (AllowAllAuth) CanSubscribe(ctx context.Context, username, topic string) bool {
 	return true
 }
 
@@ -129,11 +129,11 @@ func (DenyAllAuth) Authenticate(ctx context.Context, clientID, username, passwor
 	return ErrAuthFailed
 }
 
-func (DenyAllAuth) CanPublish(ctx context.Context, clientID, topic string) bool {
+func (DenyAllAuth) CanPublish(ctx context.Context, username, topic string) bool {
 	return false
 }
 
-func (DenyAllAuth) CanSubscribe(ctx context.Context, clientID, topic string) bool {
+func (DenyAllAuth) CanSubscribe(ctx context.Context, username, topic string) bool {
 	return false
 }
 

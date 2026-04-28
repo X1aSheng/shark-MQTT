@@ -26,6 +26,7 @@ type brokerOptions struct {
 	retryInterval  time.Duration
 	maxRetries     int
 	maxConnections int
+	maxPacketSize  int
 }
 
 func defaultBrokerOptions() brokerOptions {
@@ -40,6 +41,7 @@ func defaultBrokerOptions() brokerOptions {
 		retryInterval:  10 * time.Second,
 		maxRetries:     3,
 		maxConnections: 10000,
+		maxPacketSize:  256 * 1024,
 	}
 }
 
@@ -111,5 +113,12 @@ func WithQoSOptions(opts ...QoSOption) Option {
 func WithMaxConnections(n int) Option {
 	return func(o *brokerOptions) {
 		o.maxConnections = n
+	}
+}
+
+// WithBrokerMaxPacketSize sets the maximum MQTT packet size for the broker codec.
+func WithBrokerMaxPacketSize(n int) Option {
+	return func(o *brokerOptions) {
+		o.maxPacketSize = n
 	}
 }

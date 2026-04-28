@@ -11,7 +11,6 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/X1aSheng/shark-mqtt/config"
 	"github.com/X1aSheng/shark-mqtt/protocol"
@@ -185,30 +184,6 @@ func (s *MQTTServer) acceptLoop() {
 			}
 		}(conn)
 	}
-}
-
-// SafeConn wraps net.Conn with safe Read/Write that respect deadlines.
-type SafeConn struct {
-	net.Conn
-	readDeadline  time.Time
-	writeDeadline time.Time
-}
-
-// ReadPacket reads a complete MQTT packet from the connection.
-func ReadPacket(conn net.Conn, codec *protocol.Codec) (protocol.Packet, error) {
-	return codec.Decode(conn)
-}
-
-// WritePacket writes a complete MQTT packet to the connection.
-func WritePacket(conn net.Conn, codec *protocol.Codec, pkt protocol.Packet) error {
-	return codec.Encode(conn, pkt)
-}
-
-// DrainAndClose gracefully closes a connection by reading any remaining data.
-func DrainAndClose(conn net.Conn, timeout time.Duration) {
-	conn.SetReadDeadline(time.Now().Add(timeout))
-	io.Copy(io.Discard, conn)
-	conn.Close()
 }
 
 // isEarlyClose returns true if the error indicates the client disconnected

@@ -127,6 +127,7 @@ const (
 	ReasonCodeQoSNotSupported          = 0xA1
 	ReasonCodeUseAnotherServer         = 0x9C
 	ReasonCodeServerMoved              = 0x9D
+	ReasonCodeTopicNameInvalid        = 0x90
 	ReasonCodeSharedSubNotSupported    = 0xA2
 	ReasonCodeConnectionRateExceeded   = 0x9F
 	ReasonCodeMaxConnectTime           = 0xA3

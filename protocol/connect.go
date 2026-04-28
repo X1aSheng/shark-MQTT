@@ -37,13 +37,7 @@ func (c *Codec) decodeConnect(r io.Reader, fh *FixedHeader) (*ConnectPacket, err
 		CleanSession: (connectFlags & 0x02) != 0,
 		Reserved:     (connectFlags & 0x01) != 0,
 	}
-	// For MQTT 5.0, CleanSession bit means CleanStart
-	if protoVer == Version50 {
-		// flags.CleanSession maps to CleanStart in MQTT 5.0
-		flags.WillTopicFlag = flags.WillFlag
-	} else {
-		flags.WillTopicFlag = flags.WillFlag
-	}
+	flags.WillTopicFlag = flags.WillFlag
 
 	keepAlive, err := readUint16(reader)
 	if err != nil {

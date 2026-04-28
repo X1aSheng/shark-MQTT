@@ -7,8 +7,8 @@ func (n *noopMetrics) IncConnections()                        {}
 func (n *noopMetrics) DecConnections()                        {}
 func (n *noopMetrics) IncRejections(_ string)                 {}
 func (n *noopMetrics) IncAuthFailures()                       {}
-func (n *noopMetrics) IncMessagesPublished(_ string, _ uint8) {}
-func (n *noopMetrics) IncMessagesDelivered(_ string, _ uint8) {}
+func (n *noopMetrics) IncMessagesPublished(_ uint8)   {}
+func (n *noopMetrics) IncMessagesDelivered(_ uint8)   {}
 func (n *noopMetrics) IncMessagesDropped(_ string)            {}
 func (n *noopMetrics) IncInflight(_ string)                   {}
 func (n *noopMetrics) DecInflight(_ string)                   {}

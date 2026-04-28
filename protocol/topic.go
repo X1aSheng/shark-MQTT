@@ -2,6 +2,20 @@ package protocol
 
 import "strings"
 
+// ValidatePublishTopic returns true if the topic is valid for PUBLISH.
+// Per MQTT 3.1.1 §3.3.2 and MQTT 5.0 §3.3.2, PUBLISH topics must not contain wildcards.
+func ValidatePublishTopic(topic string) bool {
+	if len(topic) == 0 {
+		return false
+	}
+	for i := 0; i < len(topic); i++ {
+		if topic[i] == '#' || topic[i] == '+' {
+			return false
+		}
+	}
+	return true
+}
+
 // MatchTopic checks if a topic matches an MQTT topic pattern (with wildcards + and #).
 // Returns true if the topic matches the pattern.
 // Example patterns:

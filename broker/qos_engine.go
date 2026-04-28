@@ -301,8 +301,8 @@ func (q *QoSEngine) retryLoop() {
 }
 
 func (q *QoSEngine) doRetry() {
-	q.mu.RLock()
-	defer q.mu.RUnlock()
+	q.mu.Lock()
+	defer q.mu.Unlock()
 
 	sendPubAck := q.sendPubAck
 	sendPubRel := q.sendPubRel
