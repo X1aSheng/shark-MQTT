@@ -26,7 +26,16 @@ func NewSessionStore() store.SessionStore {
 func (s *sessionStore) SaveSession(ctx context.Context, clientID string, data *store.SessionData) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.sessions[clientID] = data
+	// Store a copy to prevent callers from modifying internal state
+	copied := *data
+	if data.Inflight != nil {
+		copied.Inflight = make(map[uint16]*store.InflightMessage, len(data.Inflight))
+		for k, v := range data.Inflight {
+			msgCopy := *v
+			copied.Inflight[k] = &msgCopy
+		}
+	}
+	s.sessions[clientID] = &copied
 	return nil
 }
 

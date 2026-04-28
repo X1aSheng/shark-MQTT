@@ -197,6 +197,12 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 	// Send CONNACK
 	b.sendConnAck(clientID, protocol.ConnAckAccepted, isResuming)
 
+	// Set initial keep-alive deadline so idle clients are detected
+	if sess.KeepAlive > 0 {
+		timeout := time.Duration(sess.KeepAlive) * time.Second * 3 / 2
+		conn.SetReadDeadline(time.Now().Add(timeout))
+	}
+
 	// Run read loop (handles its own cleanup via abnormalDisconnect/gracefulDisconnect)
 	b.readLoop(clientID, sess, c, conn)
 

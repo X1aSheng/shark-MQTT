@@ -43,10 +43,12 @@ func main() {
 	fmt.Println("       |_|")
 	fmt.Printf("Shark-MQTT Broker v1.0.0 - listening on %s\n\n", cfg.ListenAddr)
 
+	fmt.Fprintln(os.Stderr, "WARNING: Using AllowAllAuth — all connections will be accepted. Do NOT use in production.")
+
 	b := api.NewBroker(
 		api.WithConfig(cfg),
 		api.WithAuth(broker.AllowAllAuth{}),
-	)
+	)  //#nosec G104 — AllowAllAuth is intentional for development
 
 	// Start the broker
 	if err := b.Start(); err != nil {
