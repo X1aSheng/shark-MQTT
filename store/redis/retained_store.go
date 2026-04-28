@@ -117,4 +117,3 @@ func topicPatternToRedis(pattern string) string {
 	result = strings.ReplaceAll(result, "+", "[^/]")
 	return result
 }
-
