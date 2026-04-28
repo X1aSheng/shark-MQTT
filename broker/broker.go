@@ -137,6 +137,17 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 		return fmt.Errorf("broker: expected CONNECT, got %T", pkt)
 	}
 
+	// Validate CONNECT per MQTT spec
+	if err := protocol.ValidateConnect(connectPkt); err != nil {
+		b.metrics.IncRejections("invalid_connect")
+		var reasonCode byte = protocol.ConnAckUnacceptableProtocol
+		if connectPkt.ProtocolVersion == protocol.Version50 {
+			reasonCode = protocol.ConnAckProtocolError
+		}
+		b.sendConnAckRaw(conn, byte(reasonCode), false)
+		return fmt.Errorf("broker: CONNECT validation failed: %w", err)
+	}
+
 	// Clear read deadline
 	conn.SetReadDeadline(time.Time{})
 
@@ -155,8 +166,13 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 	sess := b.sessions.CreateSession(connectPkt.ClientID, connectPkt, isResuming)
 	clientID := connectPkt.ClientID
 
-	// Register client connection
+	// Register client connection — kick previous connection if one exists
 	b.mu.Lock()
+	if old, exists := b.connections[clientID]; exists {
+		old.conn.Close()
+		delete(b.connections, clientID)
+		b.logger.Info("session takeover", "clientID", clientID)
+	}
 	b.connections[clientID] = &clientState{conn: conn, codec: c}
 	b.mu.Unlock()
 
@@ -181,11 +197,8 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 	// Send CONNACK
 	b.sendConnAck(clientID, protocol.ConnAckAccepted, isResuming)
 
-	// Run read loop
+	// Run read loop (handles its own cleanup via abnormalDisconnect/gracefulDisconnect)
 	b.readLoop(clientID, sess, c, conn)
-
-	// Cleanup on disconnect
-	b.disconnect(clientID)
 
 	return nil
 }
@@ -357,10 +370,21 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 		}
 	}
 
-	// Route to subscribers using TopicTree
+	// QoS 2: defer subscriber delivery until PUBCOMP completes the handshake
+	if pkt.FixedHeader.QoS == 2 {
+		b.writePacket(clientID, conn, codec, &protocol.PubRecPacket{
+			FixedHeader: protocol.FixedHeader{
+				PacketType: protocol.PacketTypePubRec,
+			},
+			PacketID: pkt.PacketID,
+		})
+		b.qos.TrackQoS2(clientID, pkt.PacketID, pkt.Topic, pkt.Payload, pkt.FixedHeader.Retain)
+		return
+	}
+
+	// Route to subscribers for QoS 0 and QoS 1
 	subscribers := b.topics.Match(pkt.Topic)
 	for _, sub := range subscribers {
-		// Don't deliver to the publishing client
 		if sub.ClientID == clientID {
 			continue
 		}
@@ -376,17 +400,6 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 			PacketID: pkt.PacketID,
 		})
 		b.qos.TrackQoS1(clientID, pkt.PacketID, pkt.Topic, pkt.Payload, pkt.FixedHeader.Retain)
-	}
-
-	// Send PUBREC for QoS 2
-	if pkt.FixedHeader.QoS == 2 {
-		b.writePacket(clientID, conn, codec, &protocol.PubRecPacket{
-			FixedHeader: protocol.FixedHeader{
-				PacketType: protocol.PacketTypePubRec,
-			},
-			PacketID: pkt.PacketID,
-		})
-		b.qos.TrackQoS2(clientID, pkt.PacketID, pkt.Topic, pkt.Payload, pkt.FixedHeader.Retain)
 	}
 }
 
@@ -578,6 +591,27 @@ func (b *Broker) handlePubRec(clientID string, packetID uint16) {
 }
 
 func (b *Broker) handlePubRel(clientID string, packetID uint16) {
+	// Retrieve the inflight message to route to subscribers after QoS 2 handshake
+	msg, ok := b.qos.GetInflight(clientID, packetID)
+	if ok && msg.QoS == 2 {
+		pubPkt := &protocol.PublishPacket{
+			FixedHeader: protocol.FixedHeader{
+				PacketType: protocol.PacketTypePublish,
+				QoS:        msg.QoS,
+				Retain:     msg.Retain,
+			},
+			Topic:    msg.Topic,
+			Payload:  msg.Payload,
+			PacketID: msg.PacketID,
+		}
+		subscribers := b.topics.Match(msg.Topic)
+		for _, sub := range subscribers {
+			if sub.ClientID == clientID {
+				continue
+			}
+			b.deliverToClient(sub.ClientID, pubPkt)
+		}
+	}
 	b.qos.AckPubRel(clientID, packetID)
 }
 
@@ -630,7 +664,12 @@ func (b *Broker) republish(clientID string, packetID uint16, topic string, paylo
 		Payload:  payload,
 		PacketID: packetID,
 	}
-	b.writePacketTo(clientID, pubPkt)
+
+	// Route to subscribers via TopicTree
+	subscribers := b.topics.Match(topic)
+	for _, sub := range subscribers {
+		b.deliverToClient(sub.ClientID, pubPkt)
+	}
 	return nil
 }
 
