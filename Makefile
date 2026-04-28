@@ -1,6 +1,6 @@
 # Shark-MQTT Makefile
 
-.PHONY: all test test-unit test-integration test-race test-bench bench bench-quick bench-cpu bench-mem bench-profile test-coverage lint fmt build clean docker tidy verify ci
+.PHONY: all test test-unit test-integration test-race test-bench bench bench-quick bench-cpu bench-mem bench-profile test-coverage lint fmt build clean docker docker-build docker-run docker-test docker-compose-up docker-compose-down k8s-deploy k8s-delete tidy verify ci
 
 GO := go
 GOFLAGS := -v
@@ -100,7 +100,33 @@ docker-build:
 
 docker-run:
 	@echo "$(GREEN)[DOCKER] Running container...$(RESET)"
-	docker run -p 1883:1883 -p 8883:8883 shark-mqtt:latest
+	docker run -p 1883:1883 -p 9090:9090 shark-mqtt:latest
+
+docker-test:
+	@echo "$(GREEN)[DOCKER] Running smoke test...$(RESET)"
+	bash scripts/docker-test.sh
+
+docker-compose-up:
+	@echo "$(GREEN)[DOCKER] Starting with docker-compose...$(RESET)"
+	docker compose up -d
+
+docker-compose-down:
+	@echo "$(GREEN)[DOCKER] Stopping docker-compose...$(RESET)"
+	docker compose down
+
+# ─── Kubernetes Targets ────────────────────────────────────
+
+k8s-deploy:
+	@echo "$(GREEN)[K8S] Deploying to Kubernetes...$(RESET)"
+	kubectl apply -k k8s/base/
+
+k8s-deploy-prod:
+	@echo "$(GREEN)[K8S] Deploying production overlay...$(RESET)"
+	kubectl apply -k k8s/overlays/production/
+
+k8s-delete:
+	@echo "$(GREEN)[K8S] Deleting from Kubernetes...$(RESET)"
+	kubectl delete -k k8s/base/
 
 # ─── Development Targets ─────────────────────────────────
 
@@ -158,8 +184,15 @@ help:
 	@echo "  build-example     Build example binaries"
 	@echo ""
 	@echo "Docker targets:"
-	@echo "  docker-build      Build Docker image"
-	@echo "  docker-run        Run Docker container"
+	@echo "  docker-build         Build Docker image"
+	@echo "  docker-run           Run Docker container"
+	@echo "  docker-test          Run Docker smoke test"
+	@echo "  docker-compose-up    Start with docker-compose"
+	@echo "  docker-compose-down  Stop docker-compose"
+	@echo ""
+	@echo "Kubernetes targets:"
+	@echo "  k8s-deploy           Deploy to Kubernetes (base)"
+	@echo "  k8s-delete           Delete from Kubernetes"
 	@echo ""
 	@echo "Development targets:"
 	@echo "  tidy              Clean up go.mod"

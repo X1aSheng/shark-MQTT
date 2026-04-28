@@ -123,6 +123,31 @@ func main() {
 }
 ```
 
+### Docker
+
+```bash
+# Build and run
+docker build -t shark-mqtt .
+docker run -d -p 1883:1883 -p 9090:9090 shark-mqtt
+
+# Verify
+curl http://localhost:9090/healthz
+```
+
+See `docker-compose.yml` for Redis and multi-service setups.
+
+### Kubernetes
+
+```bash
+# Deploy
+kubectl apply -k k8s/base/
+
+# Check
+kubectl -n shark-mqtt get pods
+```
+
+See `k8s/` for production overlays and configuration.
+
 ### CLI
 
 ```bash

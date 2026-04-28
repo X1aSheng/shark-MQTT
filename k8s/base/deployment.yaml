@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shark-mqtt
+  namespace: shark-mqtt
+  labels:
+    app: shark-mqtt
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: shark-mqtt
+  template:
+    metadata:
+      labels:
+        app: shark-mqtt
+    spec:
+      containers:
+        - name: mqtt
+          image: x1asheng/shark-mqtt:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - "-addr=:1883"
+          ports:
+            - name: mqtt
+              containerPort: 1883
+              protocol: TCP
+            - name: health
+              containerPort: 9090
+              protocol: TCP
+          env:
+            - name: MQTT_LOG_LEVEL
+              value: info
+            - name: MQTT_LOG_FORMAT
+              value: json
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

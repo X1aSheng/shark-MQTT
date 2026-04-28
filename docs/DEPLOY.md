@@ -17,53 +17,48 @@ This guide covers various deployment options for Shark-MQTT.
 
 ## Docker
 
+A multi-stage `Dockerfile` is provided at the project root. The image exposes three
+ports: `1883` (MQTT), `8883` (MQTT+TLS), and `9090` (health/metrics).
+
+### Build
+
+```bash
+# Build from source
+docker build -t shark-mqtt:latest .
+
+# Or via Make
+make docker-build
+```
+
 ### Basic Usage
 
 ```bash
-# Pull and run
 docker run -d \
   --name mqtt-broker \
   -p 1883:1883 \
-  x1asheng/shark-mqtt
+  -p 9090:9090 \
+  shark-mqtt:latest
+
+# Verify health
+curl http://localhost:9090/healthz
 ```
 
-### With Configuration
+### With Environment Variables
+
+All `MQTT_*` environment variables are supported:
 
 ```bash
-# Create config file
-cat > config.yaml << EOF
-listen_addr: ":1883"
-max_connections: 1000
-log_level: "info"
-EOF
-
-# Run with config
-docker run -d \
-  --name mqtt-broker \
-  -p 1883:1883 \
-  -v $(pwd)/config.yaml:/app/config.yaml \
-  x1asheng/shark-mqtt
-```
-
-### With TLS
-
-```bash
-# Create certificates
-mkdir -p certs
-openssl req -new -x509 -days 365 -nodes \
-  -out certs/cert.pem \
-  -keyout certs/key.pem
-
-# Run with TLS
 docker run -d \
   --name mqtt-broker \
   -p 1883:1883 \
   -p 8883:8883 \
-  -v $(pwd)/certs:/app/certs \
+  -p 9090:9090 \
+  -e MQTT_LOG_LEVEL=debug \
   -e MQTT_TLS_ENABLED=true \
-  -e MQTT_TLS_CERT_FILE=/app/certs/cert.pem \
-  -e MQTT_TLS_KEY_FILE=/app/certs/key.pem \
-  x1asheng/shark-mqtt
+  -e MQTT_TLS_CERT_FILE=/certs/cert.pem \
+  -e MQTT_TLS_KEY_FILE=/certs/key.pem \
+  -v $(pwd)/certs:/certs \
+  shark-mqtt:latest
 ```
 
 ### With Redis
@@ -73,215 +68,120 @@ docker run -d \
   --name mqtt-broker \
   -p 1883:1883 \
   -e MQTT_STORAGE_BACKEND=redis \
-  -e MQTT_REDIS_ADDR=redis:6379 \
-  --link redis \
-  x1asheng/shark-mqtt
+  -e MQTT_REDIS_ADDR=redis-host:6379 \
+  shark-mqtt:latest
 ```
 
-### Build from Source
+### Smoke Test
 
 ```bash
-# Clone and build
-git clone https://github.com/X1aSheng/shark-mqtt.git
-cd shark-mqtt
-docker build -t shark-mqtt:latest .
-
-# Run
-docker run -d -p 1883:1883 shark-mqtt:latest
+# Build image, start container, verify health + MQTT connectivity
+bash scripts/docker-test.sh
 ```
 
 ---
 
 ## Docker Compose
 
-### Basic Setup
+A `docker-compose.yml` is provided at the project root with standalone and
+Redis-backed configurations.
 
-```yaml
-# docker-compose.yaml
-version: '3.8'
+### Standalone
 
-services:
-  mqtt:
-    image: x1asheng/shark-mqtt:latest
-    container_name: mqtt-broker
-    ports:
-      - "1883:1883"
-    volumes:
-      - ./config.yaml:/app/config.yaml
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "1883"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+```bash
+docker compose up -d
+
+# Check status
+docker compose ps
+curl http://localhost:9090/healthz
+
+# Stop
+docker compose down
 ```
 
 ### Full Stack with Redis
 
-```yaml
-version: '3.8'
+Edit `docker-compose.yml` and uncomment the `redis` and `mqtt-redis` service blocks,
+then:
 
-services:
-  redis:
-    image: redis:7-alpine
-    container_name: mqtt-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis-data:/data
-    restart: unless-stopped
-
-  mqtt:
-    image: x1asheng/shark-mqtt:latest
-    container_name: mqtt-broker
-    ports:
-      - "1883:1883"
-    - "8883:8883"  # TLS
-    depends_on:
-      redis:
-        condition: service_healthy
-    environment:
-      MQTT_STORAGE_BACKEND: redis
-      MQTT_REDIS_ADDR: redis:6379
-      MQTT_LOG_LEVEL: info
-    volumes:
-      - ./config.yaml:/app/config.yaml
-      - ./certs:/app/certs
-    restart: unless-stopped
-
-volumes:
-  redis-data:
+```bash
+docker compose up -d
 ```
 
-### High Availability
+The standalone `mqtt` and Redis-backed `mqtt-redis` services cannot run at the same
+time on port 1883 — comment out the one you don't need.
 
-```yaml
-version: '3.8'
+### Smoke Test (CI)
 
-services:
-  redis:
-    image: redis:7-alpine
-    command: redis-server --appendonly yes
-    volumes:
-      - redis-data:/data
-    restart: unless-stopped
-
-  mqtt:
-    image: x1asheng/shark-mqtt:latest
-    deploy:
-      replicas: 3
-    ports:
-      - "1883:1883"
-    depends_on:
-      - redis
-    environment:
-      MQTT_STORAGE_BACKEND: redis
-      MQTT_REDIS_ADDR: redis:6379
-    restart: unless-stopped
-
-  haproxy:
-    image: haproxy:2.8
-    ports:
-      - "1883:1883"
-    volumes:
-      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg
-    depends_on:
-      - mqtt
-
-volumes:
-  redis-data:
+```bash
+# Build, start, run tests, cleanup
+docker compose -f docker-compose.test.yml up --build --exit-code-from test
 ```
 
 ---
 
 ## Kubernetes
 
-### Deployment
+Kustomize-ready manifests are in `k8s/base/` with a production overlay in
+`k8s/overlays/production/`.
 
-```yaml
-# mqtt-deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: shark-mqtt
-  labels:
-    app: shark-mqtt
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: shark-mqtt
-  template:
-    metadata:
-      labels:
-        app: shark-mqtt
-    spec:
-      containers:
-        - name: mqtt
-          image: x1asheng/shark-mqtt:latest
-          ports:
-            - containerPort: 1883
-          env:
-            - name: MQTT_STORAGE_BACKEND
-              value: redis
-            - name: MQTT_REDIS_ADDR
-              value: redis:6379
-            - name: MQTT_LOG_LEVEL
-              value: info
-          resources:
-            requests:
-              memory: "128Mi"
-              cpu: "100m"
-            limits:
-              memory: "512Mi"
-              cpu: "500m"
-          livenessProbe:
-            tcpSocket:
-              port: 1883
-            initialDelaySeconds: 30
-            periodSeconds: 10
-          readinessProbe:
-            tcpSocket:
-              port: 1883
-            initialDelaySeconds: 5
-            periodSeconds: 5
+### Directory Structure
+
+```
+k8s/
+├── base/
+│   ├── kustomization.yaml
+│   ├── namespace.yaml        # shark-mqtt namespace
+│   ├── configmap.yaml        # broker configuration
+│   ├── deployment.yaml       # replicas: 2, health probes on :9090
+│   └── service.yaml          # ClusterIP (MQTT + health ports)
+└── overlays/
+    └── production/
+        └── kustomization.yaml # replicas: 3, LoadBalancer, more resources
 ```
 
-### Service
+### Deploy
 
-```yaml
-# mqtt-service.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: shark-mqtt
-spec:
-  selector:
-    app: shark-mqtt
-  ports:
-    - protocol: TCP
-      port: 1883
-      targetPort: 1883
-  type: LoadBalancer
+```bash
+# Deploy base
+kubectl apply -k k8s/base/
+
+# Or via Make
+make k8s-deploy
+
+# Production overlay
+make k8s-deploy-prod
 ```
 
-### ConfigMap
+### Verify
 
-```yaml
-# mqtt-configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: mqtt-config
-data:
-  config.yaml: |
-    listen_addr: ":1883"
-    max_connections: 10000
-    keep_alive: 60
-    log_level: "info"
-    qos_retry_interval: "10s"
-    qos_max_retries: 3
+```bash
+kubectl -n shark-mqtt get pods
+kubectl -n shark-mqtt get svc
+
+# Health check (port-forward)
+kubectl -n shark-mqtt port-forward svc/shark-mqtt 9090:9090
+curl http://localhost:9090/healthz
 ```
+
+### Delete
+
+```bash
+kubectl delete -k k8s/base/
+# Or: make k8s-delete
+```
+
+### Liveness & Readiness
+
+The deployment uses HTTP probes against the health server (port 9090):
+
+| Probe | Path | Port | Initial Delay |
+|-------|------|------|---------------|
+| liveness | `/healthz` | 9090 | 10s |
+| readiness | `/readyz` | 9090 | 5s |
+
+`/healthz` always returns 200 while the process is running.
+`/readyz` returns 200 once the MQTT server is accepting connections, 503 otherwise.
 
 ---
 

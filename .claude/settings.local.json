@@ -87,7 +87,8 @@
       "Bash(grep -v \"^#\\\\|^$\\\\|server\\\\|api\\\\|codec\\\\|memory\")",
       "Bash(sort -t/ -k2)",
       "Bash(git restore *)",
-      "Bash(go run *)"
+      "Bash(go run *)",
+      "Bash(kubectl kustomize *)"
     ]
   }
 }

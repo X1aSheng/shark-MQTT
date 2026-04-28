@@ -1,0 +1,33 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: shark-mqtt
+
+resources:
+  - ../base
+
+patches:
+  - patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: shark-mqtt
+      spec:
+        replicas: 3
+        template:
+          spec:
+            containers:
+              - name: mqtt
+                resources:
+                  requests:
+                    memory: "128Mi"
+                    cpu: "200m"
+                  limits:
+                    memory: "512Mi"
+                    cpu: "1000m"
+  - patch: |
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: shark-mqtt
+      spec:
+        type: LoadBalancer
