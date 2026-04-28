@@ -17,7 +17,8 @@ import (
 func testBroker(t *testing.T) *api.Broker {
 	t.Helper()
 	cfg := config.DefaultConfig()
-	cfg.ListenAddr = ":0" // random port
+	cfg.ListenAddr = ":0"  // random port
+	cfg.MetricsAddr = ":0" // random port to avoid conflicts
 
 	broker := api.NewBroker(
 		api.WithConfig(cfg),

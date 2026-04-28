@@ -466,7 +466,11 @@ func readStringFromReader(r *bytes.Reader) (string, error) {
 	if _, err := r.Read(buf); err != nil {
 		return "", err
 	}
-	return string(buf), nil
+	s := string(buf)
+	if err := validateUTF8(s); err != nil {
+		return "", err
+	}
+	return s, nil
 }
 
 func readUint16FromReader(r *bytes.Reader) (uint16, error) {

@@ -88,6 +88,13 @@ func (m *Manager) CreateSession(clientID string, connectPkt *protocol.ConnectPac
 	existing, exists := m.sessions[clientID]
 	if exists {
 		if !connectPkt.Flags.CleanSession && isResuming {
+			existing.mu.Lock()
+			existing.KeepAlive = connectPkt.KeepAlive
+			existing.Username = connectPkt.Username
+			existing.ProtocolVer = connectPkt.ProtocolVersion
+			existing.LastActivity = time.Now()
+			existing.ConnectedAt = time.Now()
+			existing.mu.Unlock()
 			return existing
 		}
 		// Kick old session (duplicate ClientID)

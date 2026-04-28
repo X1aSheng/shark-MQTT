@@ -164,8 +164,26 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 		}
 	}
 
-	// Create or resume session
+	// Create or resume session. Check in-memory first, then persistent store.
 	isResuming := b.sessions.SessionExists(connectPkt.ClientID)
+	if !isResuming && !connectPkt.Flags.CleanSession && b.sessionStore != nil {
+		if exists, _ := b.sessionStore.IsSessionExists(ctx, connectPkt.ClientID); exists {
+			restored, err := b.sessions.Restore(ctx, connectPkt.ClientID)
+			if err == nil && restored != nil {
+				isResuming = true
+				for topic, qos := range restored.Subscriptions {
+					b.topics.Subscribe(topic, connectPkt.ClientID, qos)
+				}
+				for _, msg := range restored.Inflight {
+					if msg.QoS == 2 {
+						b.qos.TrackQoS2(connectPkt.ClientID, msg.PacketID, msg.Topic, msg.Payload, msg.Retain)
+					} else {
+						b.qos.TrackQoS1(connectPkt.ClientID, msg.PacketID, msg.Topic, msg.Payload, msg.Retain)
+					}
+				}
+			}
+		}
+	}
 	sess := b.sessions.CreateSession(connectPkt.ClientID, connectPkt, isResuming)
 	clientID := connectPkt.ClientID
 
