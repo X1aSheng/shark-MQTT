@@ -1,0 +1,56 @@
+version: "3.8"
+
+services:
+  mqtt:
+    build: .
+    image: shark-mqtt:latest
+    container_name: shark-mqtt
+    ports:
+      - "1883:1883"
+      - "9090:9090"
+    environment:
+      MQTT_LOG_LEVEL: info
+    volumes:
+      - mqtt-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  # --- Redis-backed deployment (uncomment to use) ---
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: shark-mqtt-redis
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis-data:/data
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 10s
+  #     timeout: 3s
+  #     retries: 3
+  #
+  # mqtt-redis:
+  #   build: .
+  #   image: shark-mqtt:latest
+  #   container_name: shark-mqtt-redis
+  #   ports:
+  #     - "1883:1883"
+  #     - "9090:9090"
+  #   environment:
+  #     MQTT_STORAGE_BACKEND: redis
+  #     MQTT_REDIS_ADDR: redis:6379
+  #     MQTT_LOG_LEVEL: info
+  #   depends_on:
+  #     redis:
+  #       condition: service_healthy
+  #   restart: unless-stopped
+
+volumes:
+  mqtt-data:
+  # redis-data:

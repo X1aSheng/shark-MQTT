@@ -1,0 +1,39 @@
+version: "3.8"
+
+services:
+  mqtt:
+    build: .
+    image: shark-mqtt:test
+    container_name: shark-mqtt-test
+    ports:
+      - "1883:1883"
+      - "9090:9090"
+    environment:
+      MQTT_LOG_LEVEL: info
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 3s
+
+  test:
+    image: golang:1.26-alpine
+    container_name: shark-mqtt-test-runner
+    depends_on:
+      mqtt:
+        condition: service_healthy
+    environment:
+      MQTT_BROKER_ADDR: mqtt:1883
+    working_dir: /test
+    volumes:
+      - .:/test
+    command:
+      - sh
+      - -c
+      - |
+        echo ">>> Health check..."
+        wget -qO- http://mqtt:9090/healthz
+        echo ""
+        echo ">>> Running integration smoke tests..."
+        go test -v -count=1 -timeout 60s -run "TestConnectFlow|TestPubSub|TestQoS0" ./tests/integration/...

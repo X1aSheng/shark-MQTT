@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shark-mqtt-config
+  namespace: shark-mqtt
+data:
+  config.yaml: |
+    listen_addr: ":1883"
+    max_connections: 10000
+    keep_alive: 60
+    max_packet_size: 262144
+    log_level: "info"
+    log_format: "json"
+    qos_retry_interval: "10s"
+    qos_max_retries: 3
+    qos_max_inflight: 100
+    session_expiry_interval: 86400
+    storage_backend: "memory"
+    metrics_enabled: true
+    metrics_addr: "0.0.0.0:9090"
