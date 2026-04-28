@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/X1aSheng/shark-mqtt/protocol"
 	"github.com/X1aSheng/shark-mqtt/store"
@@ -109,35 +110,11 @@ func (s *RetainedStore) MatchRetained(ctx context.Context, pattern string) ([]*s
 // topicPatternToRedis converts an MQTT topic pattern to a Redis glob pattern.
 func topicPatternToRedis(pattern string) string {
 	// MQTT: # matches everything below, + matches single level
-	// Redis: * matches anything, ? matches single char
-	result := pattern
-	// Replace MQTT wildcards with Redis equivalents
-	result = replaceHash(result, "*")    // # -> *
-	result = replacePlus(result, "[^/]") // + -> [^/] (match any char except /)
+	// Redis: * matches anything including /, ? matches single char.
+	// For # at the end (most common pattern), use * to narrow the scan;
+	// the secondary MQTT match in MatchRetained filters false positives.
+	result := strings.ReplaceAll(pattern, "#", "*")
+	result = strings.ReplaceAll(result, "+", "[^/]")
 	return result
 }
 
-func replaceHash(s, replacement string) string {
-	// Simple string replacement for # -> *
-	result := ""
-	for i := 0; i < len(s); i++ {
-		if s[i] == '#' {
-			result += replacement
-		} else {
-			result += string(s[i])
-		}
-	}
-	return result
-}
-
-func replacePlus(s, replacement string) string {
-	result := ""
-	for i := 0; i < len(s); i++ {
-		if s[i] == '+' {
-			result += replacement
-		} else {
-			result += string(s[i])
-		}
-	}
-	return result
-}
