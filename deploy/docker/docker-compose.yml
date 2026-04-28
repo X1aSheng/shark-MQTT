@@ -1,15 +1,19 @@
 version: "3.8"
 
 services:
-  mqtt:
-    build: .
+  shark-mqtt:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
     image: shark-mqtt:latest
     container_name: shark-mqtt
     ports:
       - "1883:1883"
+      - "8883:8883"
       - "9090:9090"
     environment:
-      MQTT_LOG_LEVEL: info
+      - MQTT_LOG_LEVEL=info
+      - MQTT_LOG_FORMAT=json
     volumes:
       - mqtt-data:/data
     restart: unless-stopped
@@ -19,6 +23,28 @@ services:
       timeout: 3s
       retries: 3
       start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+
+  prometheus:
+    image: prom/prometheus:latest
+    profiles: ["prod", "monitoring"]
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=15d"
+    depends_on:
+      - shark-mqtt
+    restart: unless-stopped
 
   # --- Redis-backed deployment (uncomment to use) ---
   # redis:
@@ -35,17 +61,19 @@ services:
   #     timeout: 3s
   #     retries: 3
   #
-  # mqtt-redis:
-  #   build: .
+  # shark-mqtt-redis:
+  #   build:
+  #     context: ../..
+  #     dockerfile: deploy/docker/Dockerfile
   #   image: shark-mqtt:latest
   #   container_name: shark-mqtt-redis
   #   ports:
   #     - "1883:1883"
   #     - "9090:9090"
   #   environment:
-  #     MQTT_STORAGE_BACKEND: redis
-  #     MQTT_REDIS_ADDR: redis:6379
-  #     MQTT_LOG_LEVEL: info
+  #     - MQTT_STORAGE_BACKEND=redis
+  #     - MQTT_REDIS_ADDR=redis:6379
+  #     - MQTT_LOG_LEVEL=info
   #   depends_on:
   #     redis:
   #       condition: service_healthy

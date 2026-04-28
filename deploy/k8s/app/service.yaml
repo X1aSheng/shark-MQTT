@@ -4,16 +4,18 @@ metadata:
   name: shark-mqtt
   namespace: shark-mqtt
   labels:
-    app: shark-mqtt
+    app.kubernetes.io/name: shark-mqtt
+    app.kubernetes.io/component: broker
 spec:
   selector:
-    app: shark-mqtt
+    app.kubernetes.io/name: shark-mqtt
+    app.kubernetes.io/component: broker
   ports:
     - name: mqtt
       protocol: TCP
       port: 1883
       targetPort: 1883
-    - name: health
+    - name: metrics
       protocol: TCP
       port: 9090
       targetPort: 9090

@@ -1,0 +1,28 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: shark-mqtt
+  namespace: shark-mqtt
+  labels:
+    app.kubernetes.io/name: shark-mqtt
+    app.kubernetes.io/component: broker
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  rules:
+    - host: mqtt.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: shark-mqtt
+                port:
+                  number: 1883
+  # TLS (uncomment and configure)
+  # tls:
+  #   - hosts:
+  #       - mqtt.example.com
+  #     secretName: mqtt-tls

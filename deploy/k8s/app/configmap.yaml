@@ -3,6 +3,9 @@ kind: ConfigMap
 metadata:
   name: shark-mqtt-config
   namespace: shark-mqtt
+  labels:
+    app.kubernetes.io/name: shark-mqtt
+    app.kubernetes.io/component: broker
 data:
   config.yaml: |
     listen_addr: ":1883"

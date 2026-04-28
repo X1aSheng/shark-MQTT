@@ -1,37 +1,23 @@
-# Git
 .git/
 .gitignore
-.gitattributes
-
-# IDE
-.idea/
-.vscode/
-
-# CI & Config
 .github/
 .claude/
-
-# Logs
 logs/
 *.log
-
-# Docs & Tests
-docs/
-tests/
 *.md
-
-# Build artifacts
+k8s/
+deploy/k8s/
+.golangci.yml
+.env
+.env.local
 bin/
+dist/
 coverage.out
 coverage.html
 cpu.prof
 mem.prof
-
-# Go
 vendor/
 go.work
-
-# OS
 .DS_Store
 Thumbs.db
 tmp/
