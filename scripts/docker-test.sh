@@ -49,7 +49,7 @@ done
 
 echo ""
 echo "[3/4] Running MQTT smoke test..."
-if go run scripts/mqtt_smoke_test.go -addr "localhost:$MQTT_PORT"; then
+if go run scripts/mqtt_smoke.go -addr "localhost:$MQTT_PORT"; then
     echo ""
 else
     echo ""
