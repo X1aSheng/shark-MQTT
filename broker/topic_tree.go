@@ -3,6 +3,8 @@ package broker
 
 import (
 	"sync"
+
+	"github.com/X1aSheng/shark-mqtt/protocol"
 )
 
 // TopicNode represents a node in the topic trie.
@@ -30,13 +32,13 @@ func NewTopicTree() *TopicTree {
 
 // Subscribe adds a subscription for a client to a topic filter.
 func (tt *TopicTree) Subscribe(topic string, clientID string, qos uint8) bool {
-	if !ValidateTopicFilter(topic) {
+	if !protocol.ValidateTopicFilter(topic) {
 		return false
 	}
 	tt.mu.Lock()
 	defer tt.mu.Unlock()
 
-	parts := splitTopic(topic)
+	parts := protocol.SplitTopic(topic)
 	tt.subscribeNode(tt.root, parts, clientID, qos, 0)
 	return true
 }
@@ -44,13 +46,13 @@ func (tt *TopicTree) Subscribe(topic string, clientID string, qos uint8) bool {
 // SubscribeSystem adds a subscription for a system topic ($SYS).
 // System topics are protected from wildcard matching.
 func (tt *TopicTree) SubscribeSystem(topic string, clientID string, qos uint8) bool {
-	if !ValidateTopicFilter(topic) {
+	if !protocol.ValidateTopicFilter(topic) {
 		return false
 	}
 	tt.mu.Lock()
 	defer tt.mu.Unlock()
 
-	parts := splitTopic(topic)
+	parts := protocol.SplitTopic(topic)
 	tt.subscribeNode(tt.root, parts, clientID, qos, 0)
 	return true
 }
@@ -60,7 +62,7 @@ func (tt *TopicTree) Unsubscribe(topic string, clientID string) {
 	tt.mu.Lock()
 	defer tt.mu.Unlock()
 
-	parts := splitTopic(topic)
+	parts := protocol.SplitTopic(topic)
 	tt.unsubscribeNode(tt.root, parts, clientID, 0)
 }
 
@@ -76,7 +78,7 @@ func (tt *TopicTree) Match(topic string) []Subscriber {
 	tt.mu.RLock()
 	defer tt.mu.RUnlock()
 
-	parts := splitTopic(topic)
+	parts := protocol.SplitTopic(topic)
 	var results []Subscriber
 	visited := make(map[string]struct{})
 	tt.matchNode(tt.root, parts, 0, &results, visited)
@@ -203,46 +205,3 @@ func (tt *TopicTree) collectAllSubscribers(node *TopicNode, results *[]Subscribe
 	}
 }
 
-// ValidateTopicFilter checks whether a topic filter conforms to MQTT spec rules.
-// Rules: '#' must be last character and preceded by '/' or be the entire filter;
-// '+' must occupy an entire level (bounded by '/' or string start/end).
-func ValidateTopicFilter(filter string) bool {
-	if len(filter) == 0 {
-		return false
-	}
-	for i := 0; i < len(filter); i++ {
-		switch filter[i] {
-		case '#':
-			// '#' must be the last character
-			if i != len(filter)-1 {
-				return false
-			}
-			// '#' must be preceded by '/' or be the first character
-			if i > 0 && filter[i-1] != '/' {
-				return false
-			}
-		case '+':
-			// '+' must be bounded by '/' or string boundaries
-			if i > 0 && filter[i-1] != '/' {
-				return false
-			}
-			if i < len(filter)-1 && filter[i+1] != '/' {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-// splitTopic splits a topic string by '/'.
-func splitTopic(topic string) []string {
-	parts := make([]string, 0)
-	start := 0
-	for i := 0; i <= len(topic); i++ {
-		if i == len(topic) || topic[i] == '/' {
-			parts = append(parts, topic[start:i])
-			start = i + 1
-		}
-	}
-	return parts
-}

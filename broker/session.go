@@ -201,7 +201,7 @@ func (s *Session) MatchesSubscription(topic string) (bool, uint8) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for pattern, qos := range s.Subscriptions {
-		if matchTopic(pattern, topic) {
+		if protocol.MatchTopic(pattern, topic) {
 			return true, qos
 		}
 	}

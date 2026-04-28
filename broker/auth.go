@@ -6,6 +6,8 @@ import (
 	"crypto/subtle"
 	"errors"
 	"sync"
+
+	"github.com/X1aSheng/shark-mqtt/protocol"
 )
 
 var (
@@ -84,7 +86,7 @@ func (s *StaticAuth) CanPublish(ctx context.Context, username, topic string) boo
 		return false
 	}
 	for _, t := range acl.PublishTopics {
-		if matchTopic(t, topic) {
+		if protocol.MatchTopic(t, topic) {
 			return true
 		}
 	}
@@ -100,7 +102,7 @@ func (s *StaticAuth) CanSubscribe(ctx context.Context, username, topic string) b
 		return false
 	}
 	for _, t := range acl.SubscribeTopics {
-		if matchTopic(t, topic) {
+		if protocol.MatchTopic(t, topic) {
 			return true
 		}
 	}
@@ -137,55 +139,3 @@ func (DenyAllAuth) CanSubscribe(ctx context.Context, username, topic string) boo
 	return false
 }
 
-// matchTopic checks if a topic matches a wildcard pattern.
-func matchTopic(pattern, topic string) bool {
-	if pattern == topic {
-		return true
-	}
-	return topicMatch(pattern, topic)
-}
-
-// topicMatch implements MQTT topic matching.
-func topicMatch(pattern, topic string) bool {
-	patternParts := splitPath(pattern)
-	topicParts := splitPath(topic)
-
-	if len(patternParts) > 0 && patternParts[0] == "#" {
-		return true
-	}
-
-	if len(patternParts) > len(topicParts) {
-		// # can match zero remaining levels, so a pattern ending with # is
-		// allowed to be one element longer than the topic.
-		if len(patternParts) != len(topicParts)+1 || patternParts[len(patternParts)-1] != "#" {
-			return false
-		}
-	}
-
-	for i, pp := range patternParts {
-		if pp == "#" {
-			return true
-		}
-		if pp == "+" {
-			continue
-		}
-		if pp != topicParts[i] {
-			return false
-		}
-	}
-
-	return len(patternParts) == len(topicParts)
-}
-
-// splitPath splits a topic path by '/'.
-func splitPath(path string) []string {
-	parts := make([]string, 0)
-	start := 0
-	for i := 0; i <= len(path); i++ {
-		if i == len(path) || path[i] == '/' {
-			parts = append(parts, path[start:i])
-			start = i + 1
-		}
-	}
-	return parts
-}

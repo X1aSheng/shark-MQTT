@@ -3,10 +3,10 @@ package memory
 
 import (
 	"context"
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/X1aSheng/shark-mqtt/protocol"
 	"github.com/X1aSheng/shark-mqtt/store"
 )
 
@@ -189,41 +189,10 @@ func (r *retainedStore) MatchRetained(ctx context.Context, pattern string) ([]*s
 	defer r.mu.RUnlock()
 	var result []*store.RetainedMessage
 	for topic, msg := range r.messages {
-		if matchTopic(pattern, topic) {
+		if protocol.MatchTopic(pattern, topic) {
 			msgCopy := *msg
 			result = append(result, &msgCopy)
 		}
 	}
 	return result, nil
-}
-
-// matchTopic checks if a topic matches a wildcard pattern.
-func matchTopic(pattern, topic string) bool {
-	if pattern == topic {
-		return true
-	}
-	patternParts := strings.Split(pattern, "/")
-	topicParts := strings.Split(topic, "/")
-
-	if patternParts[0] == "#" {
-		return true
-	}
-
-	if len(patternParts) > len(topicParts) {
-		return false
-	}
-
-	for i, pp := range patternParts {
-		if pp == "#" {
-			return true
-		}
-		if pp == "+" {
-			continue
-		}
-		if pp != topicParts[i] {
-			return false
-		}
-	}
-
-	return len(patternParts) == len(topicParts)
 }
