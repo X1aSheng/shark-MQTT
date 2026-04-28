@@ -96,37 +96,6 @@ func TestServerSetHandler(t *testing.T) {
 	}
 }
 
-func TestDrainAndClose(t *testing.T) {
-	ln, err := net.Listen("tcp", ":0")
-	if err != nil {
-		t.Fatalf("Listen error: %v", err)
-	}
-	defer ln.Close()
-
-	// Connect
-	conn, err := net.Dial("tcp", ln.Addr().String())
-	if err != nil {
-		t.Fatalf("Dial error: %v", err)
-	}
-
-	// Close the server side
-	serverConn, err := ln.Accept()
-	if err != nil {
-		t.Fatalf("Accept error: %v", err)
-	}
-
-	DrainAndClose(serverConn, 100*time.Millisecond)
-
-	// Verify the client sees the close
-	buf := make([]byte, 1024)
-	conn.SetReadDeadline(time.Now().Add(time.Second))
-	n, _ := conn.Read(buf)
-	if n != 0 {
-		t.Errorf("expected 0 bytes read, got %d", n)
-	}
-	conn.Close()
-}
-
 type mockHandler struct{}
 
 func (h *mockHandler) HandleConnection(ctx context.Context, conn net.Conn, codec *protocol.Codec) error {

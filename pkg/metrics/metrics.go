@@ -9,9 +9,9 @@ type Metrics interface {
 	IncRejections(reason string)
 	IncAuthFailures()
 
-	// Message metrics
-	IncMessagesPublished(topic string, qos uint8)
-	IncMessagesDelivered(clientID string, qos uint8)
+	// Message metrics — only bounded label dimensions (qos: 0-2).
+	IncMessagesPublished(qos uint8)
+	IncMessagesDelivered(qos uint8)
 	IncMessagesDropped(reason string)
 
 	// QoS metrics

@@ -13,9 +13,9 @@ type prometheusMetrics struct {
 	messagesPublished *prometheus.CounterVec
 	messagesDelivered *prometheus.CounterVec
 	messagesDropped   *prometheus.CounterVec
-	inflight          *prometheus.GaugeVec
-	inflightDropped   *prometheus.CounterVec
-	retries           *prometheus.CounterVec
+	inflight          prometheus.Gauge
+	inflightDropped   prometheus.Counter
+	retries           prometheus.Counter
 	onlineSessions    prometheus.Gauge
 	offlineSessions   prometheus.Gauge
 	retainedMsgs      prometheus.Gauge
@@ -63,14 +63,14 @@ func NewPrometheusMetrics(reg prometheus.Registerer) Metrics {
 		Namespace: "shark_mqtt",
 		Name:      "messages_published_total",
 		Help:      "Total number of messages published",
-	}, []string{"topic", "qos"})
+	}, []string{"qos"})
 	reg.MustRegister(m.messagesPublished)
 
 	m.messagesDelivered = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "shark_mqtt",
 		Name:      "messages_delivered_total",
 		Help:      "Total number of messages delivered",
-	}, []string{"client_id", "qos"})
+	}, []string{"qos"})
 	reg.MustRegister(m.messagesDelivered)
 
 	m.messagesDropped = prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -80,25 +80,25 @@ func NewPrometheusMetrics(reg prometheus.Registerer) Metrics {
 	}, []string{"reason"})
 	reg.MustRegister(m.messagesDropped)
 
-	m.inflight = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+	m.inflight = prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace: "shark_mqtt",
 		Name:      "inflight_messages",
-		Help:      "Number of inflight messages per client",
-	}, []string{"client_id"})
+		Help:      "Total number of inflight messages",
+	})
 	reg.MustRegister(m.inflight)
 
-	m.inflightDropped = prometheus.NewCounterVec(prometheus.CounterOpts{
+	m.inflightDropped = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "shark_mqtt",
 		Name:      "inflight_dropped_total",
 		Help:      "Total number of inflight messages dropped",
-	}, []string{"client_id"})
+	})
 	reg.MustRegister(m.inflightDropped)
 
-	m.retries = prometheus.NewCounterVec(prometheus.CounterOpts{
+	m.retries = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "shark_mqtt",
 		Name:      "retries_total",
 		Help:      "Total number of message retries",
-	}, []string{"client_id"})
+	})
 	reg.MustRegister(m.retries)
 
 	m.onlineSessions = prometheus.NewGauge(prometheus.GaugeOpts{
@@ -145,29 +145,29 @@ func (m *prometheusMetrics) IncRejections(reason string) {
 	m.rejections.WithLabelValues(reason).Inc()
 }
 func (m *prometheusMetrics) IncAuthFailures() { m.authFailures.Inc() }
-func (m *prometheusMetrics) IncMessagesPublished(topic string, qos uint8) {
-	m.messagesPublished.WithLabelValues(topic, string(rune('0'+qos))).Inc()
+func (m *prometheusMetrics) IncMessagesPublished(qos uint8) {
+	m.messagesPublished.WithLabelValues(string(rune('0' + qos))).Inc()
 }
-func (m *prometheusMetrics) IncMessagesDelivered(clientID string, qos uint8) {
-	m.messagesDelivered.WithLabelValues(clientID, string(rune('0'+qos))).Inc()
+func (m *prometheusMetrics) IncMessagesDelivered(qos uint8) {
+	m.messagesDelivered.WithLabelValues(string(rune('0' + qos))).Inc()
 }
 func (m *prometheusMetrics) IncMessagesDropped(reason string) {
 	m.messagesDropped.WithLabelValues(reason).Inc()
 }
-func (m *prometheusMetrics) IncInflight(clientID string) {
-	m.inflight.WithLabelValues(clientID).Inc()
+func (m *prometheusMetrics) IncInflight(_ string) {
+	m.inflight.Inc()
 }
-func (m *prometheusMetrics) DecInflight(clientID string) {
-	m.inflight.WithLabelValues(clientID).Dec()
+func (m *prometheusMetrics) DecInflight(_ string) {
+	m.inflight.Dec()
 }
-func (m *prometheusMetrics) DecInflightBatch(clientID string, count int) {
-	m.inflight.WithLabelValues(clientID).Sub(float64(count))
+func (m *prometheusMetrics) DecInflightBatch(_ string, count int) {
+	m.inflight.Sub(float64(count))
 }
-func (m *prometheusMetrics) IncInflightDropped(clientID string) {
-	m.inflightDropped.WithLabelValues(clientID).Inc()
+func (m *prometheusMetrics) IncInflightDropped(_ string) {
+	m.inflightDropped.Inc()
 }
-func (m *prometheusMetrics) IncRetries(clientID string) {
-	m.retries.WithLabelValues(clientID).Inc()
+func (m *prometheusMetrics) IncRetries(_ string) {
+	m.retries.Inc()
 }
 func (m *prometheusMetrics) SetOnlineSessions(count int) {
 	m.onlineSessions.Set(float64(count))

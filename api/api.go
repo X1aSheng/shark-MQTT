@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/X1aSheng/shark-mqtt/broker"
 	"github.com/X1aSheng/shark-mqtt/config"
@@ -21,8 +22,6 @@ type Broker struct {
 	srv       *broker.MQTTServer
 	broker    *broker.Broker
 	cfg       *config.Config
-	auth      broker.Authenticator
-	authz     broker.Authorizer
 	healthSrv *http.Server
 }
 
@@ -133,6 +132,9 @@ func NewBroker(opts ...Option) *Broker {
 	if o.maxConnections > 0 {
 		bopts = append(bopts, broker.WithMaxConnections(o.maxConnections))
 	}
+	if o.cfg.MaxPacketSize > 0 {
+		bopts = append(bopts, broker.WithBrokerMaxPacketSize(o.cfg.MaxPacketSize))
+	}
 
 	if o.sessionStore != nil {
 		bopts = append(bopts, broker.WithSessionStore(o.sessionStore))
@@ -163,8 +165,6 @@ func NewBroker(opts ...Option) *Broker {
 		srv:    srv,
 		broker: brk,
 		cfg:    o.cfg,
-		auth:   o.auth,
-		authz:  o.authorizer,
 	}
 }
 
@@ -191,7 +191,9 @@ func (b *Broker) Start() error {
 // Stop gracefully shuts down both the server and broker.
 func (b *Broker) Stop() {
 	if b.healthSrv != nil {
-		b.healthSrv.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		b.healthSrv.Shutdown(ctx)
 	}
 	b.srv.Stop()
 	b.broker.Stop()

@@ -67,7 +67,7 @@ func New(opts ...Option) *Broker {
 		logger:        o.logger,
 		metrics:       o.metrics,
 		pluginMgr:     o.pluginManager,
-		codec:         protocol.NewCodec(256 * 1024),
+		codec:         protocol.NewCodec(o.maxPacketSize),
 		connections:   make(map[string]*clientState),
 		ctx:           ctx,
 		cancel:        cancel,
@@ -103,7 +103,7 @@ func New(opts ...Option) *Broker {
 func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *protocol.Codec) error {
 	c := codec
 	if c == nil {
-		c = protocol.NewCodec(256 * 1024)
+		c = protocol.NewCodec(b.opts.maxPacketSize)
 	}
 
 	// Check connection limit
@@ -310,10 +310,29 @@ func (b *Broker) readLoop(clientID string, sess *Session, codec *protocol.Codec,
 }
 
 func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.PublishPacket, conn net.Conn, codec *protocol.Codec) {
-	b.metrics.IncMessagesPublished(pkt.Topic, pkt.FixedHeader.QoS)
+	// Reject wildcard topics per MQTT spec §3.3.2
+	if !protocol.ValidatePublishTopic(pkt.Topic) {
+		if pkt.FixedHeader.QoS > 0 {
+			b.writePacket(clientID, conn, codec, &protocol.PubAckPacket{
+				FixedHeader: protocol.FixedHeader{
+					PacketType: protocol.PacketTypePubAck,
+				},
+				PacketID:   pkt.PacketID,
+				ReasonCode: protocol.ReasonCodeTopicNameInvalid,
+			})
+		}
+		b.metrics.IncMessagesDropped("invalid_topic")
+		return
+	}
+
+	b.metrics.IncMessagesPublished(pkt.FixedHeader.QoS)
 
 	// Check authorization
-	if b.opts.authorizer != nil && !b.opts.authorizer.CanPublish(b.ctx, clientID, pkt.Topic) {
+	username := ""
+	if sess != nil {
+		username = sess.Username
+	}
+	if b.opts.authorizer != nil && !b.opts.authorizer.CanPublish(b.ctx, username, pkt.Topic) {
 		if pkt.FixedHeader.QoS > 0 {
 			b.writePacket(clientID, conn, codec, &protocol.PubAckPacket{
 				FixedHeader: protocol.FixedHeader{
@@ -377,7 +396,11 @@ func (b *Broker) handleSubscribe(clientID string, sess *Session, pkt *protocol.S
 	reasonCodes := make([]byte, len(pkt.Topics))
 	for i, topic := range pkt.Topics {
 		// Check authorization
-		if b.opts.authorizer != nil && !b.opts.authorizer.CanSubscribe(b.ctx, clientID, topic.Topic) {
+		username := ""
+		if sess != nil {
+			username = sess.Username
+		}
+		if b.opts.authorizer != nil && !b.opts.authorizer.CanSubscribe(b.ctx, username, topic.Topic) {
 			reasonCodes[i] = protocol.SubAckFailure
 			continue
 		}
@@ -452,7 +475,7 @@ func (b *Broker) deliverToClient(clientID string, pkt *protocol.PublishPacket) {
 	sess.TrackSent(len(pkt.Topic) + len(pkt.Payload))
 
 	b.writePacketTo(clientID, pubPkt)
-	b.metrics.IncMessagesDelivered(clientID, deliverQoS)
+	b.metrics.IncMessagesDelivered(deliverQoS)
 }
 
 func (b *Broker) deliverRetainedMessages(clientID string, sess *Session, topicFilter string) {
@@ -490,7 +513,7 @@ func (b *Broker) deliverRetainedMessages(clientID string, sess *Session, topicFi
 		sess.TrackSent(len(msg.Topic) + len(msg.Payload))
 
 		b.writePacketTo(clientID, pubPkt)
-		b.metrics.IncMessagesDelivered(clientID, deliverQoS)
+		b.metrics.IncMessagesDelivered(deliverQoS)
 	}
 }
 
@@ -544,7 +567,7 @@ func (b *Broker) sendConnAckRaw(conn net.Conn, reasonCode byte, sessionPresent b
 		ReasonCode:     reasonCode,
 		SessionPresent: sessionPresent,
 	}
-	codec := protocol.NewCodec(256 * 1024)
+	codec := protocol.NewCodec(b.opts.maxPacketSize)
 	codec.Encode(conn, pkt)
 }
 
