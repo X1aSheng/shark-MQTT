@@ -506,8 +506,12 @@ func TestPersistentSession_KickPrevious(t *testing.T) {
 		t.Fatalf("expected second CONNACK accepted, got reason %d", ca2.ReasonCode)
 	}
 
-	// First connection should be disconnected - try to send PINGREQ
-	time.Sleep(100 * time.Millisecond)
+	// First connection should be disconnected - verify by reading (should fail)
+	conn1.SetDeadline(time.Now().Add(500 * time.Millisecond))
+	buf := make([]byte, 1)
+	if _, err := conn1.Read(buf); err == nil {
+		t.Error("expected first connection to be closed after takeover")
+	}
 
 	pingPkt := &protocol.PingReqPacket{
 		FixedHeader: protocol.FixedHeader{

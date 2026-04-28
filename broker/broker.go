@@ -291,13 +291,13 @@ func (b *Broker) readLoop(clientID string, sess *Session, codec *protocol.Codec,
 		switch p := pkt.(type) {
 		case *protocol.PublishPacket:
 			sess.TrackReceived(len(p.Payload) + len(p.Topic))
-			b.handlePublish(clientID, sess, p, conn, codec)
+			b.handlePublish(clientID, sess, p)
 		case *protocol.SubscribePacket:
-			b.handleSubscribe(clientID, sess, p, conn, codec)
+			b.handleSubscribe(clientID, sess, p)
 		case *protocol.UnsubscribePacket:
-			b.handleUnsubscribe(clientID, sess, p, conn, codec)
+			b.handleUnsubscribe(clientID, sess, p)
 		case *protocol.PingReqPacket:
-			b.writePacket(clientID, conn, codec, &protocol.PingRespPacket{
+			b.writePacket(clientID, &protocol.PingRespPacket{
 				FixedHeader: protocol.FixedHeader{
 					PacketType: protocol.PacketTypePingResp,
 				},
@@ -320,11 +320,11 @@ func (b *Broker) readLoop(clientID string, sess *Session, codec *protocol.Codec,
 	}
 }
 
-func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.PublishPacket, conn net.Conn, codec *protocol.Codec) {
+func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.PublishPacket) {
 	// Reject wildcard topics per MQTT spec §3.3.2
 	if !protocol.ValidatePublishTopic(pkt.Topic) {
 		if pkt.FixedHeader.QoS > 0 {
-			b.writePacket(clientID, conn, codec, &protocol.PubAckPacket{
+			b.writePacket(clientID,&protocol.PubAckPacket{
 				FixedHeader: protocol.FixedHeader{
 					PacketType: protocol.PacketTypePubAck,
 				},
@@ -345,7 +345,7 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 	}
 	if b.opts.authorizer != nil && !b.opts.authorizer.CanPublish(b.ctx, username, pkt.Topic) {
 		if pkt.FixedHeader.QoS > 0 {
-			b.writePacket(clientID, conn, codec, &protocol.PubAckPacket{
+			b.writePacket(clientID,&protocol.PubAckPacket{
 				FixedHeader: protocol.FixedHeader{
 					PacketType: protocol.PacketTypePubAck,
 				},
@@ -361,18 +361,18 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 	if pkt.FixedHeader.Retain {
 		if len(pkt.Payload) == 0 {
 			if b.retainedStore != nil {
-				b.retainedStore.DeleteRetained(context.Background(), pkt.Topic)
+				b.retainedStore.DeleteRetained(b.ctx, pkt.Topic)
 			}
 		} else {
 			if b.retainedStore != nil {
-				b.retainedStore.SaveRetained(context.Background(), pkt.Topic, pkt.FixedHeader.QoS, pkt.Payload)
+				b.retainedStore.SaveRetained(b.ctx, pkt.Topic, pkt.FixedHeader.QoS, pkt.Payload)
 			}
 		}
 	}
 
 	// QoS 2: defer subscriber delivery until PUBCOMP completes the handshake
 	if pkt.FixedHeader.QoS == 2 {
-		b.writePacket(clientID, conn, codec, &protocol.PubRecPacket{
+		b.writePacket(clientID,&protocol.PubRecPacket{
 			FixedHeader: protocol.FixedHeader{
 				PacketType: protocol.PacketTypePubRec,
 			},
@@ -393,7 +393,7 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 
 	// Send PUBACK for QoS 1
 	if pkt.FixedHeader.QoS == 1 {
-		b.writePacket(clientID, conn, codec, &protocol.PubAckPacket{
+		b.writePacket(clientID,&protocol.PubAckPacket{
 			FixedHeader: protocol.FixedHeader{
 				PacketType: protocol.PacketTypePubAck,
 			},
@@ -403,7 +403,7 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 	}
 }
 
-func (b *Broker) handleSubscribe(clientID string, sess *Session, pkt *protocol.SubscribePacket, conn net.Conn, codec *protocol.Codec) {
+func (b *Broker) handleSubscribe(clientID string, sess *Session, pkt *protocol.SubscribePacket) {
 	reasonCodes := make([]byte, len(pkt.Topics))
 	for i, topic := range pkt.Topics {
 		// Check authorization
@@ -424,7 +424,7 @@ func (b *Broker) handleSubscribe(clientID string, sess *Session, pkt *protocol.S
 		reasonCodes[i] = topic.QoS
 	}
 
-	b.writePacket(clientID, conn, codec, &protocol.SubAckPacket{
+	b.writePacket(clientID,&protocol.SubAckPacket{
 		FixedHeader: protocol.FixedHeader{
 			PacketType: protocol.PacketTypeSubAck,
 		},
@@ -438,13 +438,13 @@ func (b *Broker) handleSubscribe(clientID string, sess *Session, pkt *protocol.S
 	}
 }
 
-func (b *Broker) handleUnsubscribe(clientID string, sess *Session, pkt *protocol.UnsubscribePacket, conn net.Conn, codec *protocol.Codec) {
+func (b *Broker) handleUnsubscribe(clientID string, sess *Session, pkt *protocol.UnsubscribePacket) {
 	for _, topic := range pkt.Topics {
 		b.topics.Unsubscribe(topic, clientID)
 		sess.RemoveSubscription(topic)
 	}
 
-	b.writePacket(clientID, conn, codec, &protocol.UnsubAckPacket{
+	b.writePacket(clientID,&protocol.UnsubAckPacket{
 		FixedHeader: protocol.FixedHeader{
 			PacketType: protocol.PacketTypeUnsubAck,
 		},
@@ -494,7 +494,7 @@ func (b *Broker) deliverRetainedMessages(clientID string, sess *Session, topicFi
 		return
 	}
 
-	retained, err := b.retainedStore.MatchRetained(context.Background(), topicFilter)
+	retained, err := b.retainedStore.MatchRetained(b.ctx, topicFilter)
 	if err != nil || len(retained) == 0 {
 		return
 	}
@@ -528,9 +528,18 @@ func (b *Broker) deliverRetainedMessages(clientID string, sess *Session, topicFi
 	}
 }
 
-// writePacket writes a packet directly to the connection (used in read loop).
-func (b *Broker) writePacket(clientID string, conn net.Conn, codec *protocol.Codec, pkt protocol.Packet) {
-	if err := codec.Encode(conn, pkt); err != nil {
+// writePacket writes a packet to a client via the stored connection (used in read loop).
+func (b *Broker) writePacket(clientID string, pkt protocol.Packet) {
+	b.mu.RLock()
+	cs, ok := b.connections[clientID]
+	b.mu.RUnlock()
+	if !ok {
+		return
+	}
+	cs.wmu.Lock()
+	err := cs.codec.Encode(cs.conn, pkt)
+	cs.wmu.Unlock()
+	if err != nil {
 		b.logger.Debug("write error", "clientID", clientID, "error", err)
 	}
 }

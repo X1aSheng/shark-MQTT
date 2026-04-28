@@ -200,9 +200,7 @@ func TestMaxConnections(t *testing.T) {
 	defer conn1.Close()
 	codec1 := protocol.NewCodec(0)
 	connectClient(t, conn1, codec1, "max-conn-1")
-
-	// Give the broker time to register the connection
-	time.Sleep(50 * time.Millisecond)
+	// connectClient reads CONNACK, so the connection is already registered
 
 	// 2nd connection should be rejected
 	conn2, err := net.DialTimeout("tcp", b.Addr(), 2*time.Second)

@@ -110,18 +110,25 @@ func (s *MessageStore) ListMessages(ctx context.Context, clientID string) ([]*st
 }
 
 func (s *MessageStore) ClearMessages(ctx context.Context, clientID string) error {
-	return s.db.Update(func(txn *badger.Txn) error {
+	// Collect keys in a read-only View transaction, then delete in an Update.
+	prefix := s.clientPrefix(clientID)
+	var keys [][]byte
+
+	err := s.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 
-		prefix := s.clientPrefix(clientID)
-		var keys [][]byte
 		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			item := it.Item()
-			key := item.KeyCopy(nil)
+			key := it.Item().KeyCopy(nil)
 			keys = append(keys, key)
 		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("scan messages: %w", err)
+	}
 
+	return s.db.Update(func(txn *badger.Txn) error {
 		for _, key := range keys {
 			if err := txn.Delete(key); err != nil {
 				return fmt.Errorf("delete message: %w", err)

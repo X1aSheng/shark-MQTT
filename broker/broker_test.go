@@ -101,7 +101,7 @@ func TestBroker_Publish_NoSubscribers(t *testing.T) {
 		Topic:       "test/topic",
 		Payload:     []byte("hello"),
 	}
-	b.handlePublish("client1", nil, pkt, nil, protocol.NewCodec(0))
+	b.handlePublish("client1", nil, pkt)
 }
 
 func TestBroker_SubscribeAndUnsubscribe(t *testing.T) {
@@ -121,7 +121,12 @@ func TestBroker_SubscribeAndUnsubscribe(t *testing.T) {
 	serverConn, clientConn := net.Pipe()
 	defer serverConn.Close()
 	defer clientConn.Close()
+
+	// Register connection so writePacket can deliver through it
 	codec := protocol.NewCodec(0)
+	b.mu.Lock()
+	b.connections["test-client"] = &clientState{conn: serverConn, codec: codec}
+	b.mu.Unlock()
 
 	// drain writes in background
 	go func() {
@@ -140,7 +145,7 @@ func TestBroker_SubscribeAndUnsubscribe(t *testing.T) {
 			{Topic: "test/topic", QoS: 0},
 		},
 	}
-	b.handleSubscribe("test-client", sess, subPkt, serverConn, codec)
+	b.handleSubscribe("test-client", sess, subPkt)
 
 	if _, ok := sess.Subscriptions["test/topic"]; !ok {
 		t.Error("expected subscription to be added")
@@ -150,7 +155,7 @@ func TestBroker_SubscribeAndUnsubscribe(t *testing.T) {
 		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeUnsubscribe},
 		Topics:      []string{"test/topic"},
 	}
-	b.handleUnsubscribe("test-client", sess, unsubPkt, serverConn, codec)
+	b.handleUnsubscribe("test-client", sess, unsubPkt)
 
 	if _, ok := sess.Subscriptions["test/topic"]; ok {
 		t.Error("expected subscription to be removed")

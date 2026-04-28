@@ -113,7 +113,7 @@ func topicPatternToRedis(pattern string) string {
 	result := pattern
 	// Replace MQTT wildcards with Redis equivalents
 	result = replaceHash(result, "*")     // # -> *
-	result = replacePlus(result, "[!/]") // + -> [!/] (match any char except /)
+	result = replacePlus(result, "[^/]") // + -> [^/] (match any char except /)
 	return result
 }
 
