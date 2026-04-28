@@ -1,0 +1,17 @@
+apiVersion: v2
+name: shark-mqtt
+description: High-performance MQTT 3.1.1 broker with cluster support
+type: application
+version: 0.1.0
+appVersion: "latest"
+keywords:
+  - mqtt
+  - broker
+  - iot
+  - messaging
+home: https://github.com/X1aSheng/shark-mqtt
+sources:
+  - https://github.com/X1aSheng/shark-mqtt
+maintainers:
+  - name: X1aSheng
+    url: https://github.com/X1aSheng

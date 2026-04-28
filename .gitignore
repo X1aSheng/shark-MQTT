@@ -25,8 +25,8 @@ coverage.out
 Thumbs.db
 
 # Build artifacts
-shark-mqtt
-shark-mqtt.exe
+/shark-mqtt
+/shark-mqtt.exe
 
 # Vendor (if used)
 vendor/

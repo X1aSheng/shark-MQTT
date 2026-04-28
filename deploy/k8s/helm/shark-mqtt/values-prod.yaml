@@ -1,0 +1,33 @@
+# Production overrides for shark-mqtt
+
+replicaCount: 3
+
+image:
+  pullPolicy: Always
+
+service:
+  type: LoadBalancer
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 128Mi
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+
+autoscaling:
+  minReplicas: 3
+  maxReplicas: 20
+
+config:
+  logLevel: "warn"
+  logFormat: "json"
+  maxConnections: 50000
+  storageBackend: "redis"
+
+networkPolicy:
+  enabled: true
+
+ingress:
+  enabled: true

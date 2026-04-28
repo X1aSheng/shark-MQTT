@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "shark-mqtt.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "shark-mqtt.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    listen_addr: {{ .Values.config.listenAddr | quote }}
+    max_connections: {{ .Values.config.maxConnections }}
+    keep_alive: {{ .Values.config.keepAlive }}
+    max_packet_size: {{ .Values.config.maxPacketSize }}
+    log_level: {{ .Values.config.logLevel | quote }}
+    log_format: {{ .Values.config.logFormat | quote }}
+    qos_retry_interval: {{ .Values.config.qosRetryInterval | quote }}
+    qos_max_retries: {{ .Values.config.qosMaxRetries }}
+    qos_max_inflight: {{ .Values.config.qosMaxInflight }}
+    session_expiry_interval: {{ .Values.config.sessionExpiryInterval }}
+    storage_backend: {{ .Values.config.storageBackend | quote }}
+    metrics_enabled: {{ .Values.config.metricsEnabled }}
+    metrics_addr: {{ .Values.config.metricsAddr | quote }}
