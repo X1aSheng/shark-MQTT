@@ -171,7 +171,7 @@ jobs:
           exit 1
 
       - name: Run MQTT smoke test
-        run: go run scripts/mqtt_smoke_test.go -addr localhost:1883
+        run: go run scripts/mqtt_smoke.go -addr localhost:1883
 
       - name: Cleanup
         if: always()
