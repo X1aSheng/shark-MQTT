@@ -1,0 +1,84 @@
+# Default Helm values for shark-mqtt
+
+replicaCount: 2
+
+image:
+  repository: x1asheng/shark-mqtt
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+service:
+  type: ClusterIP
+  mqttPort: 1883
+  metricsPort: 9090
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+config:
+  listenAddr: ":1883"
+  maxConnections: 10000
+  keepAlive: 60
+  maxPacketSize: 262144
+  logLevel: "info"
+  logFormat: "json"
+  qosRetryInterval: "10s"
+  qosMaxRetries: 3
+  qosMaxInflight: 100
+  sessionExpiryInterval: 86400
+  storageBackend: "memory"
+  metricsEnabled: true
+  metricsAddr: "0.0.0.0:9090"
+
+networkPolicy:
+  enabled: true
+
+ingress:
+  enabled: false
+  host: mqtt.example.com
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+
+serviceMonitor:
+  enabled: false
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+terminationGracePeriodSeconds: 60
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - shark-mqtt
+          topologyKey: kubernetes.io/hostname
