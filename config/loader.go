@@ -54,8 +54,7 @@ func (l *Loader) loadFile(cfg *Config) error {
 	case strings.HasSuffix(l.filePath, ".yaml"), strings.HasSuffix(l.filePath, ".yml"):
 		unmarshalErr = yaml.Unmarshal(data, cfg)
 	case strings.HasSuffix(l.filePath, ".toml"):
-		// TOML support requires separate import; for now parse as YAML-like
-		unmarshalErr = yaml.Unmarshal(data, cfg)
+		return fmt.Errorf("TOML format is not supported; use .yaml or .yml")
 	default:
 		// Try YAML by default
 		unmarshalErr = yaml.Unmarshal(data, cfg)

@@ -73,7 +73,8 @@ type Subscriber struct {
 }
 
 // Match finds all subscribers that match a given topic.
-// Returns a slice of (clientID, qos) pairs.
+// Implements MQTT §4.7.2: topics starting with $ are not matched by + or #
+// wildcards unless the subscription filter also starts with $.
 func (tt *TopicTree) Match(topic string) []Subscriber {
 	tt.mu.RLock()
 	defer tt.mu.RUnlock()
@@ -81,7 +82,8 @@ func (tt *TopicTree) Match(topic string) []Subscriber {
 	parts := protocol.SplitTopic(topic)
 	var results []Subscriber
 	visited := make(map[string]struct{})
-	tt.matchNode(tt.root, parts, 0, &results, visited)
+	isSystemTopic := len(parts) > 0 && len(parts[0]) > 0 && parts[0][0] == '$'
+	tt.matchNodeWithSys(tt.root, parts, 0, &results, visited, isSystemTopic)
 	return results
 }
 
@@ -120,37 +122,6 @@ func (tt *TopicTree) unsubscribeNode(node *TopicNode, parts []string, clientID s
 	}
 
 	return len(node.subscribers) == 0 && len(node.children) == 0
-}
-
-func (tt *TopicTree) matchNode(node *TopicNode, parts []string, depth int, results *[]Subscriber, visited map[string]struct{}) {
-	// Add subscribers at current node
-	for clientID, qos := range node.subscribers {
-		if _, ok := visited[clientID]; !ok {
-			visited[clientID] = struct{}{}
-			*results = append(*results, Subscriber{ClientID: clientID, QoS: qos})
-		}
-	}
-
-	// # wildcard matches zero or more remaining levels
-	if hashChild, exists := node.children["#"]; exists {
-		tt.collectAllSubscribers(hashChild, results, visited)
-	}
-
-	if depth == len(parts) {
-		return
-	}
-
-	part := parts[depth]
-
-	// Match exact child
-	if child, exists := node.children[part]; exists {
-		tt.matchNode(child, parts, depth+1, results, visited)
-	}
-
-	// Match '+' wildcard (single-level)
-	if plusChild, exists := node.children["+"]; exists {
-		tt.matchNode(plusChild, parts, depth+1, results, visited)
-	}
 }
 
 // matchNodeWithSys performs matching with MQTT §4.7.2 system topic protection.

@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 	"os/signal"
@@ -36,6 +37,6 @@ func main() {
 	<-sig
 
 	log.Println("Shutting down adapter...")
-	adapter.Stop(nil)
+	adapter.Stop(context.Background())
 	log.Println("Adapter stopped")
 }
