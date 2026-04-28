@@ -14,6 +14,9 @@ import (
 	"github.com/X1aSheng/shark-mqtt/store"
 )
 
+// Compile-time interface compliance checks.
+var _ ConnectionHandler = (*Broker)(nil)
+
 // clientState holds the connection and codec for a client.
 type clientState struct {
 	conn  net.Conn
@@ -144,7 +147,7 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 		if connectPkt.ProtocolVersion == protocol.Version50 {
 			reasonCode = protocol.ConnAckProtocolError
 		}
-		b.sendConnAckRaw(conn, byte(reasonCode), false)
+		b.sendConnAckRaw(conn, c, byte(reasonCode), false)
 		return fmt.Errorf("broker: CONNECT validation failed: %w", err)
 	}
 
@@ -156,7 +159,7 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 		authErr := b.opts.authenticator.Authenticate(ctx, connectPkt.ClientID, connectPkt.Username, string(connectPkt.Password))
 		if authErr != nil {
 			b.metrics.IncAuthFailures()
-			b.sendConnAckRaw(conn, protocol.ConnAckBadUsernameOrPassword, false)
+			b.sendConnAckRaw(conn, c, protocol.ConnAckBadUsernameOrPassword, false)
 			return fmt.Errorf("broker: auth failed: %w", authErr)
 		}
 	}
@@ -577,7 +580,7 @@ func (b *Broker) sendConnAck(clientID string, reasonCode byte, sessionPresent bo
 	cs.wmu.Unlock()
 }
 
-func (b *Broker) sendConnAckRaw(conn net.Conn, reasonCode byte, sessionPresent bool) {
+func (b *Broker) sendConnAckRaw(conn net.Conn, codec *protocol.Codec, reasonCode byte, sessionPresent bool) {
 	pkt := &protocol.ConnAckPacket{
 		FixedHeader: protocol.FixedHeader{
 			PacketType: protocol.PacketTypeConnAck,
@@ -585,7 +588,6 @@ func (b *Broker) sendConnAckRaw(conn net.Conn, reasonCode byte, sessionPresent b
 		ReasonCode:     reasonCode,
 		SessionPresent: sessionPresent,
 	}
-	codec := protocol.NewCodec(b.opts.maxPacketSize)
 	codec.Encode(conn, pkt)
 }
 
