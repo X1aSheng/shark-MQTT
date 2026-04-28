@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/X1aSheng/shark-mqtt/protocol"
 	"github.com/X1aSheng/shark-mqtt/store"
+	"github.com/redis/go-redis/v9"
 )
 
 // Ensure interface compliance.
@@ -112,7 +112,7 @@ func topicPatternToRedis(pattern string) string {
 	// Redis: * matches anything, ? matches single char
 	result := pattern
 	// Replace MQTT wildcards with Redis equivalents
-	result = replaceHash(result, "*")     // # -> *
+	result = replaceHash(result, "*")    // # -> *
 	result = replacePlus(result, "[^/]") // + -> [^/] (match any char except /)
 	return result
 }

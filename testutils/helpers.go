@@ -149,4 +149,3 @@ func TopicPermutations() []string {
 		"devices/#",
 	}
 }
-

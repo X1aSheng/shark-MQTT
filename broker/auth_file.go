@@ -122,5 +122,3 @@ func (f *FileAuth) Users() []UserCredential {
 	copy(result, f.users)
 	return result
 }
-
-

@@ -158,7 +158,7 @@ func TestRetainedStore_MatchRetained(t *testing.T) {
 	tests := []struct {
 		pattern     string
 		expectCount int
-		expectKeys []string
+		expectKeys  []string
 	}{
 		{
 			pattern:     "home/+/temp",

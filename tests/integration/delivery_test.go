@@ -464,9 +464,9 @@ func TestStructuredBinaryPayload(t *testing.T) {
 	// Build a structured binary payload: [4-byte float64 temperature][2-byte uint16 humidity][1-byte status]
 	buf := make([]byte, 7)
 	binary.BigEndian.PutUint16(buf[0:2], 2225) // temp * 100 = 22.25
-	binary.BigEndian.PutUint16(buf[2:4], 5510)  // humidity * 100 = 55.10
-	binary.BigEndian.PutUint16(buf[4:6], 1013)  // pressure * 10 = 101.3
-	buf[6] = 0x01                                // status OK
+	binary.BigEndian.PutUint16(buf[2:4], 5510) // humidity * 100 = 55.10
+	binary.BigEndian.PutUint16(buf[4:6], 1013) // pressure * 10 = 101.3
+	buf[6] = 0x01                              // status OK
 
 	publishQoS0(t, pubConn, pubCodec, "device/telemetry", buf)
 

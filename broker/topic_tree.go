@@ -175,4 +175,3 @@ func (tt *TopicTree) collectAllSubscribers(node *TopicNode, results *[]Subscribe
 		tt.collectAllSubscribers(child, results, visited)
 	}
 }
-

@@ -189,30 +189,30 @@ func TestTopicTree_Match_HashWildcard(t *testing.T) {
 			name:      "# matches all remaining levels",
 			subscribe: "home/#",
 			publishTopics: map[string]bool{
-				"home":              true,
-				"home/temp":         true,
-				"home/living/temp":  true,
-				"home/a/b/c/d/e":    true,
-				"office/temp":       false,
+				"home":             true,
+				"home/temp":        true,
+				"home/living/temp": true,
+				"home/a/b/c/d/e":   true,
+				"office/temp":      false,
 			},
 		},
 		{
 			name:      "# alone matches everything",
 			subscribe: "#",
 			publishTopics: map[string]bool{
-				"anything":       true,
-				"a/b/c":          true,
-				"home/living":    true,
+				"anything":    true,
+				"a/b/c":       true,
+				"home/living": true,
 			},
 		},
 		{
 			name:      "prefix/# pattern",
 			subscribe: "sensors/temperature/#",
 			publishTopics: map[string]bool{
-				"sensors/temperature":          true,
-				"sensors/temperature/room1":    true,
-				"sensors/temperature/room1/a":  true,
-				"sensors/humidity":             false,
+				"sensors/temperature":         true,
+				"sensors/temperature/room1":   true,
+				"sensors/temperature/room1/a": true,
+				"sensors/humidity":            false,
 			},
 		},
 	}
@@ -244,7 +244,7 @@ func TestTopicTree_Match_MixedWildcards(t *testing.T) {
 		{"home/living/temp", true},
 		{"home/bedroom/temp/current", true},
 		{"home/bedroom/temp/a/b/c", true},
-		{"home/temp", false},        // + needs exactly one level
+		{"home/temp", false}, // + needs exactly one level
 		{"office/temp", false},
 	}
 
@@ -315,9 +315,9 @@ func TestTopicTree_Match_PartialOverlap(t *testing.T) {
 	tt.Subscribe("a/+/c", "client3", 0)
 
 	tests := []struct {
-		topic        string
-		expectCount  int
-		expectIDs    []string
+		topic       string
+		expectCount int
+		expectIDs   []string
 	}{
 		{"a/b/c", 2, []string{"client1", "client3"}},
 		{"a/b/d", 1, []string{"client2"}},
@@ -480,8 +480,8 @@ func TestTopicTree_QoSMinOnMultipleMatches(t *testing.T) {
 	// the match should return the QoS of the node where it was found.
 	// The broker's deliverToSubscriber handles QoS min logic.
 	tt := NewTopicTree()
-	tt.Subscribe("home/#", "client1", 0)       // matches via #
-	tt.Subscribe("home/temp", "client1", 2)    // exact match
+	tt.Subscribe("home/#", "client1", 0)    // matches via #
+	tt.Subscribe("home/temp", "client1", 2) // exact match
 
 	subs := tt.Match("home/temp")
 	// client1 appears once (dedup). The QoS depends on which node matched first.

@@ -11,9 +11,9 @@ import (
 )
 
 var (
-	ErrAuthFailed       = errors.New("authentication failed")
-	ErrAuthUnavailable  = errors.New("authenticator unavailable")
-	ErrUnauthorized     = errors.New("unauthorized")
+	ErrAuthFailed      = errors.New("authentication failed")
+	ErrAuthUnavailable = errors.New("authenticator unavailable")
+	ErrUnauthorized    = errors.New("unauthorized")
 )
 
 // Authenticator handles client authentication.
@@ -138,4 +138,3 @@ func (DenyAllAuth) CanPublish(ctx context.Context, username, topic string) bool 
 func (DenyAllAuth) CanSubscribe(ctx context.Context, username, topic string) bool {
 	return false
 }
-

@@ -312,11 +312,16 @@ func (q *QoSEngine) retryLoop() {
 }
 
 func (q *QoSEngine) doRetry() {
+	// Collect messages to retry under the lock, then release before
+	// calling republish to avoid lock-ordering deadlock with broker's
+	// connection/session locks (q.mu → b.mu vs b.mu → q.mu).
+	type retryMsg struct {
+		clientID string
+		msg      InflightMessage
+	}
+	var toRetry []retryMsg
+
 	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	republish := q.republish
-
 	for clientID, clientInflight := range q.inflight {
 		for packetID, msg := range clientInflight {
 			if time.Since(msg.SentAt) < q.retryInterval {
@@ -329,11 +334,21 @@ func (q *QoSEngine) doRetry() {
 
 			msg.Retries++
 			msg.SentAt = time.Now()
+			toRetry = append(toRetry, retryMsg{
+				clientID: clientID,
+				msg:      *msg,
+			})
+		}
+	}
+	republish := q.republish
+	onError := q.onError
+	q.mu.Unlock()
 
-			// Republish to subscribers via the broker's topic routing
-			if republish != nil {
-				if err := republish(clientID, msg.PacketID, msg.Topic, msg.Payload, msg.QoS, msg.Retain); err != nil {
-					q.reportError(clientID, packetID, err)
+	for _, item := range toRetry {
+		if republish != nil {
+			if err := republish(item.clientID, item.msg.PacketID, item.msg.Topic, item.msg.Payload, item.msg.QoS, item.msg.Retain); err != nil {
+				if onError != nil {
+					onError(item.clientID, item.msg.PacketID, err)
 				}
 			}
 		}

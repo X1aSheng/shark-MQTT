@@ -10,10 +10,10 @@ import (
 
 // MockConn implements net.Conn for testing.
 type MockConn struct {
-	ReadBuf  []byte
-	WriteBuf []byte
-	mu       sync.Mutex
-	closed   bool
+	ReadBuf       []byte
+	WriteBuf      []byte
+	mu            sync.Mutex
+	closed        bool
 	readDeadline  time.Time
 	writeDeadline time.Time
 	localAddr     net.Addr

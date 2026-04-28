@@ -253,7 +253,12 @@ func (b *Broker) startHealthServer() {
 		log.Printf("[api] health server: %v (skipped)", err)
 		return
 	}
-	b.healthSrv = &http.Server{Handler: mux}
+	b.healthSrv = &http.Server{
+		Handler:      mux,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 5 * time.Second,
+		IdleTimeout:  30 * time.Second,
+	}
 	go b.healthSrv.Serve(ln)
 	log.Printf("[api] health endpoint on %s", b.cfg.MetricsAddr)
 }

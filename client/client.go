@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/X1aSheng/shark-mqtt/protocol"
@@ -28,7 +29,7 @@ type MQTTClient struct {
 	sessionPresent bool
 	inflight       map[uint16]*inflightEntry
 	inflightMu     sync.RWMutex
-	nextPID        uint16
+	nextPID        atomic.Uint32
 	pending        map[uint16]chan protocol.Packet
 	pendingMu      sync.RWMutex
 	ctx            context.Context
@@ -51,15 +52,16 @@ func New(opts ...Option) *MQTTClient {
 		fn(o)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &MQTTClient{
+	c := &MQTTClient{
 		opts:     o,
 		codec:    protocol.NewCodec(o.MaxPacketSize),
 		inflight: make(map[uint16]*inflightEntry),
 		pending:  make(map[uint16]chan protocol.Packet),
 		ctx:      ctx,
 		cancel:   cancel,
-		nextPID:  1,
 	}
+	c.nextPID.Store(1)
+	return c
 }
 
 // Connect establishes connection to broker and performs MQTT handshake.
@@ -494,10 +496,14 @@ func (c *MQTTClient) deliverResponse(packetID uint16, pkt protocol.Packet) {
 
 // nextPacketID returns the next packet identifier, cycling through 1-65535.
 func (c *MQTTClient) nextPacketID() uint16 {
-	pid := c.nextPID
-	c.nextPID++
-	if c.nextPID == 0 {
-		c.nextPID = 1
+	for {
+		old := c.nextPID.Load()
+		next := old + 1
+		if next > 65535 {
+			next = 1
+		}
+		if c.nextPID.CompareAndSwap(old, next) {
+			return uint16(old)
+		}
 	}
-	return pid
 }

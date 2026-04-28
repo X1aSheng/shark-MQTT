@@ -113,8 +113,8 @@ func TestConnectFlow(t *testing.T) {
 	connectClient(t, pubConn, pubCodec, "connect-publisher")
 	pubPkt := &protocol.PublishPacket{
 		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 0},
-		Topic:   "connect/topic",
-		Payload: []byte("connect-test"),
+		Topic:       "connect/topic",
+		Payload:     []byte("connect-test"),
 	}
 	pubConn.SetDeadline(time.Now().Add(2 * time.Second))
 	if err := pubCodec.Encode(pubConn, pubPkt); err != nil {

@@ -176,7 +176,7 @@ func TestNextPacketID(t *testing.T) {
 	}
 
 	// Set nextPID near overflow and test wrap
-	c.nextPID = 65535
+	c.nextPID.Store(65535)
 	pid := c.nextPacketID()
 	if pid != 65535 {
 		t.Errorf("expected packet ID 65535, got %d", pid)

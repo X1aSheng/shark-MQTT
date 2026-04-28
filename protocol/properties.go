@@ -74,13 +74,13 @@ const (
 type propType int
 
 const (
-	propTypeByte       propType = iota // 1 byte
-	propTypeUInt16                      // 2 bytes big-endian
-	propTypeUInt32                      // 4 bytes big-endian
-	propTypeVarInt                      // variable byte integer
-	propTypeUTF8String                  // 2-byte length + string
-	propTypeBinaryData                  // 2-byte length + data
-	propTypeUTF8StringPair              // 2-byte length + string, twice
+	propTypeByte           propType = iota // 1 byte
+	propTypeUInt16                         // 2 bytes big-endian
+	propTypeUInt32                         // 4 bytes big-endian
+	propTypeVarInt                         // variable byte integer
+	propTypeUTF8String                     // 2-byte length + string
+	propTypeBinaryData                     // 2-byte length + data
+	propTypeUTF8StringPair                 // 2-byte length + string, twice
 )
 
 var propTypeMap = map[byte]propType{

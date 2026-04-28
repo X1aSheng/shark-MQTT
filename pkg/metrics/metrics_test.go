@@ -12,7 +12,7 @@ func TestDefaultMetrics(t *testing.T) {
 
 	// Verify no panics on any interface method
 	m.IncConnections()
-	m.DecConnections()
+	m.OnDisconnect()
 	m.IncRejections("test")
 	m.IncAuthFailures()
 	m.IncMessagesPublished(1)
@@ -38,7 +38,7 @@ func TestNoopMetricsDoesNotPanic(t *testing.T) {
 	m := &noopMetrics{}
 
 	m.IncConnections()
-	m.DecConnections()
+	m.OnDisconnect()
 	m.IncRejections("test")
 	m.IncAuthFailures()
 	m.IncMessagesPublished(0)

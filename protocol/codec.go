@@ -118,7 +118,7 @@ func (c *Codec) decodeFixedHeader(r io.Reader) (*FixedHeader, error) {
 
 	fh := &FixedHeader{
 		PacketType: PacketType((buf[0] >> 4) & 0x0F),
-		Dup:        (buf[0]&0x08) != 0,
+		Dup:        (buf[0] & 0x08) != 0,
 		QoS:        (buf[0] >> 1) & 0x03,
 		Retain:     (buf[0] & 0x01) != 0,
 	}

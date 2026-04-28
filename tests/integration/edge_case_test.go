@@ -95,8 +95,8 @@ func TestDuplicateClientID(t *testing.T) {
 
 	pubPkt := &protocol.PublishPacket{
 		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 0},
-		Topic:   "test/topic",
-		Payload: []byte("dup-test-msg"),
+		Topic:       "test/topic",
+		Payload:     []byte("dup-test-msg"),
 	}
 	pubConn.SetDeadline(time.Now().Add(2 * time.Second))
 	if err := pubCodec.Encode(pubConn, pubPkt); err != nil {
@@ -290,8 +290,8 @@ func TestEmptyClientID(t *testing.T) {
 	connectClient(t, pubConn, pubCodec, "empty-id-publisher")
 	pubPkt := &protocol.PublishPacket{
 		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 0},
-		Topic:   "empty/topic",
-		Payload: []byte("empty-id-test"),
+		Topic:       "empty/topic",
+		Payload:     []byte("empty-id-test"),
 	}
 	pubConn.SetDeadline(time.Now().Add(2 * time.Second))
 	if err := pubCodec.Encode(pubConn, pubPkt); err != nil {
@@ -315,4 +315,4 @@ func TestEmptyClientID(t *testing.T) {
 		t.Errorf("expected payload empty-id-test, got %s", delivered.Payload)
 	}
 	t.Logf("data delivery verified: topic=%s payload=%s", delivered.Topic, delivered.Payload)
-	}
+}

@@ -451,8 +451,8 @@ func BenchmarkPayload_64B(b *testing.B)   { benchPayload(b, 64) }
 func BenchmarkPayload_256B(b *testing.B)  { benchPayload(b, 256) }
 func BenchmarkPayload_1KB(b *testing.B)   { benchPayload(b, 1024) }
 func BenchmarkPayload_4KB(b *testing.B)   { benchPayload(b, 4096) }
-func BenchmarkPayload_16KB(b *testing.B)  { benchPayload(b, 16 * 1024) }
-func BenchmarkPayload_128KB(b *testing.B) { benchPayload(b, 128 * 1024) }
+func BenchmarkPayload_16KB(b *testing.B)  { benchPayload(b, 16*1024) }
+func BenchmarkPayload_128KB(b *testing.B) { benchPayload(b, 128*1024) }
 
 // ---------------------------------------------------------------------------
 // Fan-out (1 publisher -> N subscribers)

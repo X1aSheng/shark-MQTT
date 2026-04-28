@@ -12,19 +12,19 @@ import (
 
 // Session represents an active MQTT client session.
 type Session struct {
-	ClientID       string
-	Username       string
-	IsClean        bool
-	ProtocolVer    uint8
-	KeepAlive      uint16
-	ConnectedAt    time.Time
-	LastActivity   time.Time
-	Subscriptions  map[string]uint8 // topic -> qos
-	Inflight       map[uint16]*InflightMsg
-	packetIDSeq    uint16
-	ReceiveMax     uint16
-	TopicAliasMax  uint16
-	mu             sync.RWMutex
+	ClientID      string
+	Username      string
+	IsClean       bool
+	ProtocolVer   uint8
+	KeepAlive     uint16
+	ConnectedAt   time.Time
+	LastActivity  time.Time
+	Subscriptions map[string]uint8 // topic -> qos
+	Inflight      map[uint16]*InflightMsg
+	packetIDSeq   uint16
+	ReceiveMax    uint16
+	TopicAliasMax uint16
+	mu            sync.RWMutex
 
 	// State management
 	state       State
@@ -36,13 +36,13 @@ type Session struct {
 
 // InflightMsg tracks an in-flight QoS message.
 type InflightMsg struct {
-	PacketID  uint16
-	QoS       uint8
-	Topic     string
-	Payload   []byte
-	Retain    bool
-	SentAt    time.Time
-	AckType   byte // PUBACK, PUBREC, PUBREL, PUBCOMP
+	PacketID uint16
+	QoS      uint8
+	Topic    string
+	Payload  []byte
+	Retain   bool
+	SentAt   time.Time
+	AckType  byte // PUBACK, PUBREC, PUBREL, PUBCOMP
 }
 
 // Manager manages all client sessions.
@@ -99,18 +99,18 @@ func (m *Manager) CreateSession(clientID string, connectPkt *protocol.ConnectPac
 	}
 
 	sess := &Session{
-		ClientID:     clientID,
-		Username:     connectPkt.Username,
-		IsClean:      connectPkt.Flags.CleanSession,
-		ProtocolVer:  connectPkt.ProtocolVersion,
-		KeepAlive:    connectPkt.KeepAlive,
-		ConnectedAt:  time.Now(),
-		LastActivity: time.Now(),
+		ClientID:      clientID,
+		Username:      connectPkt.Username,
+		IsClean:       connectPkt.Flags.CleanSession,
+		ProtocolVer:   connectPkt.ProtocolVersion,
+		KeepAlive:     connectPkt.KeepAlive,
+		ConnectedAt:   time.Now(),
+		LastActivity:  time.Now(),
 		Subscriptions: make(map[string]uint8),
-		Inflight:     make(map[uint16]*InflightMsg),
-		packetIDSeq:  1,
-		ReceiveMax:   65535,
-		state:        StateConnected,
+		Inflight:      make(map[uint16]*InflightMsg),
+		packetIDSeq:   1,
+		ReceiveMax:    65535,
+		state:         StateConnected,
 	}
 
 	sess.stats.ConnectCount++
@@ -248,8 +248,11 @@ func (s *Session) Save(ctx context.Context, sessionStore store.SessionStore) err
 	defer s.mu.RUnlock()
 
 	data := &store.SessionData{
-		ClientID: s.ClientID,
-		IsClean:  s.IsClean,
+		ClientID:    s.ClientID,
+		Username:    s.Username,
+		IsClean:     s.IsClean,
+		KeepAlive:   s.KeepAlive,
+		ProtocolVer: s.ProtocolVer,
 	}
 
 	subscriptions := make([]store.Subscription, 0, len(s.Subscriptions))
@@ -288,7 +291,10 @@ func (m *Manager) Restore(ctx context.Context, clientID string) (*Session, error
 
 	sess := &Session{
 		ClientID:      data.ClientID,
+		Username:      data.Username,
 		IsClean:       data.IsClean,
+		KeepAlive:     data.KeepAlive,
+		ProtocolVer:   data.ProtocolVer,
 		Subscriptions: make(map[string]uint8),
 		Inflight:      make(map[uint16]*InflightMsg),
 		packetIDSeq:   1,

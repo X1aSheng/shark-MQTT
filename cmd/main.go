@@ -48,7 +48,7 @@ func main() {
 	b := api.NewBroker(
 		api.WithConfig(cfg),
 		api.WithAuth(broker.AllowAllAuth{}),
-	)  //#nosec G104 — AllowAllAuth is intentional for development
+	) //#nosec G104 — AllowAllAuth is intentional for development
 
 	// Start the broker
 	if err := b.Start(); err != nil {

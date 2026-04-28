@@ -142,7 +142,7 @@ func NewPrometheusMetrics(reg prometheus.Registerer) Metrics {
 }
 
 func (m *prometheusMetrics) IncConnections() { m.connections.Inc() }
-func (m *prometheusMetrics) DecConnections() { m.disconnections.Inc() }
+func (m *prometheusMetrics) OnDisconnect()   { m.disconnections.Inc() }
 func (m *prometheusMetrics) IncRejections(reason string) {
 	m.rejections.WithLabelValues(reason).Inc()
 }
