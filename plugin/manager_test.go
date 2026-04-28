@@ -26,10 +26,10 @@ func (p *MockPlugin) Hooks() []Hook {
 
 func (p *MockPlugin) Execute(ctx context.Context, hook Hook, data *Context) error {
 	p.callCount.Add(1)
-	p.lastData = data
 	if p.executeFunc != nil {
 		return p.executeFunc(ctx, hook, data)
 	}
+	p.lastData = data
 	return nil
 }
 
