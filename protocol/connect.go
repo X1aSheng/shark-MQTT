@@ -274,6 +274,7 @@ func (c *Codec) encodeConnect(w io.Writer, pkt *ConnectPacket) error {
 		}
 	}
 
+	pkt.FixedHeader.PacketType = PacketTypeConnect
 	pkt.RemainingLength = buf.Len()
 	if err := c.encodeFixedHeader(w, &pkt.FixedHeader); err != nil {
 		return err
