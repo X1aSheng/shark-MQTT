@@ -408,6 +408,15 @@ func (c *MQTTClient) readLoop() {
 			c.mu.Lock()
 			c.connected = false
 			c.mu.Unlock()
+			// Cancel context to wake up pending QoS publish/response waiters
+			c.cancel()
+			// Drain pending response channels to prevent goroutine leaks
+			c.pendingMu.Lock()
+			for pid, ch := range c.pending {
+				close(ch)
+				delete(c.pending, pid)
+			}
+			c.pendingMu.Unlock()
 			return
 		}
 

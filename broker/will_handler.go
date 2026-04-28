@@ -22,6 +22,7 @@ type WillHandler struct {
 	mu     sync.Mutex
 	wills  map[string]*WillMessage
 	cancel map[string]context.CancelFunc
+	wg     sync.WaitGroup
 
 	// Callback to publish will message
 	publishWill func(topic string, payload []byte, qos uint8, retain bool) error
@@ -35,16 +36,17 @@ func NewWillHandler() *WillHandler {
 	}
 }
 
-// Stop cancels all pending delayed will messages.
+// Stop cancels all pending delayed will messages and waits for completion.
 func (wh *WillHandler) Stop() {
 	wh.mu.Lock()
-	defer wh.mu.Unlock()
-
 	for _, cancel := range wh.cancel {
 		cancel()
 	}
 	wh.wills = make(map[string]*WillMessage)
 	wh.cancel = make(map[string]context.CancelFunc)
+	wh.mu.Unlock()
+
+	wh.wg.Wait()
 }
 
 // SetPublishCallback sets the callback for publishing will messages.
@@ -85,7 +87,9 @@ func (wh *WillHandler) TriggerWill(clientID string) error {
 		wh.cancel[clientID] = cancel
 		wh.mu.Unlock()
 
+		wh.wg.Add(1)
 		go func() {
+			defer wh.wg.Done()
 			select {
 			case <-time.After(will.Delay):
 				wh.publishWillMessage(will)

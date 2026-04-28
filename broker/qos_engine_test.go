@@ -321,7 +321,6 @@ func TestQoSEngine_Retry_Triggered(t *testing.T) {
 	var republishCalled bool
 	var republishTopic string
 	var republishQoS uint8
-	var sendPubAckCalled bool
 
 	interval := 50 * time.Millisecond
 	q := NewQoSEngine(
@@ -331,14 +330,9 @@ func TestQoSEngine_Retry_Triggered(t *testing.T) {
 
 	var mu sync.Mutex
 	q.SetCallbacks(
-		func(clientID string, packetID uint16) error {
-			mu.Lock()
-			sendPubAckCalled = true
-			mu.Unlock()
-			return nil
-		},
-		nil,
-		nil,
+		nil,   // sendPubAck: broker acknowledges publisher directly, not via retry
+		nil,   // sendPubRel
+		nil,   // sendPubComp
 		func(clientID string, packetID uint16, topic string, payload []byte, qos uint8, retain bool) error {
 			mu.Lock()
 			republishCalled = true
@@ -360,9 +354,6 @@ func TestQoSEngine_Retry_Triggered(t *testing.T) {
 	mu.Lock()
 	if !republishCalled {
 		t.Error("expected republish callback to be called")
-	}
-	if !sendPubAckCalled {
-		t.Error("expected sendPubAck callback to be called on retry")
 	}
 	if republishTopic != "home/temp" {
 		t.Errorf("expected topic home/temp, got %q", republishTopic)

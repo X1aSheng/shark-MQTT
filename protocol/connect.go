@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 )
 
@@ -119,6 +120,50 @@ func (c *Codec) decodeConnect(r io.Reader, fh *FixedHeader) (*ConnectPacket, err
 		WillProperties:  willProps,
 	}
 	return pkt, nil
+}
+
+// ValidateConnect validates the CONNECT packet per MQTT 3.1.1 / 5.0 rules.
+// Returns the appropriate ConnAck reason code and an error message, or nil if valid.
+func ValidateConnect(pkt *ConnectPacket) error {
+	// Check protocol name (MQTT 3.1.1 §3.1.2.1)
+	if pkt.ProtocolName != ProtocolNameMQTT && pkt.ProtocolName != ProtocolNameMQIsdp {
+		return fmt.Errorf("protocol: invalid protocol name %q", pkt.ProtocolName)
+	}
+
+	// Check protocol version (MQTT 3.1.1 §3.1.2.2)
+	if pkt.ProtocolVersion != Version31 && pkt.ProtocolVersion != Version311 && pkt.ProtocolVersion != Version50 {
+		return fmt.Errorf("protocol: unsupported protocol version %d", pkt.ProtocolVersion)
+	}
+
+	// Reserved flag must be 0 (MQTT 3.1.1 §3.1.2.3)
+	if pkt.Flags.Reserved {
+		return fmt.Errorf("protocol: reserved flag must be 0")
+	}
+
+	// If WillFlag is set, WillQoS must not be 3 (MQTT 3.1.1 §3.1.2.6)
+	if pkt.Flags.WillFlag && pkt.Flags.WillQoS > 2 {
+		return fmt.Errorf("protocol: invalid will QoS %d (must be 0, 1, or 2)", pkt.Flags.WillQoS)
+	}
+
+	// If PasswordFlag is set, UsernameFlag must also be set (MQTT 3.1.1 §3.1.2.5)
+	if pkt.Flags.PasswordFlag && !pkt.Flags.UsernameFlag {
+		return fmt.Errorf("protocol: password flag set but username flag not set")
+	}
+
+	// Zero-length ClientID requires CleanSession=1 (MQTT 3.1.1 §3.1.3.1)
+	if len(pkt.ClientID) == 0 && !pkt.Flags.CleanSession {
+		return fmt.Errorf("protocol: zero-length client ID requires clean session")
+	}
+
+	// WillFlag: if set, WillTopic must not be empty (spec recommends but doesn't require)
+	if pkt.Flags.WillFlag && len(pkt.WillTopic) == 0 {
+		return fmt.Errorf("protocol: will flag set but will topic is empty")
+	}
+
+	// ClientID length must not exceed 23 characters per MQTT 3.1 (not a hard limit in 3.1.1)
+	// Allow up to 65535 for broader compatibility
+
+	return nil
 }
 
 func (c *Codec) encodeConnect(w io.Writer, pkt *ConnectPacket) error {

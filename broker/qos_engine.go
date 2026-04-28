@@ -280,6 +280,17 @@ func (q *QoSEngine) InflightCount(clientID string) int {
 	return 0
 }
 
+// GetInflight returns the inflight message for a client and packet ID.
+func (q *QoSEngine) GetInflight(clientID string, packetID uint16) (*InflightMessage, bool) {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+	if clientInflight, ok := q.inflight[clientID]; ok {
+		msg, exists := clientInflight[packetID]
+		return msg, exists
+	}
+	return nil, false
+}
+
 // retryLoop periodically retries unacknowledged QoS messages.
 func (q *QoSEngine) retryLoop() {
 	defer q.wg.Done()
@@ -304,8 +315,6 @@ func (q *QoSEngine) doRetry() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	sendPubAck := q.sendPubAck
-	sendPubRel := q.sendPubRel
 	republish := q.republish
 
 	for clientID, clientInflight := range q.inflight {
@@ -314,7 +323,6 @@ func (q *QoSEngine) doRetry() {
 				continue
 			}
 			if msg.Retries >= msg.MaxRetries {
-				// Max retries exceeded, remove from inflight
 				delete(clientInflight, packetID)
 				continue
 			}
@@ -322,25 +330,10 @@ func (q *QoSEngine) doRetry() {
 			msg.Retries++
 			msg.SentAt = time.Now()
 
-			// For QoS 1/2, first retry the actual PUBLISH message
+			// Republish to subscribers via the broker's topic routing
 			if republish != nil {
 				if err := republish(clientID, msg.PacketID, msg.Topic, msg.Payload, msg.QoS, msg.Retain); err != nil {
 					q.reportError(clientID, packetID, err)
-				}
-			}
-
-			// Also send the acknowledgment packet (PUBACK for QoS 1, PUBREL for QoS 2)
-			if msg.State == StateSent {
-				if sendPubAck != nil {
-					if err := sendPubAck(clientID, packetID); err != nil {
-						q.reportError(clientID, packetID, err)
-					}
-				}
-			} else if msg.State == StateAcked {
-				if sendPubRel != nil {
-					if err := sendPubRel(clientID, packetID); err != nil {
-						q.reportError(clientID, packetID, err)
-					}
 				}
 			}
 		}
