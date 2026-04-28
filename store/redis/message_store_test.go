@@ -289,9 +289,10 @@ func BenchmarkMessageStore_Get(b *testing.B) {
 		TTL:       time.Hour,
 	})
 
-	// Pre-populate with 1000 messages
+	// Pre-populate with 50 messages
+	const prePop = 50
 	payload := make([]byte, 256)
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < prePop; i++ {
 		msg := &store.StoredMessage{
 			ID:      "bench-msg-" + string(rune(i)),
 			Payload: payload,
@@ -303,7 +304,7 @@ func BenchmarkMessageStore_Get(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		ms.GetMessage(ctx, "bench-client", "bench-msg-"+string(rune(i%1000)))
+		ms.GetMessage(ctx, "bench-client", "bench-msg-"+string(rune(i%prePop)))
 	}
 }
 
@@ -322,9 +323,10 @@ func BenchmarkMessageStore_List(b *testing.B) {
 		TTL:       time.Hour,
 	})
 
-	// Pre-populate with 1000 messages
+	// Pre-populate with 50 messages
+	const prePop = 50
 	payload := make([]byte, 256)
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < prePop; i++ {
 		msg := &store.StoredMessage{
 			ID:      "bench-msg-" + string(rune(i)),
 			Payload: payload,

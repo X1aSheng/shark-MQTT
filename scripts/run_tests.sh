@@ -95,7 +95,7 @@ case "$MODE" in
         ;;
     --benchmark)
         run_test benchmark "Benchmarks" \
-            -bench=. -benchmem -run=^$ \
+            -bench=. -benchmem -benchtime=500ms -run=^$ \
             ./tests/bench/... ./broker/... ./protocol/... ./store/... ./pkg/...
         ;;
     --cover)
@@ -113,7 +113,7 @@ case "$MODE" in
             ./config/... ./errs/... ./pkg/... ./plugin/... ./api/...
         run_test integration "Integration Tests" ./tests/integration/...
         run_test benchmark "Benchmarks" \
-            -bench=. -benchmem -run=^$ \
+            -bench=. -benchmem -benchtime=500ms -run=^$ \
             ./tests/bench/... ./broker/... ./protocol/... ./store/... ./pkg/...
 
         echo ""

@@ -17,6 +17,7 @@ package bench
 import (
 	"fmt"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -312,8 +313,9 @@ func BenchmarkConcurrentPublish(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
+	var parID int64
 	b.RunParallel(func(pb *testing.PB) {
-		conn, codec := connectedClient(b, brk, fmt.Sprintf("par-%d", time.Now().UnixNano()))
+		conn, codec := connectedClient(b, brk, fmt.Sprintf("par-%d", atomic.AddInt64(&parID, 1)))
 		defer conn.Close()
 
 		for pb.Next() {

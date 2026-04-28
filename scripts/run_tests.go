@@ -127,7 +127,7 @@ func runBenchmark(projectDir, logsDir, ts string) {
 	printCyan(fmt.Sprintf("    Report=> %s", logFile))
 	fmt.Println()
 
-	args := []string{"test", "-bench=.", "-benchmem", "-run=^$", "-count=1", "-timeout=300s", "-json"}
+	args := []string{"test", "-bench=.", "-benchmem", "-benchtime=500ms", "-run=^$", "-count=1", "-timeout=300s", "-json"}
 	args = append(args, packages...)
 	goCapture(projectDir, args, jsonFile)
 

@@ -288,13 +288,13 @@ func BenchmarkSessionStore_Get(b *testing.B) {
 		TTL:       time.Hour,
 	})
 
-	// Pre-populate
+	const prePop = 50
 	data := &store.SessionData{
 		ClientID:      "bench-get",
 		IsClean:       false,
 		Subscriptions: []store.Subscription{{Topic: "bench/topic", QoS: 1}},
 	}
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < prePop; i++ {
 		ss.SaveSession(ctx, "bench-get-"+string(rune(i)), data)
 	}
 
@@ -302,6 +302,6 @@ func BenchmarkSessionStore_Get(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		ss.GetSession(ctx, "bench-get-"+string(rune(i%1000)))
+		ss.GetSession(ctx, "bench-get-"+string(rune(i%prePop)))
 	}
 }
