@@ -3,10 +3,10 @@ package testutils
 
 import (
 	"context"
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/X1aSheng/shark-mqtt/protocol"
 	"github.com/X1aSheng/shark-mqtt/store"
 )
 
@@ -209,35 +209,10 @@ func (s *MockRetainedStore) MatchRetained(ctx context.Context, pattern string) (
 	time.Sleep(s.latency)
 	var matched []*store.RetainedMessage
 	for topic, msg := range s.data {
-		if topicMatchesPattern(topic, pattern) {
+		if protocol.MatchTopic(pattern, topic) {
 			matched = append(matched, msg)
 		}
 	}
 	return matched, nil
 }
 
-func topicMatchesPattern(topic, pattern string) bool {
-	topicParts := strings.Split(topic, "/")
-	patternParts := strings.Split(pattern, "/")
-
-	if len(patternParts) == 1 && patternParts[0] == "#" {
-		return true
-	}
-
-	for i, part := range patternParts {
-		if part == "#" {
-			return true
-		}
-		if i >= len(topicParts) {
-			return false
-		}
-		if part == "+" {
-			continue
-		}
-		if part != topicParts[i] {
-			return false
-		}
-	}
-
-	return len(topicParts) == len(patternParts)
-}

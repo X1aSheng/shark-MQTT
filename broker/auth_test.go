@@ -3,6 +3,8 @@ package broker
 import (
 	"context"
 	"testing"
+
+	"github.com/X1aSheng/shark-mqtt/protocol"
 )
 
 func TestStaticAuthAuthenticate(t *testing.T) {
@@ -106,8 +108,8 @@ func TestTopicMatch(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		if got := topicMatch(tt.pattern, tt.topic); got != tt.want {
-			t.Errorf("topicMatch(%q, %q) = %v, want %v", tt.pattern, tt.topic, got, tt.want)
+		if got := protocol.MatchTopic(tt.pattern, tt.topic); got != tt.want {
+			t.Errorf("MatchTopic(%q, %q) = %v, want %v", tt.pattern, tt.topic, got, tt.want)
 		}
 	}
 }

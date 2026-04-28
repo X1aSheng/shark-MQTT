@@ -30,6 +30,47 @@ func MatchTopic(pattern, topic string) bool {
 	return matchLevels(patternLevels, topicLevels)
 }
 
+// SplitTopic splits an MQTT topic string into its level components.
+func SplitTopic(topic string) []string {
+	parts := make([]string, 0)
+	start := 0
+	for i := 0; i <= len(topic); i++ {
+		if i == len(topic) || topic[i] == '/' {
+			parts = append(parts, topic[start:i])
+			start = i + 1
+		}
+	}
+	return parts
+}
+
+// ValidateTopicFilter checks whether a topic filter conforms to MQTT spec rules.
+// Rules: '#' must be last character and preceded by '/' or be the entire filter;
+// '+' must occupy an entire level (bounded by '/' or string start/end).
+func ValidateTopicFilter(filter string) bool {
+	if len(filter) == 0 {
+		return false
+	}
+	for i := 0; i < len(filter); i++ {
+		switch filter[i] {
+		case '#':
+			if i != len(filter)-1 {
+				return false
+			}
+			if i > 0 && filter[i-1] != '/' {
+				return false
+			}
+		case '+':
+			if i > 0 && filter[i-1] != '/' {
+				return false
+			}
+			if i < len(filter)-1 && filter[i+1] != '/' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func matchLevels(patternLevels, topicLevels []string) bool {
 	for i := 0; i < len(patternLevels); i++ {
 		pattern := patternLevels[i]
