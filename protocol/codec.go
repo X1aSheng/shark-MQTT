@@ -29,7 +29,8 @@ func (c *Codec) Decode(r io.Reader) (Packet, error) {
 		return nil, err
 	}
 
-	if fh.RemainingLength > c.maxPacketSize {
+	// MQTT spec: max packet size includes the fixed header (1-5 bytes)
+	if fh.RemainingLength+5 > c.maxPacketSize {
 		return nil, ErrPacketTooLarge
 	}
 

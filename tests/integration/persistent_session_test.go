@@ -390,7 +390,7 @@ func TestPersistentSession_Reconnect(t *testing.T) {
 // TestPersistentSession_OfflinePublish verifies that QoS 1 messages
 // published while a persistent client is offline are not delivered
 // (since the client has no active subscription at that point).
-func TestPersistentSession_OfflinePublish(t *testing.T) {
+func TestQoS1Publish_PubAckFlow(t *testing.T) {
 	broker := testBroker(t)
 
 	// Publisher to send messages
