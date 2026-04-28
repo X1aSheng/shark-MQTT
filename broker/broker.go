@@ -257,6 +257,14 @@ func (b *Broker) dispatch(hook plugin.Hook, data *plugin.Context) {
 
 func (b *Broker) disconnect(clientID string) {
 	b.will.RemoveWill(clientID)
+
+	// Persist non-clean session before removal so state survives reconnect
+	if sess, ok := b.sessions.GetSession(clientID); ok && !sess.IsClean && b.sessionStore != nil {
+		if err := sess.Save(b.ctx, b.sessionStore); err != nil {
+			b.logger.Debug("failed to save session", "clientID", clientID, "error", err)
+		}
+	}
+
 	b.sessions.RemoveSession(clientID)
 	b.qos.RemoveClient(clientID)
 

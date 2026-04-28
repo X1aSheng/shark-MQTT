@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 )
 
@@ -37,8 +38,7 @@ func (c *Codec) decodePublish(r io.Reader, fh *FixedHeader) (*PublishPacket, err
 
 			props, err = c.decodeProperties(reader)
 			if err != nil {
-				// If properties fail to parse, treat all as payload
-				reader.Reset(data)
+				return nil, fmt.Errorf("decode properties: %w", err)
 			}
 			propBytesRead = remaining - reader.Len()
 
