@@ -276,7 +276,7 @@ func (b *Broker) disconnect(clientID string) {
 	b.dispatch(plugin.OnClose, &plugin.Context{ClientID: clientID})
 
 	// Metrics
-	b.metrics.DecConnections()
+	b.metrics.OnDisconnect()
 
 	b.logger.Info("client disconnected", "clientID", clientID)
 }
@@ -338,7 +338,7 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 	// Reject wildcard topics per MQTT spec §3.3.2
 	if !protocol.ValidatePublishTopic(pkt.Topic) {
 		if pkt.FixedHeader.QoS > 0 {
-			b.writePacket(clientID,&protocol.PubAckPacket{
+			b.writePacket(clientID, &protocol.PubAckPacket{
 				FixedHeader: protocol.FixedHeader{
 					PacketType: protocol.PacketTypePubAck,
 				},
@@ -359,7 +359,7 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 	}
 	if b.opts.authorizer != nil && !b.opts.authorizer.CanPublish(b.ctx, username, pkt.Topic) {
 		if pkt.FixedHeader.QoS > 0 {
-			b.writePacket(clientID,&protocol.PubAckPacket{
+			b.writePacket(clientID, &protocol.PubAckPacket{
 				FixedHeader: protocol.FixedHeader{
 					PacketType: protocol.PacketTypePubAck,
 				},
@@ -386,7 +386,7 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 
 	// QoS 2: defer subscriber delivery until PUBCOMP completes the handshake
 	if pkt.FixedHeader.QoS == 2 {
-		b.writePacket(clientID,&protocol.PubRecPacket{
+		b.writePacket(clientID, &protocol.PubRecPacket{
 			FixedHeader: protocol.FixedHeader{
 				PacketType: protocol.PacketTypePubRec,
 			},
@@ -407,7 +407,7 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 
 	// Send PUBACK for QoS 1
 	if pkt.FixedHeader.QoS == 1 {
-		b.writePacket(clientID,&protocol.PubAckPacket{
+		b.writePacket(clientID, &protocol.PubAckPacket{
 			FixedHeader: protocol.FixedHeader{
 				PacketType: protocol.PacketTypePubAck,
 			},
@@ -438,7 +438,7 @@ func (b *Broker) handleSubscribe(clientID string, sess *Session, pkt *protocol.S
 		reasonCodes[i] = topic.QoS
 	}
 
-	b.writePacket(clientID,&protocol.SubAckPacket{
+	b.writePacket(clientID, &protocol.SubAckPacket{
 		FixedHeader: protocol.FixedHeader{
 			PacketType: protocol.PacketTypeSubAck,
 		},
@@ -458,7 +458,7 @@ func (b *Broker) handleUnsubscribe(clientID string, sess *Session, pkt *protocol
 		sess.RemoveSubscription(topic)
 	}
 
-	b.writePacket(clientID,&protocol.UnsubAckPacket{
+	b.writePacket(clientID, &protocol.UnsubAckPacket{
 		FixedHeader: protocol.FixedHeader{
 			PacketType: protocol.PacketTypeUnsubAck,
 		},
@@ -499,7 +499,7 @@ func (b *Broker) deliverToClient(clientID string, pkt *protocol.PublishPacket) {
 	// Track sent messages for statistics
 	sess.TrackSent(len(pkt.Topic) + len(pkt.Payload))
 
-	b.writePacketTo(clientID, pubPkt)
+	b.writePacket(clientID, pubPkt)
 	b.metrics.IncMessagesDelivered(deliverQoS)
 }
 
@@ -537,29 +537,13 @@ func (b *Broker) deliverRetainedMessages(clientID string, sess *Session, topicFi
 		// Track sent messages for statistics
 		sess.TrackSent(len(msg.Topic) + len(msg.Payload))
 
-		b.writePacketTo(clientID, pubPkt)
+		b.writePacket(clientID, pubPkt)
 		b.metrics.IncMessagesDelivered(deliverQoS)
 	}
 }
 
 // writePacket writes a packet to a client via the stored connection (used in read loop).
 func (b *Broker) writePacket(clientID string, pkt protocol.Packet) {
-	b.mu.RLock()
-	cs, ok := b.connections[clientID]
-	b.mu.RUnlock()
-	if !ok {
-		return
-	}
-	cs.wmu.Lock()
-	err := cs.codec.Encode(cs.conn, pkt)
-	cs.wmu.Unlock()
-	if err != nil {
-		b.logger.Debug("write error", "clientID", clientID, "error", err)
-	}
-}
-
-// writePacketTo writes a packet to a client via the stored connection.
-func (b *Broker) writePacketTo(clientID string, pkt protocol.Packet) {
 	b.mu.RLock()
 	cs, ok := b.connections[clientID]
 	b.mu.RUnlock()
@@ -649,7 +633,7 @@ func (b *Broker) sendPubAck(clientID string, packetID uint16) error {
 		},
 		PacketID: packetID,
 	}
-	b.writePacketTo(clientID, pkt)
+	b.writePacket(clientID, pkt)
 	return nil
 }
 
@@ -661,7 +645,7 @@ func (b *Broker) sendPubRel(clientID string, packetID uint16) error {
 		},
 		PacketID: packetID,
 	}
-	b.writePacketTo(clientID, pkt)
+	b.writePacket(clientID, pkt)
 	return nil
 }
 
@@ -672,7 +656,7 @@ func (b *Broker) sendPubComp(clientID string, packetID uint16) error {
 		},
 		PacketID: packetID,
 	}
-	b.writePacketTo(clientID, pkt)
+	b.writePacket(clientID, pkt)
 	return nil
 }
 

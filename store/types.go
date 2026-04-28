@@ -8,7 +8,10 @@ import (
 // SessionData represents stored session data.
 type SessionData struct {
 	ClientID      string
+	Username      string
 	IsClean       bool
+	KeepAlive     uint16
+	ProtocolVer   uint8
 	ExpiryTime    time.Time
 	Subscriptions []Subscription
 	Inflight      map[uint16]*InflightMessage

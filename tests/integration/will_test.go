@@ -126,9 +126,9 @@ func TestWillMessageOnAbnormalDisconnect(t *testing.T) {
 			WillQoS:      1,
 			WillRetain:   false,
 		},
-		KeepAlive:  30,
-		ClientID:   "client1",
-		WillTopic:  "client1/will",
+		KeepAlive:   30,
+		ClientID:    "client1",
+		WillTopic:   "client1/will",
 		WillMessage: []byte("client1 offline"),
 	}
 
@@ -208,9 +208,9 @@ func TestWillMessageNotPublishedOnGracefulDisconnect(t *testing.T) {
 			WillQoS:      1,
 			WillRetain:   false,
 		},
-		KeepAlive:  30,
-		ClientID:   "client2",
-		WillTopic:  "client2/will",
+		KeepAlive:   30,
+		ClientID:    "client2",
+		WillTopic:   "client2/will",
 		WillMessage: []byte("client2 offline"),
 	}
 
@@ -286,9 +286,9 @@ func TestWillMessageQoS(t *testing.T) {
 					WillQoS:      tc.willQoS,
 					WillRetain:   false,
 				},
-				KeepAlive:  30,
-				ClientID:   "client",
-				WillTopic:  "client/will",
+				KeepAlive:   30,
+				ClientID:    "client",
+				WillTopic:   "client/will",
 				WillMessage: []byte("will message"),
 			}
 

@@ -138,9 +138,9 @@ func (wh *WillHandler) publishWillMessage(will *WillMessage) error {
 
 // WillMessage represents the public info about a registered will.
 type WillInfo struct {
-	Topic   string
-	QoS     uint8
-	Retain  bool
+	Topic      string
+	QoS        uint8
+	Retain     bool
 	HasPayload bool
 }
 
@@ -155,9 +155,9 @@ func (wh *WillHandler) GetWillInfo(clientID string) (*WillInfo, bool) {
 	}
 
 	return &WillInfo{
-		Topic:        will.Topic,
-		QoS:          will.QoS,
-		Retain:       will.Retain,
+		Topic:      will.Topic,
+		QoS:        will.QoS,
+		Retain:     will.Retain,
 		HasPayload: len(will.Payload) > 0,
 	}, true
 }

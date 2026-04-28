@@ -1,7 +1,8 @@
 // Package tlsbroker demonstrates running the broker with TLS.
 //
 // Generate self-signed certs for testing:
-//   openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes
+//
+//	openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes
 //
 // Run: go run .
 package main

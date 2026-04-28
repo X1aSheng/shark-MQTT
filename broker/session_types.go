@@ -62,12 +62,12 @@ func (r CloseReason) String() string {
 
 // Stats holds session statistics.
 type Stats struct {
-	MessagesReceived  uint64
-	MessagesSent      uint64
-	BytesReceived     uint64
-	BytesSent         uint64
-	ConnectCount      uint64
-	LastConnectedAt   time.Time
-	Subscriptions     int
-	InflightCount     int
+	MessagesReceived uint64
+	MessagesSent     uint64
+	BytesReceived    uint64
+	BytesSent        uint64
+	ConnectCount     uint64
+	LastConnectedAt  time.Time
+	Subscriptions    int
+	InflightCount    int
 }

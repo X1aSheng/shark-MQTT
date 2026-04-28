@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/X1aSheng/shark-mqtt/store"
+	"github.com/redis/go-redis/v9"
 )
 
 // Ensure interface compliance.

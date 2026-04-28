@@ -85,9 +85,9 @@ func TestConnectWithWill(t *testing.T) {
 			WillQoS:       1,
 			WillTopicFlag: true,
 		},
-		KeepAlive: 30,
-		ClientID:  "will-client",
-		WillTopic: "last/will",
+		KeepAlive:   30,
+		ClientID:    "will-client",
+		WillTopic:   "last/will",
 		WillMessage: []byte("gone"),
 	}
 
@@ -127,9 +127,9 @@ func TestConnectWithAuth(t *testing.T) {
 		ProtocolName:    "MQTT",
 		ProtocolVersion: Version311,
 		Flags: ConnectFlags{
-			CleanSession:  true,
-			UsernameFlag:  true,
-			PasswordFlag:  true,
+			CleanSession: true,
+			UsernameFlag: true,
+			PasswordFlag: true,
 		},
 		KeepAlive: 60,
 		ClientID:  "auth-client",

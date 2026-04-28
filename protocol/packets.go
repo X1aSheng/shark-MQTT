@@ -92,8 +92,8 @@ type SubscribePacket struct {
 type TopicFilter struct {
 	Topic             string
 	QoS               uint8
-	NoLocal           bool // MQTT 5.0: don't forward to own subscriptions
-	RetainAsPublished bool // MQTT 5.0: preserve retain flag
+	NoLocal           bool  // MQTT 5.0: don't forward to own subscriptions
+	RetainAsPublished bool  // MQTT 5.0: preserve retain flag
 	RetainHandling    uint8 // MQTT 5.0: 0=send retained, 1=send if new, 2=don't send
 }
 
@@ -158,18 +158,18 @@ type ConnectFlags struct {
 }
 
 // GetFixedHeader returns the fixed header (satisfies Packet interface).
-func (p *ConnectPacket) GetFixedHeader() *FixedHeader    { return &p.FixedHeader }
-func (p *ConnAckPacket) GetFixedHeader() *FixedHeader    { return &p.FixedHeader }
-func (p *PublishPacket) GetFixedHeader() *FixedHeader    { return &p.FixedHeader }
-func (p *PubAckPacket) GetFixedHeader() *FixedHeader     { return &p.FixedHeader }
-func (p *PubRecPacket) GetFixedHeader() *FixedHeader     { return &p.FixedHeader }
-func (p *PubRelPacket) GetFixedHeader() *FixedHeader     { return &p.FixedHeader }
-func (p *PubCompPacket) GetFixedHeader() *FixedHeader    { return &p.FixedHeader }
-func (p *SubscribePacket) GetFixedHeader() *FixedHeader  { return &p.FixedHeader }
-func (p *SubAckPacket) GetFixedHeader() *FixedHeader     { return &p.FixedHeader }
+func (p *ConnectPacket) GetFixedHeader() *FixedHeader     { return &p.FixedHeader }
+func (p *ConnAckPacket) GetFixedHeader() *FixedHeader     { return &p.FixedHeader }
+func (p *PublishPacket) GetFixedHeader() *FixedHeader     { return &p.FixedHeader }
+func (p *PubAckPacket) GetFixedHeader() *FixedHeader      { return &p.FixedHeader }
+func (p *PubRecPacket) GetFixedHeader() *FixedHeader      { return &p.FixedHeader }
+func (p *PubRelPacket) GetFixedHeader() *FixedHeader      { return &p.FixedHeader }
+func (p *PubCompPacket) GetFixedHeader() *FixedHeader     { return &p.FixedHeader }
+func (p *SubscribePacket) GetFixedHeader() *FixedHeader   { return &p.FixedHeader }
+func (p *SubAckPacket) GetFixedHeader() *FixedHeader      { return &p.FixedHeader }
 func (p *UnsubscribePacket) GetFixedHeader() *FixedHeader { return &p.FixedHeader }
-func (p *UnsubAckPacket) GetFixedHeader() *FixedHeader   { return &p.FixedHeader }
-func (p *PingReqPacket) GetFixedHeader() *FixedHeader    { return &p.FixedHeader }
-func (p *PingRespPacket) GetFixedHeader() *FixedHeader   { return &p.FixedHeader }
-func (p *DisconnectPacket) GetFixedHeader() *FixedHeader { return &p.FixedHeader }
-func (p *AuthPacket) GetFixedHeader() *FixedHeader       { return &p.FixedHeader }
+func (p *UnsubAckPacket) GetFixedHeader() *FixedHeader    { return &p.FixedHeader }
+func (p *PingReqPacket) GetFixedHeader() *FixedHeader     { return &p.FixedHeader }
+func (p *PingRespPacket) GetFixedHeader() *FixedHeader    { return &p.FixedHeader }
+func (p *DisconnectPacket) GetFixedHeader() *FixedHeader  { return &p.FixedHeader }
+func (p *AuthPacket) GetFixedHeader() *FixedHeader        { return &p.FixedHeader }

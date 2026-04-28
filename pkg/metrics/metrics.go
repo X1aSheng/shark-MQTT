@@ -5,7 +5,7 @@ package metrics
 type Metrics interface {
 	// Connection metrics
 	IncConnections()
-	DecConnections()
+	OnDisconnect()
 	IncRejections(reason string)
 	IncAuthFailures()
 

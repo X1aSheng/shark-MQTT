@@ -74,70 +74,70 @@ func TestPersistentSession_CleanSessionFalse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SUBACK failed: %v", err)
 	}
-		if _, ok := pkt.(*protocol.SubAckPacket); !ok {
-			t.Fatalf("expected SUBACK, got %T", pkt)
-		}
-
-		// Verify data delivery: publish from a second connection
-		pubConn := dialTestBroker(t, broker)
-		pubCodec := protocol.NewCodec(0)
-		connectClient(t, pubConn, pubCodec, "clean-session-publisher")
-
-		pubPkt := &protocol.PublishPacket{
-			FixedHeader: protocol.FixedHeader{
-				PacketType: protocol.PacketTypePublish,
-				QoS:        1,
-			},
-			PacketID: 1,
-			Topic:    "persist/test",
-			Payload:  []byte("clean-session-test"),
-		}
-
-		pubConn.SetDeadline(time.Now().Add(2 * time.Second))
-		if err := pubCodec.Encode(pubConn, pubPkt); err != nil {
-			t.Fatalf("PUBLISH failed: %v", err)
-		}
-
-		// Subscriber receives PUBLISH
-		conn.SetDeadline(time.Now().Add(2 * time.Second))
-		pkt, err = codec.Decode(conn)
-		if err != nil {
-			t.Fatalf("subscriber did not receive PUBLISH: %v", err)
-		}
-		delivered, ok := pkt.(*protocol.PublishPacket)
-		if !ok {
-			t.Fatalf("expected PUBLISH, got %T", pkt)
-		}
-		if delivered.Topic != "persist/test" {
-			t.Errorf("expected topic persist/test, got %s", delivered.Topic)
-		}
-		if string(delivered.Payload) != "clean-session-test" {
-			t.Errorf("expected payload 'clean-session-test', got %s", delivered.Payload)
-		}
-		t.Logf("data delivery verified: topic=%s payload=%s", delivered.Topic, delivered.Payload)
-
-		// Send PUBACK back to broker
-		pubAckResp := &protocol.PubAckPacket{
-			FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePubAck},
-			PacketID:    delivered.PacketID,
-		}
-		conn.SetDeadline(time.Now().Add(2 * time.Second))
-		if err := codec.Encode(conn, pubAckResp); err != nil {
-			t.Fatalf("PUBACK failed: %v", err)
-		}
-
-		// Publisher receives PUBACK
-		pubConn.SetDeadline(time.Now().Add(2 * time.Second))
-		pkt, err = pubCodec.Decode(pubConn)
-		if err != nil {
-			t.Fatalf("publisher did not receive PUBACK: %v", err)
-		}
-		if pubAck, ok := pkt.(*protocol.PubAckPacket); !ok {
-			t.Fatalf("expected PUBACK, got %T", pkt)
-		} else if pubAck.PacketID != 1 {
-			t.Errorf("expected PUBACK packetID 1, got %d", pubAck.PacketID)
-		}
+	if _, ok := pkt.(*protocol.SubAckPacket); !ok {
+		t.Fatalf("expected SUBACK, got %T", pkt)
 	}
+
+	// Verify data delivery: publish from a second connection
+	pubConn := dialTestBroker(t, broker)
+	pubCodec := protocol.NewCodec(0)
+	connectClient(t, pubConn, pubCodec, "clean-session-publisher")
+
+	pubPkt := &protocol.PublishPacket{
+		FixedHeader: protocol.FixedHeader{
+			PacketType: protocol.PacketTypePublish,
+			QoS:        1,
+		},
+		PacketID: 1,
+		Topic:    "persist/test",
+		Payload:  []byte("clean-session-test"),
+	}
+
+	pubConn.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := pubCodec.Encode(pubConn, pubPkt); err != nil {
+		t.Fatalf("PUBLISH failed: %v", err)
+	}
+
+	// Subscriber receives PUBLISH
+	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	pkt, err = codec.Decode(conn)
+	if err != nil {
+		t.Fatalf("subscriber did not receive PUBLISH: %v", err)
+	}
+	delivered, ok := pkt.(*protocol.PublishPacket)
+	if !ok {
+		t.Fatalf("expected PUBLISH, got %T", pkt)
+	}
+	if delivered.Topic != "persist/test" {
+		t.Errorf("expected topic persist/test, got %s", delivered.Topic)
+	}
+	if string(delivered.Payload) != "clean-session-test" {
+		t.Errorf("expected payload 'clean-session-test', got %s", delivered.Payload)
+	}
+	t.Logf("data delivery verified: topic=%s payload=%s", delivered.Topic, delivered.Payload)
+
+	// Send PUBACK back to broker
+	pubAckResp := &protocol.PubAckPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePubAck},
+		PacketID:    delivered.PacketID,
+	}
+	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := codec.Encode(conn, pubAckResp); err != nil {
+		t.Fatalf("PUBACK failed: %v", err)
+	}
+
+	// Publisher receives PUBACK
+	pubConn.SetDeadline(time.Now().Add(2 * time.Second))
+	pkt, err = pubCodec.Decode(pubConn)
+	if err != nil {
+		t.Fatalf("publisher did not receive PUBACK: %v", err)
+	}
+	if pubAck, ok := pkt.(*protocol.PubAckPacket); !ok {
+		t.Fatalf("expected PUBACK, got %T", pkt)
+	} else if pubAck.PacketID != 1 {
+		t.Errorf("expected PUBACK packetID 1, got %d", pubAck.PacketID)
+	}
+}
 
 // TestPersistentSession_Reconnect verifies that a client can reconnect
 // with the same clientID and cleanSession=false.
@@ -204,66 +204,66 @@ func TestPersistentSession_Reconnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SUBACK failed: %v", err)
 	}
-		if _, ok := pkt.(*protocol.SubAckPacket); !ok {
-			t.Fatalf("expected SUBACK, got %T", pkt)
-		}
+	if _, ok := pkt.(*protocol.SubAckPacket); !ok {
+		t.Fatalf("expected SUBACK, got %T", pkt)
+	}
 
-		// Verify data delivery on first connection
-		pubConn1 := dialTestBroker(t, broker)
-		pubCodec1 := protocol.NewCodec(0)
-		connectClient(t, pubConn1, pubCodec1, "reconnect-pub1")
+	// Verify data delivery on first connection
+	pubConn1 := dialTestBroker(t, broker)
+	pubCodec1 := protocol.NewCodec(0)
+	connectClient(t, pubConn1, pubCodec1, "reconnect-pub1")
 
-		pubPkt1 := &protocol.PublishPacket{
-			FixedHeader: protocol.FixedHeader{
-				PacketType: protocol.PacketTypePublish,
-				QoS:        1,
-			},
-			PacketID: 1,
-			Topic:    "persist/test",
-			Payload:  []byte("reconnect-msg-1"),
-		}
+	pubPkt1 := &protocol.PublishPacket{
+		FixedHeader: protocol.FixedHeader{
+			PacketType: protocol.PacketTypePublish,
+			QoS:        1,
+		},
+		PacketID: 1,
+		Topic:    "persist/test",
+		Payload:  []byte("reconnect-msg-1"),
+	}
 
-		pubConn1.SetDeadline(time.Now().Add(2 * time.Second))
-		if err := pubCodec1.Encode(pubConn1, pubPkt1); err != nil {
-			t.Fatalf("PUBLISH failed: %v", err)
-		}
+	pubConn1.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := pubCodec1.Encode(pubConn1, pubPkt1); err != nil {
+		t.Fatalf("PUBLISH failed: %v", err)
+	}
 
-		conn1.SetDeadline(time.Now().Add(2 * time.Second))
-		pkt, err = codec1.Decode(conn1)
-		if err != nil {
-			t.Fatalf("subscriber did not receive PUBLISH: %v", err)
-		}
-		delivered1, ok := pkt.(*protocol.PublishPacket)
-		if !ok {
-			t.Fatalf("expected PUBLISH, got %T", pkt)
-		}
-		if delivered1.Topic != "persist/test" {
-			t.Errorf("expected topic persist/test, got %s", delivered1.Topic)
-		}
-		if string(delivered1.Payload) != "reconnect-msg-1" {
-			t.Errorf("expected payload reconnect-msg-1, got %s", delivered1.Payload)
-		}
-		t.Logf("conn1 data verified: topic=%s payload=%s", delivered1.Topic, delivered1.Payload)
+	conn1.SetDeadline(time.Now().Add(2 * time.Second))
+	pkt, err = codec1.Decode(conn1)
+	if err != nil {
+		t.Fatalf("subscriber did not receive PUBLISH: %v", err)
+	}
+	delivered1, ok := pkt.(*protocol.PublishPacket)
+	if !ok {
+		t.Fatalf("expected PUBLISH, got %T", pkt)
+	}
+	if delivered1.Topic != "persist/test" {
+		t.Errorf("expected topic persist/test, got %s", delivered1.Topic)
+	}
+	if string(delivered1.Payload) != "reconnect-msg-1" {
+		t.Errorf("expected payload reconnect-msg-1, got %s", delivered1.Payload)
+	}
+	t.Logf("conn1 data verified: topic=%s payload=%s", delivered1.Topic, delivered1.Payload)
 
-		// Send PUBACK
-		pubAckResp1 := &protocol.PubAckPacket{
-			FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePubAck},
-			PacketID:    delivered1.PacketID,
-		}
-		conn1.SetDeadline(time.Now().Add(2 * time.Second))
-		if err := codec1.Encode(conn1, pubAckResp1); err != nil {
-			t.Fatalf("PUBACK failed: %v", err)
-		}
+	// Send PUBACK
+	pubAckResp1 := &protocol.PubAckPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePubAck},
+		PacketID:    delivered1.PacketID,
+	}
+	conn1.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := codec1.Encode(conn1, pubAckResp1); err != nil {
+		t.Fatalf("PUBACK failed: %v", err)
+	}
 
-		pubConn1.SetDeadline(time.Now().Add(2 * time.Second))
-		pkt, err = pubCodec1.Decode(pubConn1)
-		if err != nil {
-			t.Fatalf("publisher PUBACK: %v", err)
-		}
-		if _, ok := pkt.(*protocol.PubAckPacket); !ok {
-			t.Fatalf("expected PUBACK, got %T", pkt)
-		}
-		conn1.Close()
+	pubConn1.SetDeadline(time.Now().Add(2 * time.Second))
+	pkt, err = pubCodec1.Decode(pubConn1)
+	if err != nil {
+		t.Fatalf("publisher PUBACK: %v", err)
+	}
+	if _, ok := pkt.(*protocol.PubAckPacket); !ok {
+		t.Fatalf("expected PUBACK, got %T", pkt)
+	}
+	conn1.Close()
 
 	// Allow broker to process disconnect
 	time.Sleep(100 * time.Millisecond)
@@ -300,92 +300,92 @@ func TestPersistentSession_Reconnect(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected CONNACK, got %T", pkt2)
 	}
-		if ca2.ReasonCode != protocol.ConnAckAccepted {
-			t.Fatalf("expected second CONNACK accepted, got reason %d", ca2.ReasonCode)
-		}
-
-		// Subscribe on second connection and verify data delivery
-		subPkt2 := &protocol.SubscribePacket{
-			FixedHeader: protocol.FixedHeader{
-				PacketType: protocol.PacketTypeSubscribe,
-				QoS:        1,
-			},
-			PacketID: 1,
-			Topics: []protocol.TopicFilter{
-				{Topic: "persist/test", QoS: 1},
-			},
-		}
-
-		conn2.SetDeadline(time.Now().Add(2 * time.Second))
-		if err := codec2.Encode(conn2, subPkt2); err != nil {
-			t.Fatalf("SUBSCRIBE on conn2 failed: %v", err)
-		}
-
-		conn2.SetDeadline(time.Now().Add(2 * time.Second))
-		pkt2, err = codec2.Decode(conn2)
-		if err != nil {
-			t.Fatalf("SUBACK on conn2 failed: %v", err)
-		}
-		if _, ok := pkt2.(*protocol.SubAckPacket); !ok {
-			t.Fatalf("expected SUBACK, got %T", pkt2)
-		}
-
-		// Publish and verify data delivery on conn2
-		pubConn2 := dialTestBroker(t, broker)
-		pubCodec2 := protocol.NewCodec(0)
-		connectClient(t, pubConn2, pubCodec2, "reconnect-pub2")
-
-		pubPkt2 := &protocol.PublishPacket{
-			FixedHeader: protocol.FixedHeader{
-				PacketType: protocol.PacketTypePublish,
-				QoS:        1,
-			},
-			PacketID: 1,
-			Topic:    "persist/test",
-			Payload:  []byte("reconnect-msg-2"),
-		}
-
-		pubConn2.SetDeadline(time.Now().Add(2 * time.Second))
-		if err := pubCodec2.Encode(pubConn2, pubPkt2); err != nil {
-			t.Fatalf("PUBLISH failed: %v", err)
-		}
-
-		conn2.SetDeadline(time.Now().Add(2 * time.Second))
-		pkt2, err = codec2.Decode(conn2)
-		if err != nil {
-			t.Fatalf("conn2 did not receive PUBLISH: %v", err)
-		}
-		delivered2, ok := pkt2.(*protocol.PublishPacket)
-		if !ok {
-			t.Fatalf("expected PUBLISH, got %T", pkt2)
-		}
-		if delivered2.Topic != "persist/test" {
-			t.Errorf("expected topic persist/test, got %s", delivered2.Topic)
-		}
-		if string(delivered2.Payload) != "reconnect-msg-2" {
-			t.Errorf("expected payload reconnect-msg-2, got %s", delivered2.Payload)
-		}
-		t.Logf("conn2 data verified: topic=%s payload=%s", delivered2.Topic, delivered2.Payload)
-
-		// Send PUBACK on conn2
-		pubAckResp2 := &protocol.PubAckPacket{
-			FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePubAck},
-			PacketID:    delivered2.PacketID,
-		}
-		conn2.SetDeadline(time.Now().Add(2 * time.Second))
-		if err := codec2.Encode(conn2, pubAckResp2); err != nil {
-			t.Fatalf("PUBACK failed: %v", err)
-		}
-
-		pubConn2.SetDeadline(time.Now().Add(2 * time.Second))
-		pkt2, err = pubCodec2.Decode(pubConn2)
-		if err != nil {
-			t.Fatalf("publisher PUBACK: %v", err)
-		}
-		if _, ok := pkt2.(*protocol.PubAckPacket); !ok {
-			t.Fatalf("expected PUBACK, got %T", pkt2)
-		}
+	if ca2.ReasonCode != protocol.ConnAckAccepted {
+		t.Fatalf("expected second CONNACK accepted, got reason %d", ca2.ReasonCode)
 	}
+
+	// Subscribe on second connection and verify data delivery
+	subPkt2 := &protocol.SubscribePacket{
+		FixedHeader: protocol.FixedHeader{
+			PacketType: protocol.PacketTypeSubscribe,
+			QoS:        1,
+		},
+		PacketID: 1,
+		Topics: []protocol.TopicFilter{
+			{Topic: "persist/test", QoS: 1},
+		},
+	}
+
+	conn2.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := codec2.Encode(conn2, subPkt2); err != nil {
+		t.Fatalf("SUBSCRIBE on conn2 failed: %v", err)
+	}
+
+	conn2.SetDeadline(time.Now().Add(2 * time.Second))
+	pkt2, err = codec2.Decode(conn2)
+	if err != nil {
+		t.Fatalf("SUBACK on conn2 failed: %v", err)
+	}
+	if _, ok := pkt2.(*protocol.SubAckPacket); !ok {
+		t.Fatalf("expected SUBACK, got %T", pkt2)
+	}
+
+	// Publish and verify data delivery on conn2
+	pubConn2 := dialTestBroker(t, broker)
+	pubCodec2 := protocol.NewCodec(0)
+	connectClient(t, pubConn2, pubCodec2, "reconnect-pub2")
+
+	pubPkt2 := &protocol.PublishPacket{
+		FixedHeader: protocol.FixedHeader{
+			PacketType: protocol.PacketTypePublish,
+			QoS:        1,
+		},
+		PacketID: 1,
+		Topic:    "persist/test",
+		Payload:  []byte("reconnect-msg-2"),
+	}
+
+	pubConn2.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := pubCodec2.Encode(pubConn2, pubPkt2); err != nil {
+		t.Fatalf("PUBLISH failed: %v", err)
+	}
+
+	conn2.SetDeadline(time.Now().Add(2 * time.Second))
+	pkt2, err = codec2.Decode(conn2)
+	if err != nil {
+		t.Fatalf("conn2 did not receive PUBLISH: %v", err)
+	}
+	delivered2, ok := pkt2.(*protocol.PublishPacket)
+	if !ok {
+		t.Fatalf("expected PUBLISH, got %T", pkt2)
+	}
+	if delivered2.Topic != "persist/test" {
+		t.Errorf("expected topic persist/test, got %s", delivered2.Topic)
+	}
+	if string(delivered2.Payload) != "reconnect-msg-2" {
+		t.Errorf("expected payload reconnect-msg-2, got %s", delivered2.Payload)
+	}
+	t.Logf("conn2 data verified: topic=%s payload=%s", delivered2.Topic, delivered2.Payload)
+
+	// Send PUBACK on conn2
+	pubAckResp2 := &protocol.PubAckPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePubAck},
+		PacketID:    delivered2.PacketID,
+	}
+	conn2.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := codec2.Encode(conn2, pubAckResp2); err != nil {
+		t.Fatalf("PUBACK failed: %v", err)
+	}
+
+	pubConn2.SetDeadline(time.Now().Add(2 * time.Second))
+	pkt2, err = pubCodec2.Decode(pubConn2)
+	if err != nil {
+		t.Fatalf("publisher PUBACK: %v", err)
+	}
+	if _, ok := pkt2.(*protocol.PubAckPacket); !ok {
+		t.Fatalf("expected PUBACK, got %T", pkt2)
+	}
+}
 
 // TestPersistentSession_OfflinePublish verifies that QoS 1 messages
 // published while a persistent client is offline are not delivered

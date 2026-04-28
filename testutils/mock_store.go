@@ -215,4 +215,3 @@ func (s *MockRetainedStore) MatchRetained(ctx context.Context, pattern string) (
 	}
 	return matched, nil
 }
-

@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"sync/atomic"
 
-	"github.com/dgraph-io/badger/v4"
 	"github.com/X1aSheng/shark-mqtt/store"
+	"github.com/dgraph-io/badger/v4"
 )
 
 // Ensure interface compliance.

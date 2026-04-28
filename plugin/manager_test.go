@@ -9,11 +9,11 @@ import (
 
 // MockPlugin is a test plugin implementation
 type MockPlugin struct {
-	name         string
-	hooks        []Hook
-	executeFunc  func(ctx context.Context, hook Hook, data *Context) error
-	callCount    atomic.Int32
-	lastData     *Context
+	name        string
+	hooks       []Hook
+	executeFunc func(ctx context.Context, hook Hook, data *Context) error
+	callCount   atomic.Int32
+	lastData    *Context
 }
 
 func (p *MockPlugin) Name() string {

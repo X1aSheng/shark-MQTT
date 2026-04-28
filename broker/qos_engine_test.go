@@ -274,8 +274,8 @@ func TestQoSEngine_InflightCount(t *testing.T) {
 			wantCount: 0,
 		},
 		{
-			name: "single message",
-			setup: func() { q.TrackQoS1("client1", 1, "t", nil, false) },
+			name:      "single message",
+			setup:     func() { q.TrackQoS1("client1", 1, "t", nil, false) },
 			clientID:  "client1",
 			wantCount: 1,
 		},
@@ -290,8 +290,8 @@ func TestQoSEngine_InflightCount(t *testing.T) {
 			wantCount: 3,
 		},
 		{
-			name: "different client",
-			setup: func() { q.TrackQoS1("client1", 1, "t", nil, false) },
+			name:      "different client",
+			setup:     func() { q.TrackQoS1("client1", 1, "t", nil, false) },
 			clientID:  "other",
 			wantCount: 0,
 		},
@@ -330,9 +330,9 @@ func TestQoSEngine_Retry_Triggered(t *testing.T) {
 
 	var mu sync.Mutex
 	q.SetCallbacks(
-		nil,   // sendPubAck: broker acknowledges publisher directly, not via retry
-		nil,   // sendPubRel
-		nil,   // sendPubComp
+		nil, // sendPubAck: broker acknowledges publisher directly, not via retry
+		nil, // sendPubRel
+		nil, // sendPubComp
 		func(clientID string, packetID uint16, topic string, payload []byte, qos uint8, retain bool) error {
 			mu.Lock()
 			republishCalled = true

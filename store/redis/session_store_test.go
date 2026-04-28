@@ -181,8 +181,8 @@ func TestSessionStore_EmptySubscriptions(t *testing.T) {
 	})
 
 	data := &store.SessionData{
-		ClientID:     "test-no-subs",
-		IsClean:      true,
+		ClientID:      "test-no-subs",
+		IsClean:       true,
 		Subscriptions: []store.Subscription{},
 	}
 
@@ -290,8 +290,8 @@ func BenchmarkSessionStore_Get(b *testing.B) {
 
 	// Pre-populate
 	data := &store.SessionData{
-		ClientID:     "bench-get",
-		IsClean:      false,
+		ClientID:      "bench-get",
+		IsClean:       false,
 		Subscriptions: []store.Subscription{{Topic: "bench/topic", QoS: 1}},
 	}
 	for i := 0; i < 1000; i++ {
