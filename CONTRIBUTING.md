@@ -19,7 +19,7 @@ Thank you for your interest in contributing to Shark-MQTT! This document provide
 
 ### Prerequisites
 
-- **Go 1.22+** - Required for building and running tests
+- **Go 1.26+** - Required for building and running tests
 - **Git** - For version control
 - **Make** - For running build tasks (optional but recommended)
 - **Docker** - For integration tests with Redis
@@ -43,7 +43,7 @@ Thank you for your interest in contributing to Shark-MQTT! This document provide
    go test -race ./...
 
    # Integration tests (requires Redis running)
-   go test -race -tags=integration ./tests/integration/...
+   go test -race ./tests/integration/...
 
    # Or use Make
    make test
@@ -229,7 +229,7 @@ Integration tests require Redis running locally:
 docker run -d -p 6379:6379 redis:7-alpine
 
 # Run integration tests
-go test -race -tags=integration ./tests/integration/...
+go test -race ./tests/integration/...
 ```
 
 ### Benchmark Tests

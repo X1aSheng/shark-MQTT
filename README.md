@@ -285,10 +285,10 @@ Full results: `make bench` or see `docs/performance.md`.
 
 | Type | Count | Status |
 |------|-------|--------|
-| Unit Tests | 224 | All pass |
+| Unit Tests | 207 | All pass |
 | Integration Tests | 47 | All pass |
-| Benchmarks | 57 | All pass |
-| **Total** | **328** | **0 failures** |
+| Benchmarks | 69 | All pass |
+| **Total** | **323** | **0 failures** |
 
 > 13 Redis tests skipped when `MQTT_REDIS_ADDR` is not set.
 
@@ -309,74 +309,57 @@ All integration tests with subscriptions verify **end-to-end data delivery**: pu
 
 ### Running Tests
 
-All test runs automatically save timestamped logs to the `logs/` directory.
+All test runs automatically save timestamped logs to the `logs/` directory in JSON (raw `go test -json` output) and `.log` (parsed report) formats.
 
 #### Cross-Platform Test Scripts
 
-Three scripts provide identical functionality across platforms. Every target produces a log file named `logs/{YYYYMMDD_HHmmss}_{type}.log`.
+A single Go-based runner provides identical functionality across all platforms, with thin shell wrappers for convenience.
 
 | Platform | Script |
 |----------|--------|
-| Linux / macOS / Git Bash / WSL | `./scripts/test.sh <target>` |
-| Windows CMD | `scripts\test.bat <target>` |
-| Windows PowerShell | `.\scripts\test.ps1 <target>` |
+| Any (Go runner) | `go run scripts/run_tests.go -mode <mode>` |
+| Linux / macOS / Git Bash / WSL | `bash scripts/run_tests.sh [--unit\|--integration\|--benchmark\|--cover\|--all]` |
+| Windows CMD | `scripts\run_tests.bat [--unit\|--integration\|--benchmark\|--cover\|--all]` |
 
-**Targets:**
+**Modes:**
 
-| Target | Description | Log File |
-|--------|-------------|----------|
-| `all` | Unit + integration + benchmark with summary | Per-package unit + integration + benchmark + summary |
-| `unit` | Run all unit tests | `{ts}_unit.log` |
-| `integration` | Run integration tests | `{ts}_integration.log` |
-| `bench` | Run benchmarks (set `BENCHTIME`, default 1s) | `{ts}_benchmark.log` |
-| `quick` | Quick benchmark (500ms) | `{ts}_benchmark.log` |
-| `race` | Unit tests with race detector | `{ts}_race.log` |
-| `coverage` | Generate coverage report | `{ts}_coverage.log` |
-| `redis` | Redis store tests (set `MQTT_REDIS_ADDR`) | `{ts}_redis.log` |
-| `ci` | Full CI pipeline (vet + race + build) | `{ts}_ci.log` |
+| Mode | Description | Log Files |
+|------|-------------|-----------|
+| `all` (default) | Unit + integration + benchmark | `{ts}_unit.{json,log}`, `{ts}_integration.{json,log}`, `{ts}_benchmark.{json,log}` |
+| `unit` | Run all unit tests | `{ts}_unit.{json,log}` |
+| `integration` | Run integration tests | `{ts}_integration.{json,log}` |
+| `benchmark` | Run benchmarks | `{ts}_benchmark.{json,log}` |
+| `cover` | Generate coverage report | `{ts}_cover.log` |
 
 ```bash
 # Run all tests (default)
-./scripts/test.sh
+bash scripts/run_tests.sh
 
-# Individual targets
-./scripts/test.sh unit
-./scripts/test.sh integration
-./scripts/test.sh bench
-./scripts/test.sh race
-./scripts/test.sh coverage
-./scripts/test.sh ci
+# Individual modes
+bash scripts/run_tests.sh --unit
+bash scripts/run_tests.sh --integration
+bash scripts/run_tests.sh --benchmark
+bash scripts/run_tests.sh --cover
 
 # Windows CMD
-scripts\test.bat all
-scripts\test.bat unit
+scripts\run_tests.bat --all
+scripts\run_tests.bat --unit
 
-# Windows PowerShell
-.\scripts\test.ps1 all
-.\scripts\test.ps1 unit
-
-# With custom benchmark duration
-BENCHTIME=5s ./scripts/test.sh bench
-
-# Redis tests
-MQTT_REDIS_ADDR=localhost:6379 ./scripts/test.sh redis
+# Or use the Go runner directly (any platform)
+go run scripts/run_tests.go -mode unit
+go run scripts/run_tests.go -mode cover -timeout 10m
 ```
 
-The `all` target produces per-package unit logs and a summary:
+The `all` mode produces:
 
 ```
 logs/
-├── 20260426_194022_unit_api.log
-├── 20260426_194022_unit_broker.log
-├── 20260426_194022_unit_client.log
-├── 20260426_194022_unit_config.log
-├── 20260426_194022_unit_errs.log
-├── 20260426_194022_unit_pkg.log
-├── 20260426_194022_unit_plugin.log
-├── 20260426_194022_unit_protocol.log
-├── 20260426_194022_unit_store.log
-├── 20260426_194035_integration.log
-├── 20260426_194042_benchmark.log
+├── 20260428_190627_unit.json
+├── 20260428_190627_unit.log
+├── 20260428_190635_integration.json
+├── 20260428_190635_integration.log
+├── 20260428_190642_benchmark.json
+└── 20260428_190642_benchmark.log
 └── 20260426_194205_summary.log
 ```
 
@@ -443,7 +426,7 @@ All critical and high-severity issues resolved. See [docs/IMPROVEMENT_ROADMAP.md
 - TLS support
 - Health endpoints (`/healthz`, `/readyz`)
 - Config validation
-- Comprehensive test suite (328 tests)
+- Comprehensive test suite (323 tests)
 
 ### Future Improvements
 

@@ -287,8 +287,8 @@ Implement the `broker.Authorizer` interface for topic-level access control:
 
 ```go
 type Authorizer interface {
-    CanPublish(ctx context.Context, clientID, topic string) bool
-    CanSubscribe(ctx context.Context, clientID, topic string) bool
+    CanPublish(ctx context.Context, username, topic string) bool
+    CanSubscribe(ctx context.Context, username, topic string) bool
 }
 ```
 
@@ -388,8 +388,8 @@ type Metrics interface {
     DecConnections()
     IncRejections(reason string)
     IncAuthFailures()
-    IncMessagesPublished(topic string, qos uint8)
-    IncMessagesDelivered(clientID string, qos uint8)
+    IncMessagesPublished(qos uint8)
+    IncMessagesDelivered(qos uint8)
     IncMessagesDropped(reason string)
     IncInflight(clientID string)
     DecInflight(clientID string)

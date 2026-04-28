@@ -31,11 +31,12 @@ shark-mqtt/
 ├── plugin/           # Plugin system (hook-based architecture)
 ├── client/           # MQTT client implementation
 ├── errs/             # Centralized error definitions
-├── test/             # Integration and benchmark tests
+├── tests/            # Integration and benchmark tests
 │   ├── integration/  # End-to-end MQTT workflow tests
 │   └── bench/        # Performance benchmarks
 ├── examples/         # Usage examples
 ├── cmd/              # Command-line tools
+├── scripts/          # Test runner and build scripts
 ├── testutils/        # Test utilities (mock implementations)
 └── docs/             # Documentation
 ```
@@ -216,8 +217,8 @@ type Authenticator interface {
 **Authorizer interface:**
 ```go
 type Authorizer interface {
-    CanPublish(ctx context.Context, clientID, topic string) bool
-    CanSubscribe(ctx context.Context, clientID, topic string) bool
+    CanPublish(ctx context.Context, username, topic string) bool
+    CanSubscribe(ctx context.Context, username, topic string) bool
 }
 ```
 
@@ -275,11 +276,11 @@ func (a *MyAuth) Authenticate(ctx context.Context, clientID, username, password 
 
 2. **Optionally implement Authorizer** for ACL:
 ```go
-func (a *MyAuth) CanPublish(ctx context.Context, clientID, topic string) bool {
+func (a *MyAuth) CanPublish(ctx context.Context, username, topic string) bool {
     return true
 }
 
-func (a *MyAuth) CanSubscribe(ctx context.Context, clientID, topic string) bool {
+func (a *MyAuth) CanSubscribe(ctx context.Context, username, topic string) bool {
     return true
 }
 ```
