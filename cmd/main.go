@@ -19,12 +19,14 @@ func main() {
 	// Parse command-line flags
 	cfg := config.DefaultConfig()
 
+	var allowAllAuth bool
 	flag.StringVar(&cfg.ListenAddr, "addr", cfg.ListenAddr, "listen address (host:port)")
 	flag.IntVar(&cfg.MaxConnections, "max-conn", cfg.MaxConnections, "maximum number of connections (0 = unlimited)")
 	flag.BoolVar(&cfg.TLSEnabled, "tls", cfg.TLSEnabled, "enable TLS")
 	flag.StringVar(&cfg.TLSCertFile, "tls-cert", cfg.TLSCertFile, "TLS certificate file path")
 	flag.StringVar(&cfg.TLSKeyFile, "tls-key", cfg.TLSKeyFile, "TLS private key file path")
 	flag.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "log level (debug/info/warn/error)")
+	flag.BoolVar(&allowAllAuth, "allow-all", false, "allow all connections without authentication (DEVELOPMENT ONLY)")
 	flag.Parse()
 
 	// Setup signal handling
@@ -43,12 +45,17 @@ func main() {
 	fmt.Println("       |_|")
 	fmt.Printf("Shark-MQTT Broker v1.0.0 - listening on %s\n\n", cfg.ListenAddr)
 
-	fmt.Fprintln(os.Stderr, "WARNING: Using AllowAllAuth — all connections will be accepted. Do NOT use in production.")
+	var brokerOpts []api.Option
+	brokerOpts = append(brokerOpts, api.WithConfig(cfg))
 
-	b := api.NewBroker(
-		api.WithConfig(cfg),
-		api.WithAuth(broker.AllowAllAuth{}),
-	) //#nosec G104 — AllowAllAuth is intentional for development
+	if allowAllAuth {
+		fmt.Fprintln(os.Stderr, "WARNING: --allow-all enabled — all connections accepted without authentication. Do NOT use in production.")
+		brokerOpts = append(brokerOpts, api.WithAuth(broker.AllowAllAuth{}))
+	} else {
+		fmt.Println("Authentication required. Use --allow-all for development mode (no auth).")
+	}
+
+	b := api.NewBroker(brokerOpts...)
 
 	// Start the broker
 	if err := b.Start(); err != nil {
