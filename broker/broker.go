@@ -187,6 +187,23 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 	sess := b.sessions.CreateSession(connectPkt.ClientID, connectPkt, isResuming)
 	clientID := connectPkt.ClientID
 
+	// Set session expiry interval (MQTT 5.0 §3.1.2.11.2).
+	// Use the smaller of client-requested and server-configured values.
+	if connectPkt.Flags.CleanSession {
+		sess.ExpiryInterval = 0
+	} else {
+		serverMax := uint32(b.opts.sessionExpiry.Seconds())
+		clientVal := uint32(0)
+		if connectPkt.Properties != nil && connectPkt.Properties.SessionExpiryInterval != nil {
+			clientVal = *connectPkt.Properties.SessionExpiryInterval
+		}
+		if clientVal > 0 && clientVal < serverMax {
+			sess.ExpiryInterval = clientVal
+		} else {
+			sess.ExpiryInterval = serverMax
+		}
+	}
+
 	// Register client connection — kick previous connection if one exists.
 	// The old readLoop will call disconnect() asynchronously; it must not
 	// remove the new connection from the map, so disconnect() checks conn
@@ -218,7 +235,7 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 	b.metrics.IncConnections()
 
 	// Send CONNACK
-	b.sendConnAck(clientID, protocol.ConnAckAccepted, isResuming)
+	b.sendConnAck(clientID, protocol.ConnAckAccepted, isResuming, sess)
 
 	// Set initial keep-alive deadline so idle clients are detected
 	if sess.KeepAlive > 0 {
@@ -597,7 +614,7 @@ func (b *Broker) writePacket(clientID string, pkt protocol.Packet) {
 	}
 }
 
-func (b *Broker) sendConnAck(clientID string, reasonCode byte, sessionPresent bool) {
+func (b *Broker) sendConnAck(clientID string, reasonCode byte, sessionPresent bool, sess *Session) {
 	b.mu.RLock()
 	cs, ok := b.connections[clientID]
 	b.mu.RUnlock()
@@ -611,9 +628,45 @@ func (b *Broker) sendConnAck(clientID string, reasonCode byte, sessionPresent bo
 		ReasonCode:     reasonCode,
 		SessionPresent: sessionPresent,
 	}
+
+	// MQTT 5.0: advertise server capabilities
+	if sess != nil && sess.ProtocolVer == protocol.Version50 {
+		pkt.Properties = b.buildConnAckProperties(sess)
+	}
+
 	cs.wmu.Lock()
 	cs.codec.Encode(cs.conn, pkt)
 	cs.wmu.Unlock()
+}
+
+// buildConnAckProperties builds MQTT 5.0 CONNACK capability properties.
+func (b *Broker) buildConnAckProperties(sess *Session) *protocol.Properties {
+	retainAvailable := byte(0)
+	if b.retainedStore != nil {
+		retainAvailable = 1
+	}
+	wildcardAvailable := byte(1)
+	subIDAvailable := byte(0)
+	sharedSubAvailable := byte(0)
+
+	receiveMax := uint16(b.opts.maxInflight)
+	if receiveMax == 0 {
+		receiveMax = 65535
+	}
+	maxQoS := byte(2)
+	maxPktSize := uint32(b.opts.maxPacketSize)
+
+	props := &protocol.Properties{
+		SessionExpiryInterval: &sess.ExpiryInterval,
+		ReceiveMaximum:        &receiveMax,
+		MaximumQoS:            &maxQoS,
+		RetainAvailable:       &retainAvailable,
+		MaximumPacketSize:     &maxPktSize,
+		WildcardSubAvailable:  &wildcardAvailable,
+		SubIDAvailable:        &subIDAvailable,
+		SharedSubAvailable:    &sharedSubAvailable,
+	}
+	return props
 }
 
 func (b *Broker) sendConnAckRaw(conn net.Conn, codec *protocol.Codec, reasonCode byte, sessionPresent bool) {

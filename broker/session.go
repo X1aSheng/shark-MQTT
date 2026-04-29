@@ -26,6 +26,10 @@ type Session struct {
 	TopicAliasMax uint16
 	mu            sync.RWMutex
 
+	// ExpiryInterval is the session expiry interval in seconds (MQTT 5.0 §3.1.2.11.2).
+	// Server caps this at its configured max. 0 = session expires immediately on disconnect.
+	ExpiryInterval uint32
+
 	// State management
 	state       State
 	closeReason CloseReason
@@ -255,11 +259,12 @@ func (s *Session) Save(ctx context.Context, sessionStore store.SessionStore) err
 	defer s.mu.RUnlock()
 
 	data := &store.SessionData{
-		ClientID:    s.ClientID,
-		Username:    s.Username,
-		IsClean:     s.IsClean,
-		KeepAlive:   s.KeepAlive,
-		ProtocolVer: s.ProtocolVer,
+		ClientID:       s.ClientID,
+		Username:       s.Username,
+		IsClean:        s.IsClean,
+		KeepAlive:      s.KeepAlive,
+		ProtocolVer:    s.ProtocolVer,
+		ExpiryInterval: s.ExpiryInterval,
 	}
 
 	subscriptions := make([]store.Subscription, 0, len(s.Subscriptions))
@@ -297,15 +302,16 @@ func (m *Manager) Restore(ctx context.Context, clientID string) (*Session, error
 	}
 
 	sess := &Session{
-		ClientID:      data.ClientID,
-		Username:      data.Username,
-		IsClean:       data.IsClean,
-		KeepAlive:     data.KeepAlive,
-		ProtocolVer:   data.ProtocolVer,
-		Subscriptions: make(map[string]uint8),
-		Inflight:      make(map[uint16]*InflightMsg),
-		packetIDSeq:   1,
-		ReceiveMax:    65535,
+		ClientID:       data.ClientID,
+		Username:       data.Username,
+		IsClean:        data.IsClean,
+		KeepAlive:      data.KeepAlive,
+		ProtocolVer:    data.ProtocolVer,
+		ExpiryInterval: data.ExpiryInterval,
+		Subscriptions:  make(map[string]uint8),
+		Inflight:       make(map[uint16]*InflightMsg),
+		packetIDSeq:    1,
+		ReceiveMax:     65535,
 	}
 
 	for _, sub := range data.Subscriptions {

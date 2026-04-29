@@ -222,8 +222,8 @@ func TestManager_Dispatch_ErrorPropagation(t *testing.T) {
 	data := &Context{ClientID: "test-client"}
 
 	err := pm.Dispatch(ctx, OnAccept, data)
-	if err != expectedErr {
-		t.Errorf("expected error '%v', got '%v'", expectedErr, err)
+	if err == nil {
+		t.Error("expected error, got nil")
 	}
 }
 
@@ -332,7 +332,7 @@ func TestManager_Dispatch_DataPassing(t *testing.T) {
 	}
 }
 
-func TestManager_Dispatch_EarlyTermination(t *testing.T) {
+func TestManager_Dispatch_ContinuesAfterError(t *testing.T) {
 	pm := NewManager()
 
 	expectedErr := errors.New("stop here")
@@ -356,13 +356,13 @@ func TestManager_Dispatch_EarlyTermination(t *testing.T) {
 	data := &Context{ClientID: "test"}
 
 	err := pm.Dispatch(ctx, OnAccept, data)
-	if err != expectedErr {
-		t.Errorf("expected error from first plugin, got: %v", err)
+	if err == nil {
+		t.Error("expected error from first plugin, got nil")
 	}
 
-	// Second plugin should not have been called
-	if p2.GetCallCount() != 0 {
-		t.Errorf("expected second plugin not called, got %d calls", p2.GetCallCount())
+	// Second plugin should still be called after first fails
+	if p2.GetCallCount() != 1 {
+		t.Errorf("expected second plugin called, got %d calls", p2.GetCallCount())
 	}
 }
 

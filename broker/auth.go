@@ -7,13 +7,15 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/X1aSheng/shark-mqtt/errs"
 	"github.com/X1aSheng/shark-mqtt/protocol"
 )
 
+// Re-export errs sentinels for backward compatibility.
 var (
-	ErrAuthFailed      = errors.New("authentication failed")
+	ErrAuthFailed      = errs.ErrAuthFailed
 	ErrAuthUnavailable = errors.New("authenticator unavailable")
-	ErrUnauthorized    = errors.New("unauthorized")
+	ErrUnauthorized    = errs.ErrNotAuthorized
 )
 
 // Authenticator handles client authentication.
