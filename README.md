@@ -5,19 +5,21 @@ A high-performance MQTT Broker written in Go, supporting both **MQTT 3.1.1** and
 ## Features
 
 - **Protocol Support**: Full MQTT 3.1.1 & 5.0 with 15 packet types, complete property encoding/decoding
-- **QoS Levels**: QoS 0, 1, 2 with automatic retry, inflight tracking, and error handling
-- **Persistent Sessions**: Cross-connection session persistence (`CleanSession=false`) with graceful shutdown drain
-- **Topic Wildcards**: Full `+` and `#` wildcard support with spec-compliant filter validation
-- **Retained Messages**: Store-and-forward last message per topic with wildcard delivery
+- **QoS Levels**: QoS 0, 1, 2 with automatic retry, inflight tracking, and state machine
+- **Persistent Sessions**: Cross-connection session persistence (`CleanSession=false`) with MQTT 5.0 Session Expiry Interval support
+- **Session Takeover**: Safe client ID takeover — new connection kicks old, old cleanup does not corrupt new state
+- **Topic Wildcards**: Full `+` and `#` wildcard support with spec-compliant `$SYS` system topic protection
+- **Retained Messages**: Store-and-forward last message per topic with wildcard delivery and QoS downgrade
 - **Will Messages**: Automatic last-will delivery on abnormal disconnect, with MQTT 5.0 Will Delay Interval support
-- **Pluggable Auth**: Chain authentication — `AllowAll`, `DenyAll`, `StaticAuth` (credentials + ACL), or custom `Authenticator`/`Authorizer` interfaces
-- **Plugin System**: Extensible hooks for `OnAccept`, `OnConnected`, `OnMessage`, `OnClose`
+- **Pluggable Auth**: Chain authentication — `AllowAll`, `DenyAll`, `StaticAuth` (credentials + ACL), `FileAuth` (YAML), `ChainAuth`, or custom `Authenticator`/`Authorizer` interfaces
+- **Plugin System**: Extensible hooks for `OnAccept`, `OnConnected`, `OnMessage`, `OnClose` — continues dispatching after plugin errors
 - **Multiple Storage Backends**: In-memory (default), Redis, BadgerDB for sessions, messages, and retained messages
 - **Connection Limit**: Configurable max connections with pre-auth enforcement
-- **TLS Support**: Secure connections with configurable TLS
+- **TLS Support**: Secure connections with configurable TLS (min TLS 1.2)
+- **MQTT 5.0 CONNACK Capabilities**: Server advertises ReceiveMaximum, MaximumQoS, RetainAvailable, WildcardSubAvailable, etc.
 - **Observability**: Structured logging (`slog`) + Prometheus metrics (17+ methods) + `/healthz`/`/readyz` endpoints
-- **Safe Concurrency**: Per-connection write mutex, atomic ID generation, thread-safe session management
-- **Config Validation**: Built-in `Validate()` for all config fields
+- **Safe Concurrency**: Per-connection write mutex, atomic ID generation, thread-safe session management, conn-identity-checked cleanup
+- **Config Validation**: Built-in `Validate()` for all config fields, YAML/ENV/CLI configuration
 - **shark-socket Integration**: Can run standalone or as a shark-socket server adapter
 
 ## Architecture
@@ -74,10 +76,12 @@ A high-performance MQTT Broker written in Go, supporting both **MQTT 3.1.1** and
 | `plugin/` | Plugin system with hook-based architecture |
 | `client/` | MQTT client implementation |
 | `errs/` | Centralized error definitions |
-| `tests/integration/` | 47 end-to-end integration tests |
-| `tests/bench/` | 57 benchmarks (broker + E2E data verify + micro) |
+| `tests/integration/` | 77 end-to-end integration tests (47 MQTT + 30 deploy verification) |
+| `tests/bench/` | 69 benchmarks (broker + E2E data verify + micro) |
 | `examples/` | Runnable example programs (standalone, TLS, custom auth, shark-socket) |
-| `docs/` | Architecture, deployment, performance, and improvement docs |
+| `deploy/` | Docker, docker-compose, k8s, Helm chart deployment assets |
+| `docs/` | Architecture, deployment, performance, testing, and project status docs |
+| `testutils/` | Test utilities (mock connections, mock stores, helpers) |
 | `scripts/` | Test runner scripts (Windows/Linux/macOS) |
 
 ## Quick Start
@@ -311,26 +315,28 @@ Full results: `make bench` or see `docs/performance.md`.
 | Type | Count | Status |
 |------|-------|--------|
 | Unit Tests | 207 | All pass |
-| Integration Tests | 47 | All pass |
+| Integration Tests | 77 | All pass |
 | Benchmarks | 69 | All pass |
-| **Total** | **323** | **0 failures** |
+| **Total** | **353** | **0 failures** |
 
 > 13 Redis tests skipped when `MQTT_REDIS_ADDR` is not set.
+> Test runs total 388 with table-driven subtests counted.
 
 ### Integration Test Coverage
 
 | Category | Tests | Details |
 |----------|-------|---------|
-| Connect & Session | 5 | CONNECT flow, persistent session, reconnect, kick |
-| Pub/Sub | 4 | Basic, QoS 0/1/2 |
-| Will Messages | 4 | Abnormal/graceful disconnect, QoS 0/1 |
+| Connect & Session | 7 | CONNECT flow, persistent session, reconnect, kick, QoS1 ACK, PubAck flow |
+| Pub/Sub | 3 | Basic, QoS 0/1/2 |
+| Will Messages | 3 | Abnormal/graceful disconnect, QoS 0/1 |
 | Topic Wildcards | 5 | `+`, `#`, root, mixed, multiple subscribers |
 | Retained Messages | 5 | New subscriber, update, delete, wildcard, QoS downgrade |
 | Multi-subscriber | 12 | Same topic, mixed QoS, ordering, burst, large/binary/empty/unicode payload, overlapping, publish-to-self, structured binary |
 | Unsubscribe & QoS | 8 | Stop delivery, multi-topic, wildcard, resubscribe, system topic, QoS 1 ACK, QoS 2 handshake, no-subscriber publish |
-| Edge Cases | 5 | Auth failure, duplicate clientID, invalid filter, max connections, empty clientID |
+| Edge Cases | 4 | Auth failure, duplicate clientID, invalid filter, empty clientID |
+| Deploy Verification | 30 | Dockerfile, docker-compose, k8s manifests, Helm chart structure, security context, probes |
 
-All integration tests with subscriptions verify **end-to-end data delivery**: publish a message after subscribe and confirm the subscriber receives the correct topic and payload.
+All MQTT integration tests (47 of 77) verify **end-to-end data delivery**: publish a message after subscribe and confirm the subscriber receives the correct topic and payload. The remaining 30 tests validate deployment artifacts (Dockerfile, docker-compose, k8s manifests, Helm chart).
 
 ### Running Tests
 
@@ -434,7 +440,7 @@ See `.github/workflows/ci.yml` for details.
 
 **Overall: Production-ready core**
 
-All critical and high-severity issues resolved. See [docs/IMPROVEMENT_ROADMAP.md](docs/IMPROVEMENT_ROADMAP.md) for the full tracker.
+All critical and high-severity issues resolved. Five review phases and three fix plans completed (April 2026).
 
 ### Completed
 
@@ -443,23 +449,32 @@ All critical and high-severity issues resolved. See [docs/IMPROVEMENT_ROADMAP.md
 - Spec-compliant topic filter validation
 - Retained messages and Will messages (with delay interval)
 - Persistent session management with graceful shutdown drain
+- Session takeover safe cleanup (conn identity check)
+- MQTT 5.0 Session Expiry Interval with CONNACK capability property advertising
 - Per-connection write mutex (concurrent frame safety)
-- Configurable connection limits
-- Pluggable auth/authz
-- Plugin system
+- Configurable connection limits with pre-auth enforcement
+- Pluggable auth/authz (AllowAll, DenyAll, StaticAuth, FileAuth, ChainAuth)
+- Plugin system (error-collecting dispatch continues after plugin failures)
 - Memory / Redis / BadgerDB storage
-- TLS support
+- TLS support (min TLS 1.2)
 - Health endpoints (`/healthz`, `/readyz`)
-- Config validation
-- Comprehensive test suite (323 tests)
+- Config validation (YAML/ENV/CLI)
+- Centralized error definitions (`errs` package)
+- Comprehensive test suite (353 tests, 388 test runs)
 
-### Future Improvements
+### Remaining Work
 
-- MQTT 5.0 Enhanced Authentication
-- HTTP Admin API
-- Topic Alias support
-- Protocol fuzzing
-- Large-scale connection stress tests
+| ID | Priority | Description |
+|----|----------|-------------|
+| M-002 | Medium | Implement offline message queueing |
+| M-005 | Medium | Document StaticAuth ACL behavior |
+| M-006 | Medium | TopicTree match caching |
+| L-003 | Low | Improve writePacket error propagation |
+| L-005 | Low | Fix client Connect TOCTOU |
+| L-007 | Low | Use named timeout constants in tests |
+| L-008 | Low | Add protocol fuzz tests |
+
+See `docs/FIX_PLAN_03_MEDIUM_LOW.md` for the latest fix plan.
 
 ## Documentation
 
@@ -473,7 +488,7 @@ All critical and high-severity issues resolved. See [docs/IMPROVEMENT_ROADMAP.md
 | [Security](docs/SECURITY.md) | Security considerations |
 | [Testing](docs/testing.md) | Testing guide |
 | [Development](docs/development.md) | Development workflow |
-| [Improvement Roadmap](docs/IMPROVEMENT_ROADMAP.md) | Defects and planned improvements |
+| [Project Status](docs/PROJECT_STATUS.md) | Current project state, coverage, roadmap |
 
 ## License
 

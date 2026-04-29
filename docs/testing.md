@@ -1,6 +1,6 @@
 # Testing Guide
 
-Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试和基准测试共 323 项。
+Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试和基准测试共 353 项（388 次含子测试的运行）。
 
 ---
 
@@ -55,9 +55,9 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 | 类型 | 数量 | 位置 |
 |------|------|------|
 | 单元测试 | 207 | 各包 `*_test.go` |
-| 集成测试 | 47 | `tests/integration/` |
+| 集成测试 | 77 | `tests/integration/` |
 | 基准测试 | 69 | `tests/bench/`, `store/redis/`, `plugin/` |
-| **合计** | **323** | |
+| **合计** | **353** | |
 
 ### 各包测试明细
 
@@ -76,6 +76,8 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 | pkg/metrics/ | 3 | 0 | Prometheus 指标 |
 | api/ | 4 | 0 | 公共 API 与健康端点 |
 | errs/ | 4 | 0 | 错误定义 |
+| tests/integration/ | 77 | 0 | 端到端集成测试（含 30 项部署验证） |
+| tests/bench/ | 0 | 57 | 全栈 TCP、E2E 数据验证、微基准 |
 
 ---
 
@@ -124,21 +126,21 @@ func TestTopicTree_Subscribe(t *testing.T) {
 
 ### 测试清单
 
-#### 连接与会话（5 项）
+#### 连接与会话（7 项）
 
 | 测试函数 | 说明 |
 |----------|------|
 | `TestConnectFlow` | CONNECT/CONNACK 握手完整流程 |
 | `TestPersistentSession_CleanSessionFalse` | CleanSession=false 会话保持 |
 | `TestPersistentSession_Reconnect` | 断线重连后会话恢复 |
-| `TestPersistentSession_OfflinePublish` | 离线期间消息暂存 |
+| `TestQoS1Publish_PubAckFlow` | QoS 1 发布-确认完整流程 |
 | `TestPersistentSession_KickPrevious` | 重复 ClientID 踢掉旧连接 |
+| `TestPubSub` | 基础发布-订阅消息验证 |
 
-#### 发布订阅（4 项）
+#### 发布订阅（3 项）
 
 | 测试函数 | 说明 |
 |----------|------|
-| `TestPubSub` | 基础发布-订阅消息验证 |
 | `TestQoS0` | QoS 0 消息投递 |
 | `TestQoS1` | QoS 1 完整 PUBACK 流程 |
 | `TestQoS2` | QoS 2 四报文握手（PUBLISH→PUBREC→PUBREL→PUBCOMP） |
@@ -210,6 +212,41 @@ func TestTopicTree_Subscribe(t *testing.T) {
 | `TestInvalidTopicFilter` | 无效主题过滤器 |
 | `TestMaxConnections` | 连接数上限 |
 | `TestEmptyClientID` | 空 ClientID 处理 |
+
+#### 部署验证（30 项）
+
+| 测试函数 | 说明 |
+|----------|------|
+| `TestDockerfileExists` | Dockerfile 文件存在 |
+| `TestDockerfileBuildsCorrectTarget` | 构建目标验证 |
+| `TestDockerfileHasAllPorts` | 端口暴露（1883, 9090） |
+| `TestDockerfileHasHealthcheck` | HEALTHCHECK 指令 |
+| `TestDockerfileHasNonRootUser` | 非 root 用户 |
+| `TestDockerComposeExists` | docker-compose 文件存在 |
+| `TestDockerComposeHasAllPorts` | 端口映射 |
+| `TestDockerComposeHasHealthcheck` | 健康检查配置 |
+| `TestDockerComposeTestExists` | 测试 compose 文件 |
+| `TestDockerignoreExists` | .dockerignore 文件 |
+| `TestPrometheusDockerConfigExists` | Prometheus 配置 |
+| `TestK8sManifestsExist` | K8s 清单文件存在 |
+| `TestK8sDeploymentHasAllPorts` | Deployment 端口 |
+| `TestK8sDeploymentHasSecurityContext` | 安全上下文 |
+| `TestK8sDeploymentHasProbes` | 就绪/存活探针 |
+| `TestK8sServiceHasMQTTPort` | Service MQTT 端口 |
+| `TestK8sHPAExists` | HPA 存在 |
+| `TestK8sNetworkPolicyExists` | NetworkPolicy 存在 |
+| `TestK8sAppConfigmapExists` | ConfigMap 存在 |
+| `TestK8sInfraPrometheusExists` | Prometheus 基础设施 |
+| `TestHelmChartExists` | Helm Chart 存在 |
+| `TestHelmTemplatesExist` | Helm 模板文件 |
+| `TestHelmChartYamlValid` | Chart.yaml 有效性 |
+| `TestHelmValuesHasConfig` | values.yaml 配置 |
+| `TestHelmHelpersDefinesLabels` | _helpers.tpl 标签 |
+| `TestHelmNotesHasEndpoints` | NOTES.txt 端点 |
+| `TestOldK8sDirRemoved` | 旧 k8s 目录已迁移 |
+| `TestOldDockerfileRemoved` | 旧 Dockerfile 已迁移 |
+| `TestDeployReadmeExists` | 部署文档存在 |
+| `TestEntryPointExists` | 入口脚本存在 |
 
 ### 运行方式
 

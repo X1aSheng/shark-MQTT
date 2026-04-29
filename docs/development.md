@@ -27,17 +27,20 @@ shark-mqtt/
 │   ├── redis/        # Redis store (distributed)
 │   └── badger/       # BadgerDB store (embedded)
 ├── pkg/              # Infrastructure (logger, metrics, bufferpool)
-├── config/           # Configuration loading (YAML/ENV)
-├── plugin/           # Plugin system (hook-based architecture)
+│   ├── logger/       # Structured logging (slog)
+│   ├── metrics/      # Prometheus metrics interface (17 methods)
+│   └── bufferpool/   # Buffer pool for GC reduction
+├── config/           # Configuration loading (YAML/ENV) with validation
+├── plugin/           # Plugin system (hook-based architecture, error-collecting dispatch)
 ├── client/           # MQTT client implementation
 ├── errs/             # Centralized error definitions
 ├── tests/            # Integration and benchmark tests
-│   ├── integration/  # End-to-end MQTT workflow tests
-│   └── bench/        # Performance benchmarks
-├── examples/         # Usage examples
+│   ├── integration/  # End-to-end MQTT workflow tests + deploy verification
+│   └── bench/        # Performance benchmarks (57 broker + E2E + micro)
+├── examples/         # Usage examples (standalone, TLS, custom_auth, sharksocket)
 ├── cmd/              # Command-line tools
 ├── scripts/          # Test runner and build scripts
-├── testutils/        # Test utilities (mock implementations)
+├── testutils/        # Test utilities (mock connections, mock stores, helpers)
 └── docs/             # Documentation
 ```
 
@@ -179,15 +182,18 @@ Client session management is handled by `Manager` in `broker/session.go`.
 
 **Session data:**
 - Client ID, username, protocol version
+- ExpiryInterval (MQTT 5.0 Session Expiry Interval)
 - Subscriptions (topic -> QoS)
 - Inflight messages (QoS 1/2)
 - Statistics (bytes sent/received, message counts)
 
 **Manager methods:**
 - `CreateSession(clientID, connectPkt, isResuming)` - Create or resume session
-- `GetSession(clientID)` - Retrieve session
+- `GetSession(clientID)` - Retrieve session (deep-copied Inflight + Subscriptions)
 - `RemoveSession(clientID)` - Remove session
 - `Save/Restore` - Persist to/reload from store
+
+**Session Takeover Safety**: `disconnect()` accepts `net.Conn` and checks identity before modifying shared state, preventing old connection cleanup from corrupting new connection sessions.
 
 ### store/
 
@@ -358,4 +364,5 @@ curl http://localhost:9090/metrics
 - [Testing Guide](testing.md)
 - [Configuration Guide](configuration.md)
 - [API Reference](API.md)
+- [Project Status](PROJECT_STATUS.md)
 - [CONTRIBUTING.md](../CONTRIBUTING.md)

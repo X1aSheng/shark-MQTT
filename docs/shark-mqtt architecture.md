@@ -1,6 +1,6 @@
 # Shark-MQTT Architecture Design Document v2.0
 
-> Version: 2.0.0 | Last Updated: 2026-04-25 | Go Version: 1.26.1
+> Version: 2.1.0 | Last Updated: 2026-04-29 | Go Version: 1.26.1
 
 ---
 
@@ -412,6 +412,8 @@ var (
     // Storage errors
     ErrStoreUnavailable    = errors.New("store unavailable")
     ErrSessionExpired      = errors.New("session expired")
+    ErrMessageNotFound     = errors.New("message not found")
+    ErrRetainedNotFound    = errors.New("retained message not found")
 
     // Server errors
     ErrServerClosed        = errors.New("server closed")
@@ -656,8 +658,9 @@ Connection lifecycle in `HandleConnection`:
 5. Register client connection in connections map
 6. Register will message if present
 7. Dispatch plugin hook `OnConnected`
-8. Send CONNACK
-9. Enter read loop (`readLoop`)
+8. Build MQTT 5.0 CONNACK properties (SessionExpiryInterval, ReceiveMaximum, MaximumQoS, RetainAvailable, etc.)
+9. Send CONNACK
+10. Enter read loop (`readLoop`)
 10. On disconnect, cleanup: remove will, remove session, remove inflight, dispatch `OnClose`
 
 ### broker/topic_tree.go
@@ -811,6 +814,7 @@ type Session struct {
     ClientID       string
     Username       string
     IsClean        bool
+    ExpiryInterval uint32              // MQTT 5.0 Session Expiry Interval (seconds)
     ProtocolVer    uint8
     KeepAlive      uint16
     ConnectedAt    time.Time
@@ -878,6 +882,9 @@ func (m *Manager) Restore(ctx context.Context, clientID string) (*Session, error
 - Kicking existing sessions with the same ClientID (sets `ReasonReplacedByNewConnection`)
 - Session resumption when `CleanSession=false` and `isResuming=true`
 - Fresh session creation with default state
+- MQTT 5.0 Session Expiry Interval extraction from CONNECT properties
+
+Session cleanup safety: the `disconnect()` path accepts `net.Conn` and checks identity before modifying shared state, preventing a race where an old connection's cleanup could corrupt a new connection's session.
 
 ---
 
@@ -927,11 +934,12 @@ type RetainedStore interface {
 package store
 
 type SessionData struct {
-    ClientID      string
-    IsClean       bool
-    ExpiryTime    time.Time
-    Subscriptions []Subscription
-    Inflight      map[uint16]*InflightMessage
+    ClientID        string
+    IsClean         bool
+    ExpiryTime      time.Time
+    ExpiryInterval  uint32
+    Subscriptions   []Subscription
+    Inflight        map[uint16]*InflightMessage
 }
 
 type Subscription struct {
@@ -1113,7 +1121,7 @@ type Manager struct { ... }
 
 func NewManager() *Manager
 func (pm *Manager) Register(p Plugin)
-func (pm *Manager) Dispatch(ctx context.Context, hook Hook, data *Context) error
+func (pm *Manager) Dispatch(ctx context.Context, hook Hook, data *Context) error  // continues after plugin errors, collects all
 func (pm *Manager) RegisteredPlugins() []string
 ```
 
