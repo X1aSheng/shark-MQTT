@@ -50,8 +50,21 @@ func (s *sessionStore) GetSession(ctx context.Context, clientID string) (*store.
 	if !ok {
 		return nil, store.ErrSessionNotFound
 	}
-	// Return a copy to prevent callers from modifying internal state without locking
+	// Return a deep copy to prevent callers from modifying internal state
 	copied := *data
+	if data.Inflight != nil {
+		copied.Inflight = make(map[uint16]*store.InflightMessage, len(data.Inflight))
+		for k, v := range data.Inflight {
+			msgCopy := *v
+			msgCopy.Payload = make([]byte, len(v.Payload))
+			copy(msgCopy.Payload, v.Payload)
+			copied.Inflight[k] = &msgCopy
+		}
+	}
+	if data.Subscriptions != nil {
+		copied.Subscriptions = make([]store.Subscription, len(data.Subscriptions))
+		copy(copied.Subscriptions, data.Subscriptions)
+	}
 	return &copied, nil
 }
 

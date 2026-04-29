@@ -187,11 +187,13 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 	sess := b.sessions.CreateSession(connectPkt.ClientID, connectPkt, isResuming)
 	clientID := connectPkt.ClientID
 
-	// Register client connection — kick previous connection if one exists
+	// Register client connection — kick previous connection if one exists.
+	// The old readLoop will call disconnect() asynchronously; it must not
+	// remove the new connection from the map, so disconnect() checks conn
+	// identity before deleting.
 	b.mu.Lock()
 	if old, exists := b.connections[clientID]; exists {
 		old.conn.Close()
-		delete(b.connections, clientID)
 		b.logger.Info("session takeover", "clientID", clientID)
 	}
 	b.connections[clientID] = &clientState{conn: conn, codec: c}
@@ -276,8 +278,19 @@ func (b *Broker) dispatch(hook plugin.Hook, data *plugin.Context) {
 	b.pluginMgr.Dispatch(b.ctx, hook, data)
 }
 
-func (b *Broker) disconnect(clientID string) {
+func (b *Broker) disconnect(clientID string, conn net.Conn) {
 	b.will.RemoveWill(clientID)
+
+	// Verify this connection is still the current one before cleaning up.
+	// In session takeover, the old readLoop calls disconnect after the new
+	// connection is already registered; the identity check prevents the old
+	// cleanup from removing the new connection's state.
+	b.mu.RLock()
+	cs, exists := b.connections[clientID]
+	b.mu.RUnlock()
+	if !exists || cs.conn != conn {
+		return
+	}
 
 	// Persist non-clean session before removal so state survives reconnect
 	if sess, ok := b.sessions.GetSession(clientID); ok && !sess.IsClean && b.sessionStore != nil {
@@ -290,7 +303,9 @@ func (b *Broker) disconnect(clientID string) {
 	b.qos.RemoveClient(clientID)
 
 	b.mu.Lock()
-	delete(b.connections, clientID)
+	if cs, exists := b.connections[clientID]; exists && cs.conn == conn {
+		delete(b.connections, clientID)
+	}
 	b.mu.Unlock()
 
 	// Plugin hook
@@ -307,7 +322,7 @@ func (b *Broker) readLoop(clientID string, sess *Session, codec *protocol.Codec,
 		pkt, err := codec.Decode(conn)
 		if err != nil {
 			b.logger.Debug("read error", "clientID", clientID, "error", err)
-			b.abnormalDisconnect(clientID)
+			b.abnormalDisconnect(clientID, conn)
 			return
 		}
 
@@ -339,7 +354,7 @@ func (b *Broker) readLoop(clientID string, sess *Session, codec *protocol.Codec,
 			})
 		case *protocol.DisconnectPacket:
 			b.logger.Info("graceful disconnect", "clientID", clientID)
-			b.gracefulDisconnect(clientID)
+			b.gracefulDisconnect(clientID, conn)
 			return
 		case *protocol.PubAckPacket:
 			b.handlePubAck(clientID, p.PacketID)
@@ -475,6 +490,9 @@ func (b *Broker) handleSubscribe(clientID string, sess *Session, pkt *protocol.S
 
 func (b *Broker) handleUnsubscribe(clientID string, sess *Session, pkt *protocol.UnsubscribePacket) {
 	for _, topic := range pkt.Topics {
+		if !protocol.ValidateTopicFilter(topic) {
+			continue
+		}
 		b.topics.Unsubscribe(topic, clientID)
 		sess.RemoveSubscription(topic)
 	}
@@ -718,12 +736,12 @@ func (b *Broker) publishWill(topic string, payload []byte, qos uint8, retain boo
 	return nil
 }
 
-func (b *Broker) abnormalDisconnect(clientID string) {
+func (b *Broker) abnormalDisconnect(clientID string, conn net.Conn) {
 	b.will.TriggerWill(clientID)
-	b.disconnect(clientID)
+	b.disconnect(clientID, conn)
 }
 
-func (b *Broker) gracefulDisconnect(clientID string) {
+func (b *Broker) gracefulDisconnect(clientID string, conn net.Conn) {
 	b.will.RemoveWill(clientID)
-	b.disconnect(clientID)
+	b.disconnect(clientID, conn)
 }
