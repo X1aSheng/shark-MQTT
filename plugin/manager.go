@@ -60,26 +60,28 @@ func (pm *Manager) Register(p Plugin) {
 }
 
 // Dispatch dispatches a hook event to all registered plugins.
-// It recovers from panics in plugins and returns the first error encountered.
-func (pm *Manager) Dispatch(ctx context.Context, hook Hook, data *Context) (err error) {
+// It recovers from panics in plugins and continues to remaining plugins.
+// Returns a combined error if any plugin fails.
+func (pm *Manager) Dispatch(ctx context.Context, hook Hook, data *Context) error {
 	pm.mu.RLock()
 	plugins := pm.plugins[hook]
 	pm.mu.RUnlock()
 
+	var errs []error
 	for _, p := range plugins {
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					err = fmt.Errorf("plugin %s panic: %v", p.Name(), r)
+					errs = append(errs, fmt.Errorf("plugin %s panic: %v", p.Name(), r))
 				}
 			}()
 			if e := p.Execute(ctx, hook, data); e != nil {
-				err = e
+				errs = append(errs, fmt.Errorf("plugin %s: %w", p.Name(), e))
 			}
 		}()
-		if err != nil {
-			return err
-		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("plugin dispatch: %v", errs)
 	}
 	return nil
 }

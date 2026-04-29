@@ -27,6 +27,7 @@ type brokerOptions struct {
 	maxRetries     int
 	maxConnections int
 	maxPacketSize  int
+	sessionExpiry  time.Duration
 }
 
 func defaultBrokerOptions() brokerOptions {
@@ -42,6 +43,7 @@ func defaultBrokerOptions() brokerOptions {
 		maxRetries:     3,
 		maxConnections: 10000,
 		maxPacketSize:  256 * 1024,
+		sessionExpiry:  24 * time.Hour,
 	}
 }
 
@@ -120,5 +122,12 @@ func WithMaxConnections(n int) Option {
 func WithBrokerMaxPacketSize(n int) Option {
 	return func(o *brokerOptions) {
 		o.maxPacketSize = n
+	}
+}
+
+// WithSessionExpiry sets the maximum session expiry interval.
+func WithSessionExpiry(d time.Duration) Option {
+	return func(o *brokerOptions) {
+		o.sessionExpiry = d
 	}
 }

@@ -29,6 +29,12 @@ func (c *Codec) Decode(r io.Reader) (Packet, error) {
 		return nil, err
 	}
 
+	// Sanity-check RemainingLength before arithmetic to avoid overflow.
+	// MQTT 5.0 variable-length encoding allows up to 268,435,455 bytes (256 MiB - 1).
+	const maxRemainingLength = 256*1024*1024 - 1
+	if fh.RemainingLength < 0 || fh.RemainingLength > maxRemainingLength {
+		return nil, ErrPacketTooLarge
+	}
 	// MQTT spec: max packet size includes the fixed header (1-5 bytes)
 	if fh.RemainingLength+5 > c.maxPacketSize {
 		return nil, ErrPacketTooLarge

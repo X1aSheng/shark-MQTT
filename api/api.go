@@ -135,6 +135,9 @@ func NewBroker(opts ...Option) *Broker {
 	if o.cfg.MaxPacketSize > 0 {
 		bopts = append(bopts, broker.WithBrokerMaxPacketSize(o.cfg.MaxPacketSize))
 	}
+	if o.cfg.SessionExpiryInterval > 0 {
+		bopts = append(bopts, broker.WithSessionExpiry(o.cfg.SessionExpiryInterval))
+	}
 
 	if o.sessionStore != nil {
 		bopts = append(bopts, broker.WithSessionStore(o.sessionStore))

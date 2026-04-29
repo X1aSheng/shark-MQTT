@@ -1,10 +1,11 @@
 package store
 
-import "errors"
+import "github.com/X1aSheng/shark-mqtt/errs"
 
+// Re-export errs sentinels for backward compatibility.
 var (
-	ErrSessionNotFound  = errors.New("session not found")
-	ErrMessageNotFound  = errors.New("message not found")
-	ErrRetainedNotFound = errors.New("retained message not found")
-	ErrStoreUnavailable = errors.New("store unavailable")
+	ErrSessionNotFound  = errs.ErrSessionNotFound
+	ErrMessageNotFound  = errs.ErrMessageNotFound
+	ErrRetainedNotFound = errs.ErrRetainedNotFound
+	ErrStoreUnavailable = errs.ErrStoreUnavailable
 )
