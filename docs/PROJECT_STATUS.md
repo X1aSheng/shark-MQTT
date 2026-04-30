@@ -4,7 +4,7 @@
 
 Shark-MQTT 是一个用 Go 编写的高性能 MQTT Broker，支持 MQTT 3.1.1 和 5.0 协议。项目已从 Shark-Socket 中提取为独立项目，采用分层架构设计。
 
-**整体完成度：约 93%** | 最后更新：2026-04-30
+**整体完成度：约 95%** | 最后更新：2026-04-30 (Phase 7 complete)
 
 ---
 
@@ -176,6 +176,23 @@ broker.Broker
 
 ## 剩余待改进项
 
+### Phase 7 — 第二轮代码审查修复 (2026-04-30)
+基于 CODE_REVIEW_260430_114500.md 审查，修复了 8 个新发现问题：
+
+**High 修复:**
+- ✅ H-001: `NextPacketID` 数据竞态 — RLock → Lock（session.go:223）
+- ✅ H-002: QoS 引擎 `maxInflight` 强制执行 — TrackQoS1/TrackQoS2 检查限制
+
+**Medium 修复:**
+- ✅ M-001: API 配置验证错误在 `Start()` 中返回（api.go:initErr）
+- ✅ M-002: `decodeUnsubscribe` 主题错误不再静默丢弃（subscribe.go:228）
+- ✅ M-003: 会话存储 `IsSessionExists` 错误记录日志（broker.go:170）
+- ✅ M-004: 客户端 `nextPacketID` 添加最大重试次数（client.go:505）
+- ✅ M-005: 客户端 QoS 2 PUBLISH 重复检测（client.go:receivedQoS2）
+- ✅ M-006: 移除 `decodeConnect` 中的死代码 MaximumQoS 检查（connect.go:55）
+
+**提交记录:** 172df99, d29a3ed, 52ed036
+
 ### 🟠 P1 - 中等优先级
 | ID | 描述 |
 |----|------|
@@ -212,3 +229,4 @@ broker.Broker
 | FIX_PLAN_01_CRITICAL.md | 2026-04-28 | 关键缺陷修复 |
 | FIX_PLAN_02_CRITICAL_MEDIUM.md | 2026-04-29 | Phase 5 修复（C-001~M-003） |
 | FIX_PLAN_03_MEDIUM_LOW.md | 2026-04-29 | Phase 6 修复（M-001~L-004） |
+| CODE_REVIEW_260430_114500.md | 2026-04-30 | Phase 7 审查（8 项新发现） |

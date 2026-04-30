@@ -440,7 +440,7 @@ See `.github/workflows/ci.yml` for details.
 
 **Overall: Production-ready core**
 
-All critical and high-severity issues resolved. Five review phases and three fix plans completed (April 2026).
+All critical and high-severity issues resolved. Seven review phases and four fix plans completed (April 2026).
 
 ### Completed
 
@@ -461,6 +461,9 @@ All critical and high-severity issues resolved. Five review phases and three fix
 - Config validation (YAML/ENV/CLI)
 - Centralized error definitions (`errs` package)
 - Comprehensive test suite (353 tests, 388 test runs)
+- Configurable QoS inflight limit enforcement with MQTT 5.0 ReceiveMaximum advertising
+- Client-side QoS 2 PUBLISH duplicate detection
+- Thread-safe packet ID generation
 
 ### Remaining Work
 
@@ -474,7 +477,7 @@ All critical and high-severity issues resolved. Five review phases and three fix
 | L-007 | Low | Use named timeout constants in tests |
 | L-008 | Low | Add protocol fuzz tests |
 
-See `docs/FIX_PLAN_03_MEDIUM_LOW.md` for the latest fix plan.
+See `docs/PROJECT_STATUS.md` for the latest status and `docs/CODE_REVIEW_260430_114500.md` for the Phase 7 review.
 
 ## Documentation
 
