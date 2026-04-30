@@ -1,12 +1,16 @@
 package protocol
 
-import "errors"
+import "github.com/X1aSheng/shark-mqtt/errs"
 
-// Protocol errors.
+// Protocol errors are re-exported from the canonical errs package.
 var (
-	ErrInvalidPacket      = errors.New("invalid MQTT packet")
-	ErrInvalidProtocol    = errors.New("invalid protocol name or version")
-	ErrMalformedPacket    = errors.New("malformed packet")
-	ErrPacketTooLarge     = errors.New("packet exceeds maximum size")
-	ErrUnsupportedVersion = errors.New("unsupported MQTT version")
+	ErrInvalidPacket      = errs.ErrInvalidPacket
+	ErrPacketTooLarge     = errs.ErrPacketTooLarge
+	ErrUnsupportedVersion = errs.ErrUnsupportedVersion
+)
+
+// Protocol-specific errors not in the shared errs package.
+var (
+	ErrInvalidProtocol = errs.ErrInvalidProtocol
+	ErrMalformedPacket = errs.ErrMalformedPacket
 )

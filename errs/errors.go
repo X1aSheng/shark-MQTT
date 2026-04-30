@@ -13,6 +13,8 @@ var (
 
 	// 协议错误
 	ErrInvalidPacket      = errors.New("invalid packet format")
+	ErrInvalidProtocol    = errors.New("invalid protocol name or version")
+	ErrMalformedPacket    = errors.New("malformed packet")
 	ErrUnsupportedVersion = errors.New("unsupported protocol version")
 	ErrIncomplete         = errors.New("incomplete packet")
 	ErrPacketTooLarge     = errors.New("packet exceeds maximum size")

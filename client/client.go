@@ -185,7 +185,11 @@ func (c *MQTTClient) Publish(ctx context.Context, topic string, qos byte, retain
 		c.inflight[pid] = &inflightEntry{pkt: pkt}
 		c.inflightMu.Unlock()
 
-		respCh = make(chan protocol.Packet, 1)
+		bufSize := 1
+		if qos == 2 {
+			bufSize = 2 // need space for both PUBREC and PUBCOMP
+		}
+		respCh = make(chan protocol.Packet, bufSize)
 		c.pendingMu.Lock()
 		c.pending[pid] = respCh
 		c.pendingMu.Unlock()

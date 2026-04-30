@@ -122,6 +122,14 @@ func NewBroker(opts ...Option) *Broker {
 		opt(o)
 	}
 
+	// Ensure config is not nil and validate it
+	if o.cfg == nil {
+		o.cfg = config.DefaultConfig()
+	}
+	if err := o.cfg.Validate(); err != nil {
+		log.Printf("[api] config validation warning: %v", err)
+	}
+
 	// Build broker options
 	bopts := []broker.Option{
 		broker.WithAuth(o.auth),
@@ -257,10 +265,11 @@ func (b *Broker) startHealthServer() {
 		return
 	}
 	b.healthSrv = &http.Server{
-		Handler:      mux,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 5 * time.Second,
-		IdleTimeout:  30 * time.Second,
+		Handler:           mux,
+		ReadTimeout:       5 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      5 * time.Second,
+		IdleTimeout:       30 * time.Second,
 	}
 	go b.healthSrv.Serve(ln)
 	log.Printf("[api] health endpoint on %s", b.cfg.MetricsAddr)

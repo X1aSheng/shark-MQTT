@@ -55,9 +55,16 @@ func (wh *WillHandler) SetPublishCallback(fn func(topic string, payload []byte, 
 }
 
 // RegisterWill registers a will message for a client.
-func (wh *WillHandler) RegisterWill(clientID string, topic string, payload []byte, qos uint8, retain bool, delay time.Duration) {
+// Cancels any pending delayed will for the same client.
+func (wh *WillHandler) RegisterWill(clientID string, topic string, payload []byte, qos uint8, retain bool, delay time.Duration) error {
 	wh.mu.Lock()
 	defer wh.mu.Unlock()
+
+	// Cancel pending delayed will goroutine for the same client
+	if cancel, exists := wh.cancel[clientID]; exists {
+		cancel()
+		delete(wh.cancel, clientID)
+	}
 
 	wh.wills[clientID] = &WillMessage{
 		ClientID: clientID,
@@ -67,6 +74,7 @@ func (wh *WillHandler) RegisterWill(clientID string, topic string, payload []byt
 		Retain:   retain,
 		Delay:    delay,
 	}
+	return nil
 }
 
 // TriggerWill triggers the will message for a client (on abnormal disconnect).
