@@ -207,10 +207,13 @@ func validateUTF8(s string) error {
 	if !utf8.ValidString(s) {
 		return fmt.Errorf("protocol: invalid UTF-8 byte sequence")
 	}
-	for i := 0; i < len(s); i++ {
-		if s[i] == 0x00 {
-			return fmt.Errorf("protocol: null character U+0000 not allowed in MQTT UTF-8 string")
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		// MQTT prohibits control characters U+0000-U+001F and U+007F-U+009F
+		if r <= 0x001F || (r >= 0x007F && r <= 0x009F) {
+			return fmt.Errorf("protocol: control character U+%04X not allowed in MQTT string", r)
 		}
+		i += size
 	}
 	return nil
 }
