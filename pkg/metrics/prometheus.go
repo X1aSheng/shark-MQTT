@@ -25,118 +25,118 @@ type prometheusMetrics struct {
 	errors            *prometheus.CounterVec
 }
 
+// registerOrReuse registers a collector, returning the existing one on conflict.
+// This prevents panics when NewPrometheusMetrics is called multiple times
+// (e.g., in tests or process restarts where the DefaultRegisterer is reused).
+func registerOrReuse[T prometheus.Collector](reg prometheus.Registerer, c T) T {
+	err := reg.Register(c)
+	if err != nil {
+		if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			return are.ExistingCollector.(T)
+		}
+		panic(err)
+	}
+	return c
+}
+
 // NewPrometheusMetrics creates a new Prometheus-backed Metrics implementation.
 // Registers metrics with the provided Registerer (use prometheus.DefaultRegisterer if nil).
+// Safe for repeated calls — reuses already-registered collectors instead of panicking.
 func NewPrometheusMetrics(reg prometheus.Registerer) Metrics {
 	if reg == nil {
 		reg = prometheus.DefaultRegisterer
 	}
 	m := &prometheusMetrics{}
 
-	m.connections = prometheus.NewCounter(prometheus.CounterOpts{
+	m.connections = registerOrReuse(reg, prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "shark_mqtt",
 		Name:      "connections_total",
 		Help:      "Total number of connections established",
-	})
-	reg.MustRegister(m.connections)
+	}))
 
-	m.disconnections = prometheus.NewCounter(prometheus.CounterOpts{
+	m.disconnections = registerOrReuse(reg, prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "shark_mqtt",
 		Name:      "disconnections_total",
 		Help:      "Total number of disconnections",
-	})
-	reg.MustRegister(m.disconnections)
+	}))
 
-	m.rejections = prometheus.NewCounterVec(prometheus.CounterOpts{
+	m.rejections = registerOrReuse(reg, prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "shark_mqtt",
 		Name:      "rejections_total",
 		Help:      "Total number of connection rejections",
-	}, []string{"reason"})
-	reg.MustRegister(m.rejections)
+	}, []string{"reason"}))
 
-	m.authFailures = prometheus.NewCounter(prometheus.CounterOpts{
+	m.authFailures = registerOrReuse(reg, prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "shark_mqtt",
 		Name:      "auth_failures_total",
 		Help:      "Total number of authentication failures",
-	})
-	reg.MustRegister(m.authFailures)
+	}))
 
-	m.messagesPublished = prometheus.NewCounterVec(prometheus.CounterOpts{
+	m.messagesPublished = registerOrReuse(reg, prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "shark_mqtt",
 		Name:      "messages_published_total",
 		Help:      "Total number of messages published",
-	}, []string{"qos"})
-	reg.MustRegister(m.messagesPublished)
+	}, []string{"qos"}))
 
-	m.messagesDelivered = prometheus.NewCounterVec(prometheus.CounterOpts{
+	m.messagesDelivered = registerOrReuse(reg, prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "shark_mqtt",
 		Name:      "messages_delivered_total",
 		Help:      "Total number of messages delivered",
-	}, []string{"qos"})
-	reg.MustRegister(m.messagesDelivered)
+	}, []string{"qos"}))
 
-	m.messagesDropped = prometheus.NewCounterVec(prometheus.CounterOpts{
+	m.messagesDropped = registerOrReuse(reg, prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "shark_mqtt",
 		Name:      "messages_dropped_total",
 		Help:      "Total number of messages dropped",
-	}, []string{"reason"})
-	reg.MustRegister(m.messagesDropped)
+	}, []string{"reason"}))
 
-	m.inflight = prometheus.NewGauge(prometheus.GaugeOpts{
+	m.inflight = registerOrReuse(reg, prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace: "shark_mqtt",
 		Name:      "inflight_messages",
 		Help:      "Total number of inflight messages",
-	})
-	reg.MustRegister(m.inflight)
+	}))
 
-	m.inflightDropped = prometheus.NewCounter(prometheus.CounterOpts{
+	m.inflightDropped = registerOrReuse(reg, prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "shark_mqtt",
 		Name:      "inflight_dropped_total",
 		Help:      "Total number of inflight messages dropped",
-	})
-	reg.MustRegister(m.inflightDropped)
+	}))
 
-	m.retries = prometheus.NewCounter(prometheus.CounterOpts{
+	m.retries = registerOrReuse(reg, prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "shark_mqtt",
 		Name:      "retries_total",
 		Help:      "Total number of message retries",
-	})
-	reg.MustRegister(m.retries)
+	}))
 
-	m.onlineSessions = prometheus.NewGauge(prometheus.GaugeOpts{
+	m.onlineSessions = registerOrReuse(reg, prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace: "shark_mqtt",
 		Name:      "online_sessions",
 		Help:      "Number of online sessions",
-	})
-	reg.MustRegister(m.onlineSessions)
+	}))
 
-	m.offlineSessions = prometheus.NewGauge(prometheus.GaugeOpts{
+	m.offlineSessions = registerOrReuse(reg, prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace: "shark_mqtt",
 		Name:      "offline_sessions",
 		Help:      "Number of offline sessions",
-	})
-	reg.MustRegister(m.offlineSessions)
+	}))
 
-	m.retainedMsgs = prometheus.NewGauge(prometheus.GaugeOpts{
+	m.retainedMsgs = registerOrReuse(reg, prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace: "shark_mqtt",
 		Name:      "retained_messages",
 		Help:      "Number of retained messages",
-	})
-	reg.MustRegister(m.retainedMsgs)
+	}))
 
-	m.subscriptions = prometheus.NewGauge(prometheus.GaugeOpts{
+	m.subscriptions = registerOrReuse(reg, prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace: "shark_mqtt",
 		Name:      "subscriptions",
 		Help:      "Total number of active subscriptions",
-	})
-	reg.MustRegister(m.subscriptions)
+	}))
 
-	m.errors = prometheus.NewCounterVec(prometheus.CounterOpts{
+	m.errors = registerOrReuse(reg, prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "shark_mqtt",
 		Name:      "errors_total",
 		Help:      "Total number of errors by component",
-	}, []string{"component"})
-	reg.MustRegister(m.errors)
+	}, []string{"component"}))
 
 	return m
 }
