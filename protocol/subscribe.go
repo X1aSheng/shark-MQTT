@@ -225,7 +225,7 @@ func (c *Codec) decodeUnsubscribe(r io.Reader, fh *FixedHeader) (*UnsubscribePac
 		for reader.Len() > 0 {
 			topic, err := readStringFromReader(reader)
 			if err != nil {
-				break
+				return nil, err
 			}
 			topics = append(topics, topic)
 		}

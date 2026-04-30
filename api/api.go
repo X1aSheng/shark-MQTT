@@ -23,6 +23,7 @@ type Broker struct {
 	broker    *broker.Broker
 	cfg       *config.Config
 	healthSrv *http.Server
+	initErr   error // set if config validation fails during construction
 }
 
 // Option configures the broker.
@@ -126,8 +127,10 @@ func NewBroker(opts ...Option) *Broker {
 	if o.cfg == nil {
 		o.cfg = config.DefaultConfig()
 	}
+	var initErr error
 	if err := o.cfg.Validate(); err != nil {
-		log.Printf("[api] config validation warning: %v", err)
+		initErr = err
+		log.Printf("[api] config validation error: %v", err)
 	}
 
 	// Build broker options
@@ -173,14 +176,18 @@ func NewBroker(opts ...Option) *Broker {
 	srv.SetHandler(brk)
 
 	return &Broker{
-		srv:    srv,
-		broker: brk,
-		cfg:    o.cfg,
+		srv:     srv,
+		broker:  brk,
+		cfg:     o.cfg,
+		initErr: initErr,
 	}
 }
 
 // Start starts both the network server and the broker core.
 func (b *Broker) Start() error {
+	if b.initErr != nil {
+		return fmt.Errorf("api: invalid configuration: %w", b.initErr)
+	}
 	// Broker core manages client connections
 	if err := b.broker.Start(); err != nil {
 		return fmt.Errorf("api: broker start failed: %w", err)
