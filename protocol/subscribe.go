@@ -26,7 +26,7 @@ func (c *Codec) decodeSubscribe(r io.Reader, fh *FixedHeader) (*SubscribePacket,
 
 		props, err = c.decodeProperties(reader)
 		if err != nil {
-			reader.Reset(data)
+			return nil, err
 		}
 
 		var topics []TopicFilter
@@ -148,7 +148,7 @@ func (c *Codec) decodeSubAck(r io.Reader, fh *FixedHeader) (*SubAckPacket, error
 		if c.protocolVersion == Version50 {
 			props, err = c.decodeProperties(reader)
 			if err != nil {
-				reader.Reset(data)
+				return nil, err
 			}
 		}
 
@@ -219,7 +219,7 @@ func (c *Codec) decodeUnsubscribe(r io.Reader, fh *FixedHeader) (*UnsubscribePac
 
 		props, err = c.decodeProperties(reader)
 		if err != nil {
-			reader.Reset(data)
+			return nil, err
 		}
 
 		for reader.Len() > 0 {
@@ -307,7 +307,7 @@ func (c *Codec) decodeUnsubAck(r io.Reader, fh *FixedHeader) (*UnsubAckPacket, e
 		if c.protocolVersion == Version50 {
 			props, err = c.decodeProperties(reader)
 			if err != nil {
-				reader.Reset(data)
+				return nil, err
 			}
 		}
 
