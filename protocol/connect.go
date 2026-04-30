@@ -52,6 +52,9 @@ func (c *Codec) decodeConnect(r io.Reader, fh *FixedHeader) (*ConnectPacket, err
 		if err != nil {
 			return nil, err
 		}
+		if props != nil && props.MaximumQoS != nil && *props.MaximumQoS > 1 {
+			return nil, ErrMalformedPacket
+		}
 	}
 
 	clientID, err := readString(reader)

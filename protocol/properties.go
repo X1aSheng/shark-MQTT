@@ -137,6 +137,9 @@ func (c *Codec) decodeProperties(r io.Reader) (*Properties, error) {
 			if err != nil {
 				return nil, err
 			}
+			if v > 1 {
+				return nil, ErrMalformedPacket
+			}
 			props.PayloadFormat = &v
 		case PropMessageExpiryInterval:
 			v, err := readUint32FromReader(reader)
@@ -202,6 +205,9 @@ func (c *Codec) decodeProperties(r io.Reader) (*Properties, error) {
 			v, err := reader.ReadByte()
 			if err != nil {
 				return nil, err
+			}
+			if v > 1 {
+				return nil, ErrMalformedPacket
 			}
 			props.RequestProblemInfo = &v
 		case PropWillDelayInterval:
