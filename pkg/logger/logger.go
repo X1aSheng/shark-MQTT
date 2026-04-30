@@ -13,7 +13,8 @@ type Logger interface {
 type Option func(*options)
 
 type options struct {
-	level string
+	level  string
+	format string // "json" or "" (text)
 }
 
 // New creates a new Logger with the given options.
@@ -22,17 +23,22 @@ func New(opts ...Option) Logger {
 	for _, opt := range opts {
 		opt(o)
 	}
-	return NewSlogLogger(o.level)
+	return NewSlogLogger(o.level, o.format)
 }
 
 // Default returns the default logger.
 func Default() Logger {
-	return NewSlogLogger("info")
+	return NewSlogLogger("info", "")
 }
 
 // WithLevel sets the log level.
 func WithLevel(level string) Option {
 	return func(o *options) { o.level = level }
+}
+
+// WithFormat sets the log output format ("json" or "" for text).
+func WithFormat(format string) Option {
+	return func(o *options) { o.format = format }
 }
 
 // Noop returns a no-op logger.

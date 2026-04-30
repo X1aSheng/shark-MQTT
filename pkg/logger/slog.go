@@ -16,7 +16,9 @@ type slogLogger struct {
 }
 
 // NewSlogLogger creates a new slog-based logger.
-func NewSlogLogger(level string) Logger {
+// level: debug, info, warn, error
+// format: "json" for JSON output, "" for text
+func NewSlogLogger(level, format string) Logger {
 	var lvl slog.Level
 	switch level {
 	case "debug":
@@ -29,7 +31,12 @@ func NewSlogLogger(level string) Logger {
 		lvl = slog.LevelInfo
 	}
 	opts := &slog.HandlerOptions{Level: lvl}
-	h := slog.NewTextHandler(os.Stderr, opts)
+	var h slog.Handler
+	if format == "json" {
+		h = slog.NewJSONHandler(os.Stderr, opts)
+	} else {
+		h = slog.NewTextHandler(os.Stderr, opts)
+	}
 	return &slogLogger{logger: slog.New(h)}
 }
 
