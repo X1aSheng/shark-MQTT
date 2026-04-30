@@ -5,6 +5,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/X1aSheng/shark-mqtt/errs"
 )
 
 // InflightState represents the state of an inflight QoS message.
@@ -162,12 +164,17 @@ func (q *QoSEngine) Stop() {
 }
 
 // TrackQoS1 tracks a QoS 1 publish for acknowledgment.
-func (q *QoSEngine) TrackQoS1(clientID string, packetID uint16, topic string, payload []byte, retain bool) {
+// Returns an error if the client has exceeded maxInflight.
+func (q *QoSEngine) TrackQoS1(clientID string, packetID uint16, topic string, payload []byte, retain bool) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	if _, ok := q.inflight[clientID]; !ok {
 		q.inflight[clientID] = make(map[uint16]*InflightMessage)
+	}
+
+	if q.maxInflight > 0 && len(q.inflight[clientID]) >= q.maxInflight {
+		return errs.ErrInflightFull
 	}
 
 	q.inflight[clientID][packetID] = &InflightMessage{
@@ -181,15 +188,21 @@ func (q *QoSEngine) TrackQoS1(clientID string, packetID uint16, topic string, pa
 		QoS:        1,
 		Retain:     retain,
 	}
+	return nil
 }
 
 // TrackQoS2 tracks a QoS 2 publish for PUBREC/PUBREL/PUBCOMP sequence.
-func (q *QoSEngine) TrackQoS2(clientID string, packetID uint16, topic string, payload []byte, retain bool) {
+// Returns an error if the client has exceeded maxInflight.
+func (q *QoSEngine) TrackQoS2(clientID string, packetID uint16, topic string, payload []byte, retain bool) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	if _, ok := q.inflight[clientID]; !ok {
 		q.inflight[clientID] = make(map[uint16]*InflightMessage)
+	}
+
+	if q.maxInflight > 0 && len(q.inflight[clientID]) >= q.maxInflight {
+		return errs.ErrInflightFull
 	}
 
 	q.inflight[clientID][packetID] = &InflightMessage{
@@ -203,6 +216,7 @@ func (q *QoSEngine) TrackQoS2(clientID string, packetID uint16, topic string, pa
 		QoS:        2,
 		Retain:     retain,
 	}
+	return nil
 }
 
 // AckQoS1 acknowledges a QoS 1 message (PUBACK received).

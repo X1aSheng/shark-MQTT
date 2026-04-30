@@ -176,9 +176,9 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 				}
 				for _, msg := range restored.Inflight {
 					if msg.QoS == 2 {
-						b.qos.TrackQoS2(connectPkt.ClientID, msg.PacketID, msg.Topic, msg.Payload, msg.Retain)
+						_ = b.qos.TrackQoS2(connectPkt.ClientID, msg.PacketID, msg.Topic, msg.Payload, msg.Retain)
 					} else {
-						b.qos.TrackQoS1(connectPkt.ClientID, msg.PacketID, msg.Topic, msg.Payload, msg.Retain)
+						_ = b.qos.TrackQoS1(connectPkt.ClientID, msg.PacketID, msg.Topic, msg.Payload, msg.Retain)
 					}
 				}
 			}
@@ -447,13 +447,17 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 
 	// QoS 2: defer subscriber delivery until PUBCOMP completes the handshake
 	if pkt.FixedHeader.QoS == 2 {
+		var reasonCode byte = protocol.ReasonCodeSuccess
+		if err := b.qos.TrackQoS2(clientID, pkt.PacketID, pkt.Topic, pkt.Payload, pkt.FixedHeader.Retain); err != nil {
+			reasonCode = protocol.ReasonCodeReceiveMaxExceeded
+		}
 		b.writePacket(clientID, &protocol.PubRecPacket{
 			FixedHeader: protocol.FixedHeader{
 				PacketType: protocol.PacketTypePubRec,
 			},
-			PacketID: pkt.PacketID,
+			PacketID:   pkt.PacketID,
+			ReasonCode: reasonCode,
 		})
-		b.qos.TrackQoS2(clientID, pkt.PacketID, pkt.Topic, pkt.Payload, pkt.FixedHeader.Retain)
 		return
 	}
 
@@ -468,13 +472,17 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 
 	// Send PUBACK for QoS 1
 	if pkt.FixedHeader.QoS == 1 {
+		var reasonCode byte = protocol.ReasonCodeSuccess
+		if err := b.qos.TrackQoS1(clientID, pkt.PacketID, pkt.Topic, pkt.Payload, pkt.FixedHeader.Retain); err != nil {
+			reasonCode = protocol.ReasonCodeReceiveMaxExceeded
+		}
 		b.writePacket(clientID, &protocol.PubAckPacket{
 			FixedHeader: protocol.FixedHeader{
 				PacketType: protocol.PacketTypePubAck,
 			},
-			PacketID: pkt.PacketID,
+			PacketID:   pkt.PacketID,
+			ReasonCode: reasonCode,
 		})
-		b.qos.TrackQoS1(clientID, pkt.PacketID, pkt.Topic, pkt.Payload, pkt.FixedHeader.Retain)
 	}
 }
 
