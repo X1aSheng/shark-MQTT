@@ -2,6 +2,8 @@ package client
 
 import (
 	"crypto/tls"
+	"net"
+	"strconv"
 	"time"
 )
 
@@ -24,27 +26,21 @@ type Options struct {
 type Option func(*Options)
 
 // WithAddr sets the broker address as "host:port".
+// Supports IPv4 (e.g., "localhost:1883") and IPv6 (e.g., "[::1]:1883").
 func WithAddr(addr string) Option {
 	return func(o *Options) {
-		if idx := lastIndexOfByte(addr, ':'); idx != -1 {
-			o.Host = addr[:idx]
-			var port int
-			for i := idx + 1; i < len(addr); i++ {
-				port = port*10 + int(addr[i]-'0')
-			}
+		host, portStr, err := net.SplitHostPort(addr)
+		if err != nil {
+			// Fall back to treating the whole string as host on default port
+			o.Host = addr
+			return
+		}
+		o.Host = host
+		port, _ := strconv.Atoi(portStr)
+		if port > 0 {
 			o.Port = port
 		}
 	}
-}
-
-// lastIndexOfByte returns the last index of c in s, or -1.
-func lastIndexOfByte(s string, c byte) int {
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] == c {
-			return i
-		}
-	}
-	return -1
 }
 
 // WithHostPort sets the broker host and port.

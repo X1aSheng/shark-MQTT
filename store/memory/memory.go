@@ -126,6 +126,10 @@ func (m *messageStore) GetMessage(ctx context.Context, clientID, id string) (*st
 	if msgs, ok := m.messages[clientID]; ok {
 		if msg, ok := msgs[id]; ok {
 			msgCopy := *msg
+			if msg.Payload != nil {
+				msgCopy.Payload = make([]byte, len(msg.Payload))
+				copy(msgCopy.Payload, msg.Payload)
+			}
 			return &msgCopy, nil
 		}
 	}
@@ -151,6 +155,10 @@ func (m *messageStore) ListMessages(ctx context.Context, clientID string) ([]*st
 	result := make([]*store.StoredMessage, 0, len(msgs))
 	for _, msg := range msgs {
 		msgCopy := *msg
+		if msg.Payload != nil {
+			msgCopy.Payload = make([]byte, len(msg.Payload))
+			copy(msgCopy.Payload, msg.Payload)
+		}
 		result = append(result, &msgCopy)
 	}
 	return result, nil
@@ -202,6 +210,10 @@ func (r *retainedStore) GetRetained(ctx context.Context, topic string) (*store.R
 		return nil, store.ErrRetainedNotFound
 	}
 	msgCopy := *msg
+	if msg.Payload != nil {
+		msgCopy.Payload = make([]byte, len(msg.Payload))
+		copy(msgCopy.Payload, msg.Payload)
+	}
 	return &msgCopy, nil
 }
 
@@ -219,6 +231,10 @@ func (r *retainedStore) MatchRetained(ctx context.Context, pattern string) ([]*s
 	for topic, msg := range r.messages {
 		if protocol.MatchTopic(pattern, topic) {
 			msgCopy := *msg
+			if msg.Payload != nil {
+				msgCopy.Payload = make([]byte, len(msg.Payload))
+				copy(msgCopy.Payload, msg.Payload)
+			}
 			result = append(result, &msgCopy)
 		}
 	}

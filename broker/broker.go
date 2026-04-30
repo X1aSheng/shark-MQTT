@@ -218,6 +218,10 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 
 	// Register will message
 	if connectPkt.Flags.WillFlag {
+		if !protocol.ValidatePublishTopic(connectPkt.WillTopic) {
+			b.sendConnAckRaw(conn, c, protocol.ConnAckUnspecifiedError, false)
+			return fmt.Errorf("broker: will topic %q contains wildcards", connectPkt.WillTopic)
+		}
 		var willDelay time.Duration
 		if connectPkt.WillProperties != nil && connectPkt.WillProperties.WillDelayInterval != nil {
 			willDelay = time.Duration(*connectPkt.WillProperties.WillDelayInterval) * time.Second
@@ -428,11 +432,15 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 	if pkt.FixedHeader.Retain {
 		if len(pkt.Payload) == 0 {
 			if b.retainedStore != nil {
-				b.retainedStore.DeleteRetained(b.ctx, pkt.Topic)
+				if err := b.retainedStore.DeleteRetained(b.ctx, pkt.Topic); err != nil {
+					b.logger.Debug("failed to delete retained message", "topic", pkt.Topic, "error", err)
+				}
 			}
 		} else {
 			if b.retainedStore != nil {
-				b.retainedStore.SaveRetained(b.ctx, pkt.Topic, pkt.FixedHeader.QoS, pkt.Payload)
+				if err := b.retainedStore.SaveRetained(b.ctx, pkt.Topic, pkt.FixedHeader.QoS, pkt.Payload); err != nil {
+					b.logger.Debug("failed to save retained message", "topic", pkt.Topic, "error", err)
+				}
 			}
 		}
 	}
@@ -565,7 +573,11 @@ func (b *Broker) deliverRetainedMessages(clientID string, sess *Session, topicFi
 	}
 
 	retained, err := b.retainedStore.MatchRetained(b.ctx, topicFilter)
-	if err != nil || len(retained) == 0 {
+	if err != nil {
+		b.logger.Debug("failed to match retained messages", "filter", topicFilter, "error", err)
+		return
+	}
+	if len(retained) == 0 {
 		return
 	}
 
