@@ -1,8 +1,6 @@
 package metrics
 
 import (
-	"strconv"
-
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -187,10 +185,13 @@ func (m *prometheusMetrics) IncErrors(component string) {
 	m.errors.WithLabelValues(component).Inc()
 }
 
+// qosLabels maps QoS values to Prometheus label strings.
+var qosLabels = [4]string{"0", "1", "2", "unknown"}
+
 // qosLabel returns a safe Prometheus label for a QoS value.
 func qosLabel(qos uint8) string {
 	if qos > 2 {
-		return "unknown"
+		return qosLabels[3]
 	}
-	return strconv.FormatUint(uint64(qos), 10)
+	return qosLabels[qos]
 }
