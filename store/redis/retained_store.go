@@ -43,6 +43,10 @@ func (s *RetainedStore) topicKey(topic string) string {
 }
 
 func (s *RetainedStore) SaveRetained(ctx context.Context, topic string, qos uint8, payload []byte) error {
+	// Per MQTT spec, a retained message with zero-length payload deletes the existing retained message.
+	if len(payload) == 0 {
+		return s.DeleteRetained(ctx, topic)
+	}
 	retained := &store.RetainedMessage{
 		Topic:   topic,
 		QoS:     qos,

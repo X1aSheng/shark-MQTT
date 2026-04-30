@@ -213,13 +213,11 @@ func TestBadgerRetainedStore_EmptyPayload(t *testing.T) {
 	r := NewRetainedStore(RetainedStoreConfig{DB: db})
 
 	r.SaveRetained(ctx, "test/topic", 1, []byte("data"))
+	// Per MQTT spec, a retained message with zero-length payload deletes the existing retained message.
 	r.SaveRetained(ctx, "test/topic", 1, []byte{})
 
-	got, err := r.GetRetained(ctx, "test/topic")
-	if err != nil {
-		t.Fatalf("get error: %v", err)
-	}
-	if len(got.Payload) != 0 {
-		t.Errorf("expected empty payload, got %s", got.Payload)
+	_, err := r.GetRetained(ctx, "test/topic")
+	if err == nil {
+		t.Fatal("expected ErrRetainedNotFound after deleting with empty payload")
 	}
 }
