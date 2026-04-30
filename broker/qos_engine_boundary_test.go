@@ -432,16 +432,21 @@ func TestProtocol_Constraints(t *testing.T) {
 
 		// Fill up to the limit
 		for i := 1; i <= 10; i++ {
-			q.TrackQoS1("client1", uint16(i), "topic", []byte("data"), false)
+			if err := q.TrackQoS1("client1", uint16(i), "topic", []byte("data"), false); err != nil {
+				t.Errorf("unexpected error at %d: %v", i, err)
+			}
 		}
 
-		// Adding more should still work (overwrite behavior)
-		q.TrackQoS1("client1", 11, "topic", []byte("data"), false)
+		// Adding beyond limit should be rejected
+		err := q.TrackQoS1("client1", 11, "topic", []byte("data"), false)
+		if err == nil {
+			t.Error("expected error when exceeding maxInflight, got nil")
+		}
 
-		// The count should be at most maxInflight
+		// Count should stay at maxInflight
 		count := q.InflightCount("client1")
-		if count != 11 {
-			t.Errorf("expected 11 inflight, got %d", count)
+		if count != 10 {
+			t.Errorf("expected 10 inflight after rejection, got %d", count)
 		}
 	})
 
