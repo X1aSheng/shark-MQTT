@@ -11,6 +11,7 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/X1aSheng/shark-mqtt/config"
 	"github.com/X1aSheng/shark-mqtt/protocol"
@@ -143,9 +144,13 @@ func (s *MQTTServer) acceptLoop() {
 			case <-s.ctx.Done():
 				return
 			default:
-				log.Printf("[server] accept error: %v", err)
-				continue
 			}
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
+			log.Printf("[server] accept error: %v", err)
+			time.Sleep(100 * time.Millisecond)
+			continue
 		}
 
 		// Check max connections
