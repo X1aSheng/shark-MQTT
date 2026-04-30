@@ -4,6 +4,7 @@ package plugin
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"sync"
 )
 
@@ -69,10 +70,16 @@ func (pm *Manager) Dispatch(ctx context.Context, hook Hook, data *Context) error
 
 	var errs []error
 	for _, p := range plugins {
+		select {
+		case <-ctx.Done():
+			errs = append(errs, fmt.Errorf("plugin dispatch cancelled: %w", ctx.Err()))
+			goto done
+		default:
+		}
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					errs = append(errs, fmt.Errorf("plugin %s panic: %v", p.Name(), r))
+					errs = append(errs, fmt.Errorf("plugin %s panic: %v\n%s", p.Name(), r, debug.Stack()))
 				}
 			}()
 			if e := p.Execute(ctx, hook, data); e != nil {
@@ -80,6 +87,7 @@ func (pm *Manager) Dispatch(ctx context.Context, hook Hook, data *Context) error
 			}
 		}()
 	}
+done:
 	if len(errs) > 0 {
 		return fmt.Errorf("plugin dispatch: %v", errs)
 	}
