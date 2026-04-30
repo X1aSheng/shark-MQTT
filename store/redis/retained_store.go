@@ -118,6 +118,9 @@ func topicPatternToRedis(pattern string) string {
 	// For # at the end (most common pattern), use * to narrow the scan;
 	// the secondary MQTT match in MatchRetained filters false positives.
 	result := strings.ReplaceAll(pattern, "#", "*")
-	result = strings.ReplaceAll(result, "+", "[^/]")
+	// MQTT "+" matches an entire topic level (chars not including "/").
+	// Redis "[^/]" only matches a single character, so we use "*" instead.
+	// The secondary protocol.MatchTopic call in MatchRetained filters false positives.
+	result = strings.ReplaceAll(result, "+", "*")
 	return result
 }
