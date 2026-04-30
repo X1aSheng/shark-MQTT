@@ -4,7 +4,7 @@
 
 Shark-MQTT 是一个用 Go 编写的高性能 MQTT Broker，支持 MQTT 3.1.1 和 5.0 协议。项目已从 Shark-Socket 中提取为独立项目，采用分层架构设计。
 
-**整体完成度：约 92%** | 最后更新：2026-04-29
+**整体完成度：约 93%** | 最后更新：2026-04-30
 
 ---
 
@@ -129,6 +129,29 @@ broker.Broker
 - M-007: Plugin Dispatch 错误收集模式
 - L-001/L-002: errs 包错误整合
 - L-004: RemainingLength 上界验证
+
+### Phase 7 — 代码审查修复 (2026-04-30)
+基于 CODE_REVIEW_250430_112600.md (62 项发现)，修复了以下问题：
+
+**Critical 修复:**
+- ✅ C-2: 保留消息空 payload 跨存储一致性（Badger/Redis 空 payload 正确删除）
+- ✅ C-4: Redis topicPatternToRedis `+` 通配符映射（`[^/]` → `*`）
+- ✅ C-1: 协议属性解码错误不再静默丢弃（subscribe/suback/unsubscribe/unsuback）
+- ⏳ C-3: 客户端 readLoop 连接竞态（延期 — 需架构性改动）
+
+**High 修复:**
+- ✅ H-5: Accept 循环添加退避 + `net.ErrClosed` 检查
+- ✅ H-11: Prometheus `MustRegister` → `registerOrReuse` 安全注册
+- ✅ H-9: Topic 过滤器空 level 检查（leading/trailing/consecutive `/`）
+- ✅ H-8: MQTT 5.0 属性值范围验证（PayloadFormat、RequestProblemInfo、MaximumQoS）
+- ✅ H-10: `NextPacketID` RLock 替代 Lock
+
+**Medium 修复:**
+- ✅ M-1: Plugin Dispatch 上下文取消传播
+- ✅ M-2: Plugin panic 恢复包含堆栈跟踪
+- ✅ M-19: Logger 支持 JSON 格式输出（`WithFormat` option）
+- ✅ M-21: `qosLabel` 预计算查找表
+- ✅ M-13: UTF-8 控制字符验证（U+0001-U+001F, U+007F-U+009F）
 
 ---
 
