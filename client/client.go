@@ -38,6 +38,7 @@ type MQTTClient struct {
 	connected      bool
 	onMessage      func(topic string, qos byte, payload []byte)
 	msgMu          sync.RWMutex
+	receivedQoS2   map[uint16]struct{} // tracks received QoS 2 PacketIDs for dedup
 }
 
 type inflightEntry struct {
@@ -53,12 +54,13 @@ func New(opts ...Option) *MQTTClient {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &MQTTClient{
-		opts:     o,
-		codec:    protocol.NewCodec(o.MaxPacketSize),
-		inflight: make(map[uint16]*inflightEntry),
-		pending:  make(map[uint16]chan protocol.Packet),
-		ctx:      ctx,
-		cancel:   cancel,
+		opts:         o,
+		codec:        protocol.NewCodec(o.MaxPacketSize),
+		inflight:     make(map[uint16]*inflightEntry),
+		pending:      make(map[uint16]chan protocol.Packet),
+		receivedQoS2: make(map[uint16]struct{}),
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 	c.nextPID.Store(1)
 	return c
@@ -450,6 +452,24 @@ func (c *MQTTClient) readLoop() {
 
 // handlePublish processes an incoming PUBLISH packet.
 func (c *MQTTClient) handlePublish(pkt *protocol.PublishPacket) {
+	// Detect duplicate QoS 2 PUBLISH (MQTT 3.1.1 §4.3.3, MQTT 5.0 §4.3.3)
+	if pkt.FixedHeader.QoS == 2 {
+		c.mu.Lock()
+		if _, dup := c.receivedQoS2[pkt.PacketID]; dup {
+			c.mu.Unlock()
+			// Duplicate detected; still send PUBREC but skip onMessage delivery
+			if conn := c.conn; conn != nil {
+				pubrec := &protocol.PubRecPacket{PacketID: pkt.PacketID}
+				pubrec.FixedHeader.PacketType = protocol.PacketTypePubRec
+				pubrec.FixedHeader.QoS = 1
+				_ = c.codec.Encode(conn, pubrec)
+			}
+			return
+		}
+		c.receivedQoS2[pkt.PacketID] = struct{}{}
+		c.mu.Unlock()
+	}
+
 	c.msgMu.RLock()
 	fn := c.onMessage
 	c.msgMu.RUnlock()
@@ -503,7 +523,7 @@ func (c *MQTTClient) deliverResponse(packetID uint16, pkt protocol.Packet) {
 
 // nextPacketID returns the next packet identifier, cycling through 1-65535.
 func (c *MQTTClient) nextPacketID() uint16 {
-	for {
+	for attempts := 0; attempts < 100; attempts++ {
 		old := c.nextPID.Load()
 		next := old + 1
 		if next > 65535 {
@@ -513,4 +533,10 @@ func (c *MQTTClient) nextPacketID() uint16 {
 			return uint16(old)
 		}
 	}
+	// Fallback: all attempts exhausted (extreme contention), use atomic add.
+	pid := uint16(c.nextPID.Add(1) - 1)
+	if pid == 0 {
+		pid = 1
+	}
+	return pid
 }
