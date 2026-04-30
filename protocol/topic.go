@@ -45,9 +45,14 @@ func SplitTopic(topic string) []string {
 
 // ValidateTopicFilter checks whether a topic filter conforms to MQTT spec rules.
 // Rules: '#' must be last character and preceded by '/' or be the entire filter;
-// '+' must occupy an entire level (bounded by '/' or string start/end).
+// '+' must occupy an entire level (bounded by '/' or string start/end);
+// empty topic levels (leading, trailing, or consecutive '/') are not allowed.
 func ValidateTopicFilter(filter string) bool {
 	if len(filter) == 0 {
+		return false
+	}
+	// No empty levels: leading, trailing, or consecutive separators
+	if filter[0] == '/' || filter[len(filter)-1] == '/' || strings.Contains(filter, "//") {
 		return false
 	}
 	for i := 0; i < len(filter); i++ {
