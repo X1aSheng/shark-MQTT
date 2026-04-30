@@ -221,8 +221,8 @@ func (s *Session) MatchesSubscription(topic string) (bool, uint8) {
 
 // NextPacketID generates the next packet ID, skipping IDs already in use.
 func (s *Session) NextPacketID() uint16 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	// Try up to 65535 IDs to find an unused one
 	for attempts := 0; attempts < 65535; attempts++ {
 		id := s.packetIDSeq
