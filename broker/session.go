@@ -279,6 +279,10 @@ func (s *Session) Save(ctx context.Context, sessionStore store.SessionStore) err
 		ExpiryInterval: s.ExpiryInterval,
 	}
 
+	if s.ExpiryInterval > 0 {
+		data.ExpiryTime = time.Now().Add(time.Duration(s.ExpiryInterval) * time.Second)
+	}
+
 	subscriptions := make([]store.Subscription, 0, len(s.Subscriptions))
 	for topic, qos := range s.Subscriptions {
 		subscriptions = append(subscriptions, store.Subscription{Topic: topic, QoS: qos})

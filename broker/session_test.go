@@ -215,6 +215,67 @@ func TestSessionIsExpired(t *testing.T) {
 	}
 }
 
+func TestSessionSaveExpiryTime(t *testing.T) {
+	ctx := context.Background()
+	memStore := memory.NewSessionStore()
+
+	sess := &Session{
+		ClientID:       "expiry-test",
+		IsClean:        false,
+		ExpiryInterval: 10,
+		KeepAlive:      60,
+		ProtocolVer:    protocol.Version311,
+		Subscriptions:  make(map[string]uint8),
+		Inflight:       make(map[uint16]*InflightMsg),
+	}
+
+	if err := sess.Save(ctx, memStore); err != nil {
+		t.Fatalf("save error: %v", err)
+	}
+
+	data, err := memStore.GetSession(ctx, "expiry-test")
+	if err != nil {
+		t.Fatalf("get session error: %v", err)
+	}
+
+	if data.ExpiryTime.IsZero() {
+		t.Error("ExpiryTime should be set when ExpiryInterval > 0")
+	}
+
+	expectedExpiry := time.Now().Add(time.Duration(sess.ExpiryInterval) * time.Second)
+	if data.ExpiryTime.Before(expectedExpiry.Add(-time.Second)) || data.ExpiryTime.After(expectedExpiry.Add(time.Second)) {
+		t.Errorf("ExpiryTime mismatch: got %v, want ~%v", data.ExpiryTime, expectedExpiry)
+	}
+}
+
+func TestSessionSaveExpiryTimeZeroWhenClean(t *testing.T) {
+	ctx := context.Background()
+	memStore := memory.NewSessionStore()
+
+	sess := &Session{
+		ClientID:       "clean-expiry",
+		IsClean:        true,
+		ExpiryInterval: 0,
+		KeepAlive:      60,
+		ProtocolVer:    protocol.Version311,
+		Subscriptions:  make(map[string]uint8),
+		Inflight:       make(map[uint16]*InflightMsg),
+	}
+
+	if err := sess.Save(ctx, memStore); err != nil {
+		t.Fatalf("save error: %v", err)
+	}
+
+	data, err := memStore.GetSession(ctx, "clean-expiry")
+	if err != nil {
+		t.Fatalf("get session error: %v", err)
+	}
+
+	if !data.ExpiryTime.IsZero() {
+		t.Error("ExpiryTime should be zero when ExpiryInterval is 0")
+	}
+}
+
 func TestSessionSaveRestore(t *testing.T) {
 	ctx := context.Background()
 	memStore := memory.NewSessionStore()
