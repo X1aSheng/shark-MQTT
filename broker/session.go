@@ -266,9 +266,11 @@ func (s *Session) GetInflight(packetID uint16) (*InflightMsg, bool) {
 }
 
 // Save persists the session to the store.
+// Snapshot under the read lock, then deep-copy payloads outside the lock
+// so that concurrent readers (e.g. deliverToClient) are not blocked by
+// large payload copies.
 func (s *Session) Save(ctx context.Context, sessionStore store.SessionStore) error {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
 
 	data := &store.SessionData{
 		ClientID:       s.ClientID,
@@ -289,16 +291,38 @@ func (s *Session) Save(ctx context.Context, sessionStore store.SessionStore) err
 	}
 	data.Subscriptions = subscriptions
 
-	inflight := make(map[uint16]*store.InflightMessage)
-	for id, msg := range s.Inflight {
-		payloadCopy := make([]byte, len(msg.Payload))
-		copy(payloadCopy, msg.Payload)
-		inflight[id] = &store.InflightMessage{
-			PacketID: msg.PacketID,
-			QoS:      msg.QoS,
-			Topic:    msg.Topic,
+	// Snapshot inflight metadata — payload deep-copy happens outside the lock.
+	type snapEntry struct {
+		packetID uint16
+		qos      uint8
+		topic    string
+		payload  []byte
+		retain   bool
+	}
+	snapshots := make([]snapEntry, 0, len(s.Inflight))
+	for _, msg := range s.Inflight {
+		snapshots = append(snapshots, snapEntry{
+			packetID: msg.PacketID,
+			qos:      msg.QoS,
+			topic:    msg.Topic,
+			payload:  msg.Payload,
+			retain:   msg.Retain,
+		})
+	}
+
+	s.mu.RUnlock()
+
+	// Deep-copy payloads outside the lock.
+	inflight := make(map[uint16]*store.InflightMessage, len(snapshots))
+	for _, snap := range snapshots {
+		payloadCopy := make([]byte, len(snap.payload))
+		copy(payloadCopy, snap.payload)
+		inflight[snap.packetID] = &store.InflightMessage{
+			PacketID: snap.packetID,
+			QoS:      snap.qos,
+			Topic:    snap.topic,
 			Payload:  payloadCopy,
-			Retain:   msg.Retain,
+			Retain:   snap.retain,
 		}
 	}
 	data.Inflight = inflight
