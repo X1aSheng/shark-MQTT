@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/X1aSheng/shark-mqtt/pkg/logger"
@@ -48,6 +49,8 @@ type Broker struct {
 	// to detect and suppress duplicates when DUP flag is set (MQTT §4.3.3).
 	receivedQoS2   map[string]map[uint16]struct{}
 	receivedQoS2Mu sync.Mutex
+
+	retainedCount atomic.Int64 // approximate count of retained messages
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -137,18 +140,21 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 	pkt, err := c.Decode(conn)
 	if err != nil {
 		b.metrics.IncRejections("decode_error")
+		b.metrics.IncErrors("decode")
 		return fmt.Errorf("broker: decode CONNECT failed: %w", err)
 	}
 
 	connectPkt, ok := pkt.(*protocol.ConnectPacket)
 	if !ok {
 		b.metrics.IncRejections("invalid_packet")
+		b.metrics.IncErrors("protocol")
 		return fmt.Errorf("broker: expected CONNECT, got %T", pkt)
 	}
 
 	// Validate CONNECT per MQTT spec
 	if err := protocol.ValidateConnect(connectPkt); err != nil {
 		b.metrics.IncRejections("invalid_connect")
+		b.metrics.IncErrors("protocol")
 		var reasonCode byte = protocol.ConnAckUnacceptableProtocol
 		if connectPkt.ProtocolVersion == protocol.Version50 {
 			reasonCode = protocol.ConnAckProtocolError
@@ -222,7 +228,9 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 		b.logger.Info("session takeover", "clientID", clientID)
 	}
 	b.connections[clientID] = &clientState{conn: conn, codec: c}
+	online := len(b.connections)
 	b.mu.Unlock()
+	b.metrics.SetOnlineSessions(online)
 
 	// Register will message
 	if connectPkt.Flags.WillFlag {
@@ -378,6 +386,7 @@ func (b *Broker) disconnect(clientID string, conn net.Conn) {
 	if sess, ok := b.sessions.GetSession(clientID); ok && !sess.IsClean && b.sessionStore != nil {
 		if err := sess.Save(b.ctx, b.sessionStore); err != nil {
 			b.logger.Debug("failed to save session", "clientID", clientID, "error", err)
+			b.metrics.IncErrors("session_save")
 		}
 	}
 
@@ -392,7 +401,9 @@ func (b *Broker) disconnect(clientID string, conn net.Conn) {
 	if cs, exists := b.connections[clientID]; exists && cs.conn == conn {
 		delete(b.connections, clientID)
 	}
+	online := len(b.connections)
 	b.mu.Unlock()
+	b.metrics.SetOnlineSessions(online)
 
 	// Plugin hook
 	b.dispatch(plugin.OnClose, &plugin.Context{ClientID: clientID})
@@ -499,12 +510,20 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 			if b.retainedStore != nil {
 				if err := b.retainedStore.DeleteRetained(b.ctx, pkt.Topic); err != nil {
 					b.logger.Debug("failed to delete retained message", "topic", pkt.Topic, "error", err)
+					b.metrics.IncErrors("retained_store")
+				} else {
+					b.retainedCount.Add(-1)
+					b.metrics.SetRetainedMessages(int(b.retainedCount.Load()))
 				}
 			}
 		} else {
 			if b.retainedStore != nil {
 				if err := b.retainedStore.SaveRetained(b.ctx, pkt.Topic, pkt.FixedHeader.QoS, pkt.Payload); err != nil {
 					b.logger.Debug("failed to save retained message", "topic", pkt.Topic, "error", err)
+					b.metrics.IncErrors("retained_store")
+				} else {
+					b.retainedCount.Add(1)
+					b.metrics.SetRetainedMessages(int(b.retainedCount.Load()))
 				}
 			}
 		}
@@ -607,6 +626,8 @@ func (b *Broker) handleSubscribe(clientID string, sess *Session, pkt *protocol.S
 		ReasonCodes: reasonCodes,
 	})
 
+	b.metrics.SetSubscriptions(int(b.topics.SubscriberCount()))
+
 	// Deliver retained messages matching the new subscriptions
 	for _, topic := range pkt.Topics {
 		b.deliverRetainedMessages(clientID, sess, topic.Topic)
@@ -628,6 +649,8 @@ func (b *Broker) handleUnsubscribe(clientID string, sess *Session, pkt *protocol
 		},
 		PacketID: pkt.PacketID,
 	})
+
+	b.metrics.SetSubscriptions(int(b.topics.SubscriberCount()))
 }
 
 func (b *Broker) deliverToClient(clientID string, pkt *protocol.PublishPacket) {

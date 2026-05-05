@@ -308,6 +308,40 @@ func TestTopicTree_Match_NoMatch(t *testing.T) {
 	}
 }
 
+func TestTopicTree_SubscriberCount(t *testing.T) {
+	tt := NewTopicTree()
+	if count := tt.SubscriberCount(); count != 0 {
+		t.Errorf("expected 0, got %d", count)
+	}
+
+	tt.Subscribe("home/+/temp", "client1", 0)
+	if count := tt.SubscriberCount(); count != 1 {
+		t.Errorf("expected 1, got %d", count)
+	}
+
+	tt.Subscribe("home/#", "client2", 0)
+	if count := tt.SubscriberCount(); count != 2 {
+		t.Errorf("expected 2, got %d", count)
+	}
+
+	// Same client, same topic filter (update QoS) — count stays the same
+	tt.Subscribe("home/+/temp", "client1", 1)
+	if count := tt.SubscriberCount(); count != 2 {
+		t.Errorf("expected 2 after QoS update, got %d", count)
+	}
+
+	tt.Unsubscribe("home/+/temp", "client1")
+	if count := tt.SubscriberCount(); count != 1 {
+		t.Errorf("expected 1 after unsubscribe, got %d", count)
+	}
+
+	// Unsubscribe non-existent — count stays the same
+	tt.Unsubscribe("nonexistent", "client1")
+	if count := tt.SubscriberCount(); count != 1 {
+		t.Errorf("expected 1 after no-op unsubscribe, got %d", count)
+	}
+}
+
 func TestTopicTree_Match_PartialOverlap(t *testing.T) {
 	tt := NewTopicTree()
 	tt.Subscribe("a/b/c", "client1", 0)

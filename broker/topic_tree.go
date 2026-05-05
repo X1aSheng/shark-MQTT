@@ -3,6 +3,7 @@ package broker
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"github.com/X1aSheng/shark-mqtt/protocol"
 )
@@ -16,8 +17,9 @@ type TopicNode struct {
 // TopicTree implements a trie-based subscription matching system.
 // It supports MQTT topic wildcards: + (single-level) and # (multi-level).
 type TopicTree struct {
-	root *TopicNode
-	mu   sync.RWMutex
+	root     *TopicNode
+	mu       sync.RWMutex
+	totalSubs atomic.Int64
 }
 
 // NewTopicTree creates a new TopicTree.
@@ -89,6 +91,9 @@ func (tt *TopicTree) Match(topic string) []Subscriber {
 
 func (tt *TopicTree) subscribeNode(node *TopicNode, parts []string, clientID string, qos uint8, depth int) {
 	if depth == len(parts) {
+		if _, exists := node.subscribers[clientID]; !exists {
+			tt.totalSubs.Add(1)
+		}
 		node.subscribers[clientID] = qos
 		return
 	}
@@ -107,6 +112,9 @@ func (tt *TopicTree) subscribeNode(node *TopicNode, parts []string, clientID str
 
 func (tt *TopicTree) unsubscribeNode(node *TopicNode, parts []string, clientID string, depth int) bool {
 	if depth == len(parts) {
+		if _, exists := node.subscribers[clientID]; exists {
+			tt.totalSubs.Add(-1)
+		}
 		delete(node.subscribers, clientID)
 		return len(node.subscribers) == 0 && len(node.children) == 0
 	}
@@ -161,6 +169,11 @@ func (tt *TopicTree) matchNodeWithSys(node *TopicNode, parts []string, depth int
 			tt.matchNodeWithSys(plusChild, parts, depth+1, results, visited, false)
 		}
 	}
+}
+
+// SubscriberCount returns the total number of subscription entries.
+func (tt *TopicTree) SubscriberCount() int64 {
+	return tt.totalSubs.Load()
 }
 
 func (tt *TopicTree) collectAllSubscribers(node *TopicNode, results *[]Subscriber, visited map[string]struct{}) {
