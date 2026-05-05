@@ -25,9 +25,10 @@ type brokerOptions struct {
 	maxInflight    int
 	retryInterval  time.Duration
 	maxRetries     int
-	maxConnections int
-	maxPacketSize  int
-	sessionExpiry  time.Duration
+	maxConnections         int
+	maxPacketSize          int
+	sessionExpiry          time.Duration
+	sessionCleanupInterval time.Duration
 }
 
 func defaultBrokerOptions() brokerOptions {
@@ -43,7 +44,8 @@ func defaultBrokerOptions() brokerOptions {
 		maxRetries:     3,
 		maxConnections: 10000,
 		maxPacketSize:  256 * 1024,
-		sessionExpiry:  24 * time.Hour,
+		sessionExpiry:          24 * time.Hour,
+		sessionCleanupInterval: 60 * time.Second,
 	}
 }
 
@@ -129,5 +131,12 @@ func WithBrokerMaxPacketSize(n int) Option {
 func WithSessionExpiry(d time.Duration) Option {
 	return func(o *brokerOptions) {
 		o.sessionExpiry = d
+	}
+}
+
+// WithSessionCleanupInterval sets the interval for the session expiry cleanup loop.
+func WithSessionCleanupInterval(d time.Duration) Option {
+	return func(o *brokerOptions) {
+		o.sessionCleanupInterval = d
 	}
 }

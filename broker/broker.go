@@ -258,7 +258,60 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 // Start starts the broker's internal subsystems.
 func (b *Broker) Start() error {
 	b.qos.Start()
+	go b.sessionCleanupLoop()
 	return nil
+}
+
+// sessionCleanupLoop periodically removes expired sessions from the store.
+// It exits when the broker context is cancelled.
+func (b *Broker) sessionCleanupLoop() {
+	ticker := time.NewTicker(b.opts.sessionCleanupInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-b.ctx.Done():
+			return
+		case <-ticker.C:
+			b.cleanupExpiredSessions()
+		}
+	}
+}
+
+func (b *Broker) cleanupExpiredSessions() {
+	if b.sessionStore == nil {
+		return
+	}
+
+	clientIDs, err := b.sessionStore.ListSessions(b.ctx)
+	if err != nil {
+		b.logger.Debug("failed to list sessions for cleanup", "error", err)
+		return
+	}
+
+	now := time.Now()
+	for _, clientID := range clientIDs {
+		// Skip connected clients
+		b.mu.RLock()
+		_, connected := b.connections[clientID]
+		b.mu.RUnlock()
+		if connected {
+			continue
+		}
+
+		data, err := b.sessionStore.GetSession(b.ctx, clientID)
+		if err != nil {
+			continue
+		}
+
+		if data.ExpiryInterval > 0 && !data.ExpiryTime.IsZero() && now.After(data.ExpiryTime) {
+			if err := b.sessionStore.DeleteSession(b.ctx, clientID); err != nil {
+				b.logger.Debug("failed to delete expired session", "clientID", clientID, "error", err)
+			} else {
+				b.logger.Debug("expired session cleaned up", "clientID", clientID)
+			}
+		}
+	}
 }
 
 // Stop stops the broker's internal subsystems and closes all sessions.
