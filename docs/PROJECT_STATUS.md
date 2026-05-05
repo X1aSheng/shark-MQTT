@@ -4,7 +4,7 @@
 
 Shark-MQTT 是一个用 Go 编写的高性能 MQTT Broker，支持 MQTT 3.1.1 和 5.0 协议。项目已从 Shark-Socket 中提取为独立项目，采用分层架构设计。
 
-**整体完成度：约 95%** | 最后更新：2026-04-30 (Phase 7 complete)
+**整体完成度：约 96%** | 最后更新：2026-05-05 (Phase 8 complete)
 
 ---
 
@@ -130,6 +130,24 @@ broker.Broker
 - L-001/L-002: errs 包错误整合
 - L-004: RemainingLength 上界验证
 
+### Phase 8 — 代码审查修复 (2026-05-05)
+基于 CODE_REVIEW_260505_174239.md 审查，修复了 7 个缺陷：
+
+**P0 关键修复:**
+- ✅ FIX-1: 会话过期清理协程 — `Save()` 计算 `ExpiryTime`，添加 `sessionCleanupLoop`，可配置 `WithSessionCleanupInterval`
+- ✅ FIX-2: Broker 端 QoS 2 重复检测 — `receivedQoS2` 去重映射，DUP 标志检查，PUBREC 重发
+- ✅ FIX-3: 指标采集接入 — `SetOnlineSessions`、`SetSubscriptions`、`SetRetainedMessages`、`IncErrors` 全部接入
+
+**P1 中等修复:**
+- ✅ FIX-4: Session.Save 锁优化 — 快照后释放读锁，锁外深拷贝 payload
+- ✅ FIX-5: 客户端错误处理 — `SetOnError` 回调，替换 `_ = codec.Encode()` 为带错误日志的调用
+- ✅ FIX-6: 保留消息 O(log n) 匹配 — `retainedTrie` 前缀树索引替代线性扫描
+
+**P2 代码质量:**
+- ✅ FIX-7: MQTT 解码路径统一 — `decodeSubscribe`/`decodeUnsubscribe`/`decodePublish` 统一为 buffer-first 模式
+
+**提交记录:** 7815854, ef2daf3, 99917bd, af4ef6c, d468690, cc0d4b2, f4042fc
+
 ### Phase 7 — 代码审查修复 (2026-04-30)
 基于 CODE_REVIEW_250430_112600.md (62 项发现)，修复了以下问题：
 
@@ -230,3 +248,4 @@ broker.Broker
 | FIX_PLAN_02_CRITICAL_MEDIUM.md | 2026-04-29 | Phase 5 修复（C-001~M-003） |
 | FIX_PLAN_03_MEDIUM_LOW.md | 2026-04-29 | Phase 6 修复（M-001~L-004） |
 | CODE_REVIEW_260430_114500.md | 2026-04-30 | Phase 7 审查（8 项新发现） |
+| CODE_REVIEW_260505_174239.md | 2026-05-05 | Phase 8 审查（7 缺陷全部修复） |
