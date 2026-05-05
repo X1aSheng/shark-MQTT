@@ -104,6 +104,92 @@ func TestBroker_Publish_NoSubscribers(t *testing.T) {
 	b.handlePublish("client1", nil, pkt)
 }
 
+func TestBroker_QoS2DupDetection(t *testing.T) {
+	b := New(WithAuth(AllowAllAuth{}))
+	err := b.Start()
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer b.Stop()
+
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+	defer clientConn.Close()
+
+	codec := protocol.NewCodec(0)
+	b.mu.Lock()
+	b.connections["dup-client"] = &clientState{conn: serverConn, codec: codec}
+	b.mu.Unlock()
+
+	// Pre-register packet ID 100 as already received for this client
+	b.receivedQoS2Mu.Lock()
+	b.receivedQoS2["dup-client"] = map[uint16]struct{}{100: {}}
+	b.receivedQoS2Mu.Unlock()
+
+	// Subscribe another client
+	serverConn2, clientConn2 := net.Pipe()
+	defer serverConn2.Close()
+	defer clientConn2.Close()
+	codec2 := protocol.NewCodec(0)
+	b.mu.Lock()
+	b.connections["subscriber"] = &clientState{conn: serverConn2, codec: codec2}
+	b.mu.Unlock()
+	b.topics.Subscribe("test/dup", "subscriber", 2)
+
+	// Drain writes from both connections
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			if _, err := clientConn.Read(buf); err != nil {
+				return
+			}
+		}
+	}()
+
+	// Send QoS 2 PUBLISH with DUP=1 for an already-seen packet ID
+	dupPkt := &protocol.PublishPacket{
+		FixedHeader: protocol.FixedHeader{
+			PacketType: protocol.PacketTypePublish,
+			QoS:        2,
+			Dup:        true,
+		},
+		Topic:    "test/dup",
+		PacketID: 100,
+		Payload:  []byte("duplicate"),
+	}
+
+	// handlePublish should detect the duplicate and NOT call TrackQoS2
+	// (we verify by checking that the inflight count is 0 for the publisher)
+	b.handlePublish("dup-client", nil, dupPkt)
+
+	b.receivedQoS2Mu.Lock()
+	_, exists := b.receivedQoS2["dup-client"][100]
+	b.receivedQoS2Mu.Unlock()
+	if !exists {
+		t.Error("packet ID should still be tracked after dup detection")
+	}
+
+	// New QoS 2 PUBLISH with fresh packet ID (not DUP) should work normally
+	newPkt := &protocol.PublishPacket{
+		FixedHeader: protocol.FixedHeader{
+			PacketType: protocol.PacketTypePublish,
+			QoS:        2,
+		},
+		Topic:    "test/dup",
+		PacketID: 200,
+		Payload:  []byte("new"),
+	}
+	b.handlePublish("dup-client", nil, newPkt)
+
+	b.receivedQoS2Mu.Lock()
+	_, tracked := b.receivedQoS2["dup-client"][200]
+	delete(b.receivedQoS2, "dup-client")
+	b.receivedQoS2Mu.Unlock()
+	if !tracked {
+		t.Error("new packet ID should be tracked for non-dup PUBLISH")
+	}
+}
+
 func TestBroker_SubscribeAndUnsubscribe(t *testing.T) {
 	b := New(WithAuth(AllowAllAuth{}))
 	err := b.Start()

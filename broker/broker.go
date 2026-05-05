@@ -44,6 +44,11 @@ type Broker struct {
 	// connections maps clientID -> clientState
 	connections map[string]*clientState
 
+	// QoS 2 duplicate detection: tracks incoming PUBLISH packet IDs per client
+	// to detect and suppress duplicates when DUP flag is set (MQTT §4.3.3).
+	receivedQoS2   map[string]map[uint16]struct{}
+	receivedQoS2Mu sync.Mutex
+
 	ctx    context.Context
 	cancel context.CancelFunc
 	opts   brokerOptions
@@ -70,6 +75,7 @@ func New(opts ...Option) *Broker {
 		metrics:       o.metrics,
 		pluginMgr:     o.pluginManager,
 		connections:   make(map[string]*clientState),
+		receivedQoS2:  make(map[string]map[uint16]struct{}),
 		ctx:           ctx,
 		cancel:        cancel,
 		opts:          o,
@@ -378,6 +384,10 @@ func (b *Broker) disconnect(clientID string, conn net.Conn) {
 	b.sessions.RemoveSession(clientID)
 	b.qos.RemoveClient(clientID)
 
+	b.receivedQoS2Mu.Lock()
+	delete(b.receivedQoS2, clientID)
+	b.receivedQoS2Mu.Unlock()
+
 	b.mu.Lock()
 	if cs, exists := b.connections[clientID]; exists && cs.conn == conn {
 		delete(b.connections, clientID)
@@ -500,8 +510,35 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 		}
 	}
 
+	// QoS 2: detect duplicate PUBLISH (DUP flag). Per MQTT §4.3.3, when a
+	// publisher resends a QoS 2 PUBLISH because the PUBREC was lost, the broker
+	// must re-send PUBREC without re-processing the message.
+	if pkt.FixedHeader.QoS == 2 && pkt.FixedHeader.Dup {
+		b.receivedQoS2Mu.Lock()
+		clientDups := b.receivedQoS2[clientID]
+		if clientDups != nil {
+			if _, dup := clientDups[pkt.PacketID]; dup {
+				b.receivedQoS2Mu.Unlock()
+				b.writePacket(clientID, &protocol.PubRecPacket{
+					FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePubRec},
+					PacketID:    pkt.PacketID,
+					ReasonCode:  protocol.ReasonCodeSuccess,
+				})
+				return
+			}
+		}
+		b.receivedQoS2Mu.Unlock()
+	}
+
 	// QoS 2: defer subscriber delivery until PUBCOMP completes the handshake
 	if pkt.FixedHeader.QoS == 2 {
+		b.receivedQoS2Mu.Lock()
+		if b.receivedQoS2[clientID] == nil {
+			b.receivedQoS2[clientID] = make(map[uint16]struct{})
+		}
+		b.receivedQoS2[clientID][pkt.PacketID] = struct{}{}
+		b.receivedQoS2Mu.Unlock()
+
 		var reasonCode byte = protocol.ReasonCodeSuccess
 		if err := b.qos.TrackQoS2(clientID, pkt.PacketID, pkt.Topic, pkt.Payload, pkt.FixedHeader.Retain); err != nil {
 			reasonCode = protocol.ReasonCodeReceiveMaxExceeded
@@ -790,6 +827,11 @@ func (b *Broker) handlePubRel(clientID string, packetID uint16) {
 
 func (b *Broker) handlePubComp(clientID string, packetID uint16) {
 	b.qos.AckPubComp(clientID, packetID)
+	b.receivedQoS2Mu.Lock()
+	if clientDups := b.receivedQoS2[clientID]; clientDups != nil {
+		delete(clientDups, packetID)
+	}
+	b.receivedQoS2Mu.Unlock()
 }
 
 func (b *Broker) sendPubAck(clientID string, packetID uint16) error {
