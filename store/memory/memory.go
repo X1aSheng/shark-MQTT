@@ -171,16 +171,26 @@ func (m *messageStore) ClearMessages(ctx context.Context, clientID string) error
 	return nil
 }
 
-// retainedStore implements store.RetainedStore using in-memory maps.
+// retainedTrie is a prefix tree for retained message topics to enable
+// O(log n) matching with wildcard support instead of linear scan.
+type retainedTrie struct {
+	children map[string]*retainedTrie
+	msg      *store.RetainedMessage // non-nil only at leaf nodes
+}
+
+// retainedStore implements store.RetainedStore using in-memory maps
+// with a trie index for efficient pattern matching.
 type retainedStore struct {
 	mu       sync.RWMutex
 	messages map[string]*store.RetainedMessage
+	index    *retainedTrie
 }
 
 // NewRetainedStore creates a new in-memory retained message store.
 func NewRetainedStore() store.RetainedStore {
 	return &retainedStore{
 		messages: make(map[string]*store.RetainedMessage),
+		index:    &retainedTrie{children: make(map[string]*retainedTrie)},
 	}
 }
 
@@ -189,17 +199,53 @@ func (r *retainedStore) SaveRetained(ctx context.Context, topic string, qos uint
 	defer r.mu.Unlock()
 	if len(payload) == 0 {
 		delete(r.messages, topic)
+		r.removeFromIndex(topic)
 		return nil
 	}
 	payloadCopy := make([]byte, len(payload))
 	copy(payloadCopy, payload)
-	r.messages[topic] = &store.RetainedMessage{
+	msg := &store.RetainedMessage{
 		Topic:     topic,
 		QoS:       qos,
 		Payload:   payloadCopy,
 		Timestamp: time.Now(),
 	}
+	r.messages[topic] = msg
+	r.addToIndex(topic, msg)
 	return nil
+}
+
+func (r *retainedStore) addToIndex(topic string, msg *store.RetainedMessage) {
+	parts := protocol.SplitTopic(topic)
+	node := r.index
+	for _, part := range parts {
+		if node.children[part] == nil {
+			node.children[part] = &retainedTrie{children: make(map[string]*retainedTrie)}
+		}
+		node = node.children[part]
+	}
+	node.msg = msg
+}
+
+func (r *retainedStore) removeFromIndex(topic string) {
+	parts := protocol.SplitTopic(topic)
+	r.index.remove(parts, 0)
+}
+
+func (n *retainedTrie) remove(parts []string, depth int) bool {
+	if depth == len(parts) {
+		n.msg = nil
+		return len(n.children) == 0
+	}
+	part := parts[depth]
+	child, ok := n.children[part]
+	if !ok {
+		return false
+	}
+	if child.remove(parts, depth+1) {
+		delete(n.children, part)
+	}
+	return n.msg == nil && len(n.children) == 0
 }
 
 func (r *retainedStore) GetRetained(ctx context.Context, topic string) (*store.RetainedMessage, error) {
@@ -221,22 +267,73 @@ func (r *retainedStore) DeleteRetained(ctx context.Context, topic string) error 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.messages, topic)
+	r.removeFromIndex(topic)
 	return nil
 }
 
 func (r *retainedStore) MatchRetained(ctx context.Context, pattern string) ([]*store.RetainedMessage, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+
+	if len(r.messages) == 0 {
+		return nil, nil
+	}
+
+	parts := protocol.SplitTopic(pattern)
 	var result []*store.RetainedMessage
-	for topic, msg := range r.messages {
-		if protocol.MatchTopic(pattern, topic) {
-			msgCopy := *msg
-			if msg.Payload != nil {
-				msgCopy.Payload = make([]byte, len(msg.Payload))
-				copy(msgCopy.Payload, msg.Payload)
+	visited := make(map[string]struct{})
+	r.index.match(parts, 0, &result, visited)
+	return result, nil
+}
+
+func (n *retainedTrie) match(parts []string, depth int, result *[]*store.RetainedMessage, visited map[string]struct{}) {
+	if depth == len(parts) {
+		if n.msg != nil {
+			if _, ok := visited[n.msg.Topic]; !ok {
+				visited[n.msg.Topic] = struct{}{}
+				msgCopy := *n.msg
+				if n.msg.Payload != nil {
+					msgCopy.Payload = make([]byte, len(n.msg.Payload))
+					copy(msgCopy.Payload, n.msg.Payload)
+				}
+				*result = append(*result, &msgCopy)
 			}
-			result = append(result, &msgCopy)
+		}
+		return
+	}
+
+	part := parts[depth]
+
+	if part == "#" {
+		n.collectAll(result, visited)
+		return
+	}
+
+	if part == "+" {
+		for _, child := range n.children {
+			child.match(parts, depth+1, result, visited)
+		}
+		return
+	}
+
+	if child, ok := n.children[part]; ok {
+		child.match(parts, depth+1, result, visited)
+	}
+}
+
+func (n *retainedTrie) collectAll(result *[]*store.RetainedMessage, visited map[string]struct{}) {
+	if n.msg != nil {
+		if _, ok := visited[n.msg.Topic]; !ok {
+			visited[n.msg.Topic] = struct{}{}
+			msgCopy := *n.msg
+			if n.msg.Payload != nil {
+				msgCopy.Payload = make([]byte, len(n.msg.Payload))
+				copy(msgCopy.Payload, n.msg.Payload)
+			}
+			*result = append(*result, &msgCopy)
 		}
 	}
-	return result, nil
+	for _, child := range n.children {
+		child.collectAll(result, visited)
+	}
 }
