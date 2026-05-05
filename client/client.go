@@ -5,7 +5,9 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"log"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -38,6 +40,7 @@ type MQTTClient struct {
 	connected      bool
 	onMessage      func(topic string, qos byte, payload []byte)
 	msgMu          sync.RWMutex
+	onError        func(format string, args ...interface{})
 	receivedQoS2   map[uint16]struct{} // tracks received QoS 2 PacketIDs for dedup
 }
 
@@ -374,7 +377,9 @@ func (c *MQTTClient) Disconnect(ctx context.Context) error {
 	}
 	pkt.FixedHeader.PacketType = protocol.PacketTypeDisconnect
 
-	_ = c.codec.Encode(conn, pkt)
+	if err := c.codec.Encode(conn, pkt); err != nil {
+		c.logError("failed to send DISCONNECT: %v", err)
+	}
 
 	c.cancel()
 	c.wg.Wait()
@@ -387,6 +392,24 @@ func (c *MQTTClient) SetOnMessage(fn func(topic string, qos byte, payload []byte
 	c.msgMu.Lock()
 	defer c.msgMu.Unlock()
 	c.onMessage = fn
+}
+
+// SetOnError sets the callback for non-fatal errors (e.g. encode failures).
+func (c *MQTTClient) SetOnError(fn func(format string, args ...interface{})) {
+	c.msgMu.Lock()
+	defer c.msgMu.Unlock()
+	c.onError = fn
+}
+
+func (c *MQTTClient) logError(format string, args ...interface{}) {
+	c.msgMu.RLock()
+	fn := c.onError
+	c.msgMu.RUnlock()
+	if fn != nil {
+		fn(format, args...)
+		return
+	}
+	log.New(os.Stderr, "[mqtt-client] ", log.LstdFlags).Printf(format, args...)
 }
 
 // IsConnected returns whether the client is connected.
@@ -462,7 +485,9 @@ func (c *MQTTClient) handlePublish(pkt *protocol.PublishPacket) {
 				pubrec := &protocol.PubRecPacket{PacketID: pkt.PacketID}
 				pubrec.FixedHeader.PacketType = protocol.PacketTypePubRec
 				pubrec.FixedHeader.QoS = 1
-				_ = c.codec.Encode(conn, pubrec)
+				if err := c.codec.Encode(conn, pubrec); err != nil {
+				c.logError("failed to send PUBREC for packet %d: %v", pkt.PacketID, err)
+			}
 			}
 			return
 		}
@@ -488,7 +513,9 @@ func (c *MQTTClient) handlePublish(pkt *protocol.PublishPacket) {
 				PacketID: pkt.PacketID,
 			}
 			puback.FixedHeader.PacketType = protocol.PacketTypePubAck
-			_ = c.codec.Encode(conn, puback)
+			if err := c.codec.Encode(conn, puback); err != nil {
+				c.logError("failed to send PUBACK for packet %d: %v", pkt.PacketID, err)
+			}
 		}
 	}
 
@@ -503,7 +530,9 @@ func (c *MQTTClient) handlePublish(pkt *protocol.PublishPacket) {
 			}
 			pubrec.FixedHeader.PacketType = protocol.PacketTypePubRec
 			pubrec.FixedHeader.QoS = 1
-			_ = c.codec.Encode(conn, pubrec)
+			if err := c.codec.Encode(conn, pubrec); err != nil {
+				c.logError("failed to send PUBREC for packet %d: %v", pkt.PacketID, err)
+			}
 		}
 	}
 }
