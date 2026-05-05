@@ -11,68 +11,41 @@ func (c *Codec) decodeSubscribe(r io.Reader, fh *FixedHeader) (*SubscribePacket,
 		return nil, err
 	}
 
-	bytesRead := 2 // packetID
+	remaining := fh.RemainingLength - 2
+	if remaining < 0 {
+		return nil, ErrMalformedPacket
+	}
 
-	// MQTT 5.0 properties
+	data := make([]byte, remaining)
+	if _, err := io.ReadFull(r, data); err != nil {
+		return nil, err
+	}
+	reader := bytes.NewReader(data)
+
 	var props *Properties
-	if c.protocolVersion == Version50 && fh.RemainingLength > 2 {
-		// Read remaining into buffer for proper property + topic parsing
-		remaining := fh.RemainingLength - bytesRead
-		data := make([]byte, remaining)
-		if _, err := io.ReadFull(r, data); err != nil {
-			return nil, err
-		}
-		reader := bytes.NewReader(data)
-
+	if c.protocolVersion == Version50 {
 		props, err = c.decodeProperties(reader)
 		if err != nil {
 			return nil, err
 		}
-
-		var topics []TopicFilter
-		for reader.Len() > 0 {
-			topic, err := readStringFromReader(reader)
-			if err != nil {
-				return nil, err
-			}
-			optsByte, err := reader.ReadByte()
-			if err != nil {
-				return nil, err
-			}
-			topics = append(topics, TopicFilter{
-				Topic:             topic,
-				QoS:               optsByte & 0x03,
-				NoLocal:           (optsByte & 0x04) != 0,
-				RetainAsPublished: (optsByte & 0x08) != 0,
-				RetainHandling:    (optsByte >> 4) & 0x03,
-			})
-		}
-
-		return &SubscribePacket{
-			FixedHeader: *fh,
-			PacketID:    packetID,
-			Topics:      topics,
-			Properties:  props,
-		}, nil
 	}
 
-	// MQTT 3.1.1: no properties, just topic filters
 	var topics []TopicFilter
-	for bytesRead < fh.RemainingLength {
-		topic, err := readString(r)
+	for reader.Len() > 0 {
+		topic, err := readStringFromReader(reader)
 		if err != nil {
 			return nil, err
 		}
-		bytesRead += len(topic) + 2
-
-		qosByte, err := readByte(r)
+		optsByte, err := reader.ReadByte()
 		if err != nil {
 			return nil, err
 		}
-		bytesRead++
 		topics = append(topics, TopicFilter{
-			Topic: topic,
-			QoS:   qosByte & 0x03,
+			Topic:             topic,
+			QoS:               optsByte & 0x03,
+			NoLocal:           (optsByte & 0x04) != 0,
+			RetainAsPublished: (optsByte & 0x08) != 0,
+			RetainHandling:    (optsByte >> 4) & 0x03,
 		})
 	}
 
@@ -204,47 +177,31 @@ func (c *Codec) decodeUnsubscribe(r io.Reader, fh *FixedHeader) (*UnsubscribePac
 		return nil, err
 	}
 
+	remaining := fh.RemainingLength - 2
+	if remaining < 0 {
+		return nil, ErrMalformedPacket
+	}
+
+	data := make([]byte, remaining)
+	if _, err := io.ReadFull(r, data); err != nil {
+		return nil, err
+	}
+	reader := bytes.NewReader(data)
+
 	var props *Properties
-	var topics []string
-
-	// MQTT 5.0: read properties first
-	bytesRead := 2
-	if c.protocolVersion == Version50 && fh.RemainingLength > 2 {
-		remaining := fh.RemainingLength - bytesRead
-		data := make([]byte, remaining)
-		if _, err := io.ReadFull(r, data); err != nil {
-			return nil, err
-		}
-		reader := bytes.NewReader(data)
-
+	if c.protocolVersion == Version50 {
 		props, err = c.decodeProperties(reader)
 		if err != nil {
 			return nil, err
 		}
-
-		for reader.Len() > 0 {
-			topic, err := readStringFromReader(reader)
-			if err != nil {
-				return nil, err
-			}
-			topics = append(topics, topic)
-		}
-
-		return &UnsubscribePacket{
-			FixedHeader: *fh,
-			PacketID:    packetID,
-			Topics:      topics,
-			Properties:  props,
-		}, nil
 	}
 
-	// MQTT 3.1.1: read topics directly
-	for bytesRead < fh.RemainingLength {
-		topic, err := readString(r)
+	var topics []string
+	for reader.Len() > 0 {
+		topic, err := readStringFromReader(reader)
 		if err != nil {
 			return nil, err
 		}
-		bytesRead += len(topic) + 2
 		topics = append(topics, topic)
 	}
 
