@@ -12,61 +12,47 @@ func (c *Codec) decodePublish(r io.Reader, fh *FixedHeader) (*PublishPacket, err
 		return nil, err
 	}
 
-	bytesRead := 2 + len(topic) // topic length prefix + topic string
-
 	var packetID uint16
 	if fh.QoS > 0 {
 		packetID, err = readUint16(r)
 		if err != nil {
 			return nil, err
 		}
-		bytesRead += 2
 	}
 
-	// MQTT 5.0 properties
+	// Read remaining bytes into a buffer so both protocol versions use the
+	// same parsing path. For 5.0: properties + payload. For 3.1.1: payload only.
+	headerBytes := 2 + len(topic) // topic length prefix + topic string
+	if fh.QoS > 0 {
+		headerBytes += 2 // packet ID
+	}
+	remaining := fh.RemainingLength - headerBytes
+	if remaining < 0 {
+		return nil, ErrMalformedPacket
+	}
+
+	data := make([]byte, remaining)
+	if remaining > 0 {
+		if _, err := io.ReadFull(r, data); err != nil {
+			return nil, err
+		}
+	}
+	reader := bytes.NewReader(data)
+
 	var props *Properties
-	var propBytesRead int
 	if c.protocolVersion == Version50 {
-		// Read remaining bytes into buffer for property parsing
-		remaining := fh.RemainingLength - bytesRead
-		if remaining > 0 {
-			data := make([]byte, remaining)
-			if _, err := io.ReadFull(r, data); err != nil {
-				return nil, err
-			}
-			reader := bytes.NewReader(data)
-
-			props, err = c.decodeProperties(reader)
-			if err != nil {
-				return nil, fmt.Errorf("decode properties: %w", err)
-			}
-			propBytesRead = remaining - reader.Len()
-
-			// Rest is payload
-			payloadLen := reader.Len()
-			var payload []byte
-			if payloadLen > 0 {
-				payload = make([]byte, payloadLen)
-				if _, err := reader.Read(payload); err != nil {
-					return nil, err
-				}
-			}
-			return &PublishPacket{
-				FixedHeader: *fh,
-				PacketID:    packetID,
-				Topic:       topic,
-				Payload:     payload,
-				Properties:  props,
-			}, nil
+		props, err = c.decodeProperties(reader)
+		if err != nil {
+			return nil, fmt.Errorf("decode properties: %w", err)
 		}
 	}
 
-	// MQTT 3.1.1: remaining bytes are all payload
-	payloadLen := fh.RemainingLength - bytesRead - propBytesRead
+	// Whatever remains is the payload
+	payloadLen := reader.Len()
 	var payload []byte
 	if payloadLen > 0 {
 		payload = make([]byte, payloadLen)
-		if _, err := io.ReadFull(r, payload); err != nil {
+		if _, err := reader.Read(payload); err != nil {
 			return nil, err
 		}
 	}
