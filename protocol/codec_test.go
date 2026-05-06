@@ -359,3 +359,32 @@ func TestPacketTooLarge(t *testing.T) {
 		t.Errorf("expected ErrPacketTooLarge, got %v", err)
 	}
 }
+
+func TestDecodeRejectsInvalidFixedHeaderFlags(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  []byte
+	}{
+		{
+			name: "PINGREQ with QoS bit set",
+			raw:  []byte{0xC2, 0x00},
+		},
+		{
+			name: "PUBLISH with QoS 3",
+			raw:  []byte{0x36, 0x08, 0x00, 0x04, 't', 'e', 's', 't', 0x00, 0x01},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			codec := NewCodec(256 * 1024)
+			_, err := codec.Decode(bytes.NewReader(tt.raw))
+			if err == nil {
+				t.Fatal("expected invalid fixed header flags to be rejected")
+			}
+			if err != ErrInvalidPacket {
+				t.Fatalf("Decode() error = %v, want %v", err, ErrInvalidPacket)
+			}
+		})
+	}
+}
