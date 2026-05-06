@@ -77,7 +77,7 @@ A high-performance MQTT Broker written in Go, supporting both **MQTT 3.1.1** and
 | `client/` | MQTT client implementation |
 | `errs/` | Centralized error definitions |
 | `tests/integration/` | 77 end-to-end integration tests (47 MQTT + 30 deploy verification) |
-| `tests/bench/` | 69 benchmarks (broker + E2E data verify + micro) |
+| `tests/bench/` | 67 benchmarks (broker + E2E data verify + micro + store) |
 | `examples/` | Runnable example programs (standalone, TLS, custom auth, shark-socket) |
 | `deploy/` | Docker, docker-compose, k8s, Helm chart deployment assets |
 | `docs/` | Architecture, deployment, performance, testing, and project status docs |
@@ -287,26 +287,26 @@ b := api.NewBroker(
 
 ## Performance
 
-Benchmarks run on **AMD Ryzen 7 8845HS / Windows 11 / Go 1.26.1**:
+Latest benchmarks run on **AMD Ryzen 7 8845HS / Windows 11 / Go 1.26.1** (`logs/20260506_123128_benchmark.log`):
 
 | Benchmark | ns/op | B/op | allocs/op |
 |-----------|-------|------|-----------|
-| Connection Establish | 243k | — | — |
-| MQTT Connect | 314k | — | — |
-| Publish QoS 0 | 21.6k | — | — |
-| Publish QoS 1 | 60.3k | — | — |
-| Publish QoS 2 | 96.7k | — | — |
-| Concurrent Publish | 21.0k | — | — |
-| Payload 128KB | 1.96M | — | — |
-| TopicTree Subscribe | 115 | 51 | 0 |
-| TopicTree Match (exact) | 209 | 88 | 2 |
-| TopicTree Match (wildcard #) | 187 | 88 | 2 |
-| TopicTree Match (wildcard +) | 299 | 136 | 3 |
-| Codec Encode Publish | 435 | 422 | 6 |
-| Codec Decode Publish | 458 | 432 | 8 |
-| QoS Engine Track QoS 1 | 89 | 128 | 1 |
-| BufferPool Get/Put | 32 | 24 | 1 |
-| MemoryStore Session Get | 8.5 | 0 | 0 |
+| Connection Establish | 305k | 4,079 | 65 |
+| MQTT Connect | 408k | 6,227 | 123 |
+| Publish QoS 0 | 24.0k | 1,760 | 27 |
+| Publish QoS 1 | 74.1k | 1,948 | 37 |
+| Publish QoS 2 | 201k | 2,548 | 52 |
+| Concurrent Publish | 43.5k | 1,717 | 26 |
+| Payload 128KB | 1.82M | 548,663 | 29 |
+| TopicTree Subscribe | 132 | 51 | 0 |
+| TopicTree Match (exact) | 244 | 88 | 2 |
+| TopicTree Match (wildcard #) | 236 | 88 | 2 |
+| TopicTree Match (wildcard +) | 354 | 136 | 3 |
+| Codec Encode Publish | 336 | 422 | 6 |
+| Codec Decode Publish | 536 | 736 | 10 |
+| QoS Engine Track QoS 1 | 19.2 | 0 | 0 |
+| BufferPool Get/Put | 29.8 | 24 | 1 |
+| MemoryStore Session Get | 5.7 | 0 | 0 |
 
 Full results: `make bench` or see `docs/performance.md`.
 
@@ -314,13 +314,13 @@ Full results: `make bench` or see `docs/performance.md`.
 
 | Type | Count | Status |
 |------|-------|--------|
-| Unit Tests | 207 | All pass |
-| Integration Tests | 77 | All pass |
-| Benchmarks | 69 | All pass |
-| **Total** | **353** | **0 failures** |
+| Unit Tests | 210 top-level / 307 passed runs | All pass |
+| Integration Tests | 77 top-level / 79 passed runs | All pass |
+| Benchmarks | 67 | All pass |
+| **Total** | **354 top-level tests + benchmarks** | **0 failures** |
 
 > 13 Redis tests skipped when `MQTT_REDIS_ADDR` is not set.
-> Test runs total 388 with table-driven subtests counted.
+> Latest full run: `logs/20260506_123128_*`; unit log reports 307 passed and 13 Redis tests skipped when Redis is not configured.
 
 ### Integration Test Coverage
 
@@ -460,7 +460,9 @@ All critical and high-severity issues resolved. Seven review phases and four fix
 - Health endpoints (`/healthz`, `/readyz`)
 - Config validation (YAML/ENV/CLI)
 - Centralized error definitions (`errs` package)
-- Comprehensive test suite (353 tests, 388 test runs)
+- Comprehensive test suite (354 top-level tests + benchmarks; latest full run 307 unit runs, 79 integration runs, 67 benchmarks)
+- Retained message metrics are exact across overwrite/delete paths
+- MQTT fixed-header flags and CONNECT Will flag combinations are rejected when malformed
 - Configurable QoS inflight limit enforcement with MQTT 5.0 ReceiveMaximum advertising
 - Client-side QoS 2 PUBLISH duplicate detection
 - Thread-safe packet ID generation
