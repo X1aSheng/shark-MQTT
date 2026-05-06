@@ -2,6 +2,8 @@
 
 A high-performance MQTT Broker written in Go, supporting both **MQTT 3.1.1** and **MQTT 5.0** protocols.
 
+**Project version baseline: 1.0.0**
+
 ## Features
 
 - **Protocol Support**: Full MQTT 3.1.1 & 5.0 with 15 packet types, complete property encoding/decoding
@@ -479,7 +481,7 @@ All critical and high-severity issues resolved. Seven review phases and four fix
 | L-007 | Low | Use named timeout constants in tests |
 | L-008 | Low | Add protocol fuzz tests |
 
-See `docs/PROJECT_STATUS.md` for the latest status and `docs/CODE_REVIEW_260430_114500.md` for the Phase 7 review.
+See `docs/PROJECT_STATUS.md` for the latest status and `docs/CODE_REVIEW_AND_FIX_PLAN.md` for the consolidated review and fix-plan archive.
 
 ## Documentation
 
@@ -494,6 +496,7 @@ See `docs/PROJECT_STATUS.md` for the latest status and `docs/CODE_REVIEW_260430_
 | [Testing](docs/testing.md) | Testing guide |
 | [Development](docs/development.md) | Development workflow |
 | [Project Status](docs/PROJECT_STATUS.md) | Current project state, coverage, roadmap |
+| [Review Archive](docs/CODE_REVIEW_AND_FIX_PLAN.md) | Consolidated code review and fix-plan history |
 
 ## License
 

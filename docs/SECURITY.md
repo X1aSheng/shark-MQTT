@@ -8,8 +8,8 @@ This document outlines the security policy and best practices for Shark-MQTT.
 
 | Version | Supported          |
 | ------- | ------------------ |
+| 1.0.x   | :white_check_mark: |
 | main    | :white_check_mark: |
-| latest release | :white_check_mark: |
 | older releases | :x:                |
 
 ---

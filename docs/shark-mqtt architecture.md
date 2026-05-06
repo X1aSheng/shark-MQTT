@@ -1,6 +1,6 @@
-# Shark-MQTT Architecture Design Document v2.0
+# Shark-MQTT Architecture Design Document v1.0.0
 
-> Version: 2.1.0 | Last Updated: 2026-04-29 | Go Version: 1.26.1
+> Version: 1.0.0 | Last Updated: 2026-05-06 | Go Version: 1.26.1
 
 ---
 
