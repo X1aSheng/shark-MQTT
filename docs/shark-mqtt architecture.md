@@ -1662,8 +1662,9 @@ Integration tests (real connections):
   tests/integration/will_test.go               -> will message trigger
 
 Benchmark tests:
-  tests/integration/broker_bench_test.go       -> broker-level benchmarks
-  tests/integration/micro_bench_test.go        -> micro-benchmarks
+  tests/bench/broker_bench_test.go             -> broker-level benchmarks
+  tests/bench/data_delivery_bench_test.go      -> end-to-end data verification benchmarks
+  tests/bench/micro_bench_test.go              -> micro-benchmarks
 ```
 
 ### Test Utilities (testutils/)
@@ -1712,7 +1713,7 @@ go test -race ./broker/... ./protocol/... ./store/... ./config/... ./pkg/...
 go test -race ./tests/integration/...
 
 # Benchmarks
-go test -bench=. -benchmem -benchtime=10s ./tests/integration/...
+go test -bench=. -benchmem -benchtime=10s ./tests/bench/...
 
 # Coverage
 go test -coverprofile=coverage.out ./...

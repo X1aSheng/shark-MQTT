@@ -1,6 +1,6 @@
 # Testing Guide
 
-Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试和基准测试共 353 项（388 次含子测试的运行）。
+Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试和基准测试共 354 项（最新完整运行：307 个单元测试运行通过、13 个 Redis 测试跳过、79 个集成测试运行通过、67 个基准测试通过）。
 
 ---
 
@@ -22,7 +22,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 
 ```
 ┌────────────────────────────────────────────────────────────┐
-│  Benchmark Tests (69)                                     │
+│  Benchmark Tests (67)                                     │
 │  tests/bench/                                             │
 │  ├── broker_bench_test.go    — 全栈 TCP 基准              │
 │  ├── data_delivery_bench_test.go — E2E 数据验证基准       │
@@ -41,7 +41,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 │  ├── retained_test.go        — 保留消息                   │
 │  └── edge_case_test.go       — 边界与异常                 │
 ├────────────────────────────────────────────────────────────┤
-│  Unit Tests (207)                                          │
+│  Unit Tests (210 top-level / 307 passed runs)              │
 │  各包内 *_test.go 文件                                     │
 │  broker/ protocol/ store/ pkg/ api/ client/ config/       │
 │  plugin/ errs/                                             │
@@ -54,20 +54,20 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 
 | 类型 | 数量 | 位置 |
 |------|------|------|
-| 单元测试 | 207 | 各包 `*_test.go` |
+| 单元测试 | 210 top-level / 307 passed runs | 各包 `*_test.go` |
 | 集成测试 | 77 | `tests/integration/` |
-| 基准测试 | 69 | `tests/bench/`, `store/redis/`, `plugin/` |
-| **合计** | **353** | |
+| 基准测试 | 67 | `tests/bench/`, `store/redis/`, `plugin/` |
+| **合计** | **354 top-level tests + benchmarks** | |
 
 ### 各包测试明细
 
 | 包 | 测试数 | 基准测试数 | 说明 |
 |----|--------|-----------|------|
-| broker/ | 98 | 0 | 核心逻辑：TopicTree、QoS引擎、会话、遗嘱、认证、服务器 |
+| broker/ | 99 | 0 | 核心逻辑：TopicTree、QoS引擎、会话、遗嘱、认证、服务器、retained metrics |
 | store/memory/ | 20 | 0 | 内存存储：会话、消息、保留消息 |
 | store/redis/ | 13 | 9 | Redis 存储：消息、保留、会话 |
 | store/badger/ | 9 | 0 | BadgerDB 持久化存储 |
-| protocol/ | 10 | 0 | MQTT 3.1.1 & 5.0 编解码（15种报文） |
+| protocol/ | 12 | 0 | MQTT 3.1.1 & 5.0 编解码与协议 flags 校验（15种报文） |
 | client/ | 8 | 0 | MQTT 客户端连接、发布、订阅 |
 | plugin/ | 14 | 3 | 插件系统：注册、分发 |
 | config/ | 7 | 0 | 配置解析与校验 |

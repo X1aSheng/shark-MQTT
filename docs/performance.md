@@ -19,6 +19,28 @@ go test -bench=BenchmarkPublishQos0 -benchmem ./tests/bench/...
 
 ---
 
+## Latest Reference Run
+
+Latest full benchmark run: `logs/20260506_123128_benchmark.log` on AMD Ryzen 7 8845HS / Windows 11 / Go 1.26.1.
+
+| Benchmark | ns/op | B/op | allocs/op |
+|-----------|-------|------|-----------|
+| `BenchmarkConnectionEstablish` | 305,069 | 4,079 | 65 |
+| `BenchmarkMQTTConnect` | 407,551 | 6,227 | 123 |
+| `BenchmarkPublishQos0` | 23,973 | 1,760 | 27 |
+| `BenchmarkPublishQos1` | 74,106 | 1,948 | 37 |
+| `BenchmarkPublishQos2` | 200,507 | 2,548 | 52 |
+| `BenchmarkConcurrentPublish` | 43,460 | 1,717 | 26 |
+| `BenchmarkE2E_QoS0_DataVerify` | 40,963 | 904 | 36 |
+| `BenchmarkE2E_QoS1_DataVerify` | 124,036 | 1,357 | 54 |
+| `BenchmarkE2E_QoS2_DataVerify` | 230,388 | 2,415 | 84 |
+| `BenchmarkTopicTree_Subscribe` | 131.7 | 51 | 0 |
+| `BenchmarkTopicTree_Match_Exact` | 243.9 | 88 | 2 |
+| `BenchmarkCodec_EncodePublish` | 336.0 | 422 | 6 |
+| `BenchmarkCodec_DecodePublish` | 536.2 | 736 | 10 |
+| `BenchmarkQoSEngine_TrackQoS1` | 19.2 | 0 | 0 |
+| `BenchmarkBufferPool_GetPut` | 29.8 | 24 | 1 |
+
 ## Benchmark Categories
 
 ### End-to-End Benchmarks
@@ -137,24 +159,24 @@ BenchmarkPublishQos0-16    10000    21387 ns/op    1342 B/op    20 allocs/op
 
 ### Performance Reference (on development machine)
 
-These are indicative values from a Ryzen 7 8845HS, not targets:
+These are indicative values from the latest Ryzen 7 8845HS run, not targets:
 
 **End-to-End:**
-- QoS 0 publish: ~21 µs/op, 20 allocs
-- QoS 1 publish: ~70 µs/op, 31 allocs
-- QoS 2 publish: ~118 µs/op, 46 allocs
-- MQTT CONNECT: ~345 µs/op, 107 allocs
-- Persistent session round-trip: ~420 µs/op, 156 allocs
+- QoS 0 publish: ~24 µs/op, 27 allocs
+- QoS 1 publish: ~74 µs/op, 37 allocs
+- QoS 2 publish: ~201 µs/op, 52 allocs
+- MQTT CONNECT: ~408 µs/op, 123 allocs
+- Persistent session round-trip: ~820 µs/op, 179 allocs
 
 **Micro-components:**
-- TopicTree.Subscribe: ~100 ns/op, 0 allocs
-- TopicTree.Match (exact): ~198 ns/op, 2 allocs
-- TopicTree.Match (wildcard +): ~300 ns/op, 3 allocs
-- Codec.Encode (PUBLISH): ~189 ns/op, 6 allocs
-- Codec.Decode (PUBLISH): ~220 ns/op, 8 allocs
-- QoSEngine.TrackQoS1: ~91 ns/op, 1 alloc
-- Manager.GetSession: ~8.5 ns/op, 0 allocs
-- BufferPool.Get/Put: ~26 ns/op, 1 alloc
+- TopicTree.Subscribe: ~132 ns/op, 0 allocs
+- TopicTree.Match (exact): ~244 ns/op, 2 allocs
+- TopicTree.Match (wildcard +): ~354 ns/op, 3 allocs
+- Codec.Encode (PUBLISH): ~336 ns/op, 6 allocs
+- Codec.Decode (PUBLISH): ~536 ns/op, 10 allocs
+- QoSEngine.TrackQoS1: ~19 ns/op, 0 allocs
+- Manager.GetSession: ~9 ns/op, 0 allocs
+- BufferPool.Get/Put: ~30 ns/op, 1 alloc
 
 ---
 

@@ -36,7 +36,7 @@ shark-mqtt/
 ├── errs/             # Centralized error definitions
 ├── tests/            # Integration and benchmark tests
 │   ├── integration/  # End-to-end MQTT workflow tests + deploy verification
-│   └── bench/        # Performance benchmarks (57 broker + E2E + micro)
+│   └── bench/        # Performance benchmarks (67 broker + E2E + micro + store)
 ├── examples/         # Usage examples (standalone, TLS, custom_auth, sharksocket)
 ├── cmd/              # Command-line tools
 ├── scripts/          # Test runner and build scripts
