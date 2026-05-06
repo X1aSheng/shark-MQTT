@@ -2,8 +2,8 @@ apiVersion: v2
 name: shark-mqtt
 description: High-performance MQTT 3.1.1 broker with cluster support
 type: application
-version: 0.1.0
-appVersion: "latest"
+version: 1.0.0
+appVersion: "1.0.0"
 keywords:
   - mqtt
   - broker

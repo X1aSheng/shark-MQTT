@@ -24,7 +24,7 @@ helm install shark-mqtt ./deploy/k8s/helm/shark-mqtt/ \
 |------|--------|------|
 | `replicaCount` | `2` | Pod 副本数 |
 | `image.repository` | `x1asheng/shark-mqtt` | 镜像仓库 |
-| `image.tag` | `latest` | 镜像标签 |
+| `image.tag` | `1.0.0` | 镜像标签 |
 | `service.type` | `ClusterIP` | Service 类型 |
 | `autoscaling.enabled` | `true` | 启用 HPA |
 | `config.logLevel` | `info` | 日志级别 |
