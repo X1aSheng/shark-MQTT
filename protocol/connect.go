@@ -144,6 +144,14 @@ func ValidateConnect(pkt *ConnectPacket) error {
 	if pkt.Flags.WillFlag && pkt.Flags.WillQoS > 2 {
 		return fmt.Errorf("protocol: invalid will QoS %d (must be 0, 1, or 2)", pkt.Flags.WillQoS)
 	}
+	if !pkt.Flags.WillFlag {
+		if pkt.Flags.WillQoS != 0 {
+			return fmt.Errorf("protocol: will QoS must be 0 when will flag is not set")
+		}
+		if pkt.Flags.WillRetain {
+			return fmt.Errorf("protocol: will retain must be 0 when will flag is not set")
+		}
+	}
 
 	// If PasswordFlag is set, UsernameFlag must also be set (MQTT 3.1.1 §3.1.2.5)
 	if pkt.Flags.PasswordFlag && !pkt.Flags.UsernameFlag {

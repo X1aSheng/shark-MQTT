@@ -119,6 +119,42 @@ func TestConnectWithWill(t *testing.T) {
 	}
 }
 
+func TestValidateConnectRejectsWillFlagsWithoutWillFlag(t *testing.T) {
+	tests := []struct {
+		name  string
+		flags ConnectFlags
+	}{
+		{
+			name: "will retain without will flag",
+			flags: ConnectFlags{
+				CleanSession: true,
+				WillRetain:   true,
+			},
+		},
+		{
+			name: "will qos without will flag",
+			flags: ConnectFlags{
+				CleanSession: true,
+				WillQoS:      1,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateConnect(&ConnectPacket{
+				ProtocolName:    ProtocolNameMQTT,
+				ProtocolVersion: Version311,
+				Flags:           tt.flags,
+				ClientID:        "client",
+			})
+			if err == nil {
+				t.Fatal("expected invalid CONNECT flags to be rejected")
+			}
+		})
+	}
+}
+
 func TestConnectWithAuth(t *testing.T) {
 	pkt := &ConnectPacket{
 		FixedHeader: FixedHeader{
