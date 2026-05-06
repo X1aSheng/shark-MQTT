@@ -270,6 +270,8 @@ func (c *Codec) encodePubRel(w io.Writer, pkt *PubRelPacket) error {
 		}
 	}
 
+	pkt.FixedHeader.QoS = 1
+	pkt.FixedHeader.Retain = false
 	pkt.RemainingLength = buf.Len()
 	if err := c.encodeFixedHeader(w, &pkt.FixedHeader); err != nil {
 		return err

@@ -28,6 +28,9 @@ func (c *Codec) Decode(r io.Reader) (Packet, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := validateFixedHeaderFlags(fh); err != nil {
+		return nil, err
+	}
 
 	// Sanity-check RemainingLength before arithmetic to avoid overflow.
 	// MQTT 5.0 variable-length encoding allows up to 268,435,455 bytes (256 MiB - 1).
@@ -74,6 +77,32 @@ func (c *Codec) Decode(r io.Reader) (Packet, error) {
 	default:
 		return nil, ErrInvalidPacket
 	}
+}
+
+func validateFixedHeaderFlags(fh *FixedHeader) error {
+	if fh.PacketType == PacketTypePublish {
+		if fh.QoS == 3 {
+			return ErrInvalidPacket
+		}
+		return nil
+	}
+
+	flags := (fh.QoS << 1)
+	if fh.Retain {
+		flags |= 0x01
+	}
+
+	switch fh.PacketType {
+	case PacketTypePubRel, PacketTypeSubscribe, PacketTypeUnsubscribe:
+		if flags != 0x02 {
+			return ErrInvalidPacket
+		}
+	default:
+		if flags != 0x00 {
+			return ErrInvalidPacket
+		}
+	}
+	return nil
 }
 
 // Encode writes a packet to the writer.
