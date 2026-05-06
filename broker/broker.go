@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -50,7 +51,8 @@ type Broker struct {
 	receivedQoS2   map[string]map[uint16]struct{}
 	receivedQoS2Mu sync.Mutex
 
-	retainedCount atomic.Int64 // approximate count of retained messages
+	retainedMu    sync.Mutex
+	retainedCount atomic.Int64 // count of retained messages maintained with retainedMu
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -506,27 +508,7 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 
 	// Handle retained message
 	if pkt.FixedHeader.Retain {
-		if len(pkt.Payload) == 0 {
-			if b.retainedStore != nil {
-				if err := b.retainedStore.DeleteRetained(b.ctx, pkt.Topic); err != nil {
-					b.logger.Debug("failed to delete retained message", "topic", pkt.Topic, "error", err)
-					b.metrics.IncErrors("retained_store")
-				} else {
-					b.retainedCount.Add(-1)
-					b.metrics.SetRetainedMessages(int(b.retainedCount.Load()))
-				}
-			}
-		} else {
-			if b.retainedStore != nil {
-				if err := b.retainedStore.SaveRetained(b.ctx, pkt.Topic, pkt.FixedHeader.QoS, pkt.Payload); err != nil {
-					b.logger.Debug("failed to save retained message", "topic", pkt.Topic, "error", err)
-					b.metrics.IncErrors("retained_store")
-				} else {
-					b.retainedCount.Add(1)
-					b.metrics.SetRetainedMessages(int(b.retainedCount.Load()))
-				}
-			}
-		}
+		b.handleRetainedMessage(pkt)
 	}
 
 	// QoS 2: detect duplicate PUBLISH (DUP flag). Per MQTT §4.3.3, when a
@@ -595,6 +577,49 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 			ReasonCode: reasonCode,
 		})
 	}
+}
+
+func (b *Broker) handleRetainedMessage(pkt *protocol.PublishPacket) {
+	if b.retainedStore == nil {
+		return
+	}
+
+	b.retainedMu.Lock()
+	defer b.retainedMu.Unlock()
+
+	existed := true
+	if _, err := b.retainedStore.GetRetained(b.ctx, pkt.Topic); err != nil {
+		if errors.Is(err, store.ErrRetainedNotFound) {
+			existed = false
+		} else {
+			b.logger.Debug("failed to check retained message", "topic", pkt.Topic, "error", err)
+			b.metrics.IncErrors("retained_store")
+			return
+		}
+	}
+
+	if len(pkt.Payload) == 0 {
+		if err := b.retainedStore.DeleteRetained(b.ctx, pkt.Topic); err != nil {
+			b.logger.Debug("failed to delete retained message", "topic", pkt.Topic, "error", err)
+			b.metrics.IncErrors("retained_store")
+			return
+		}
+		if existed {
+			b.retainedCount.Add(-1)
+		}
+		b.metrics.SetRetainedMessages(int(b.retainedCount.Load()))
+		return
+	}
+
+	if err := b.retainedStore.SaveRetained(b.ctx, pkt.Topic, pkt.FixedHeader.QoS, pkt.Payload); err != nil {
+		b.logger.Debug("failed to save retained message", "topic", pkt.Topic, "error", err)
+		b.metrics.IncErrors("retained_store")
+		return
+	}
+	if !existed {
+		b.retainedCount.Add(1)
+	}
+	b.metrics.SetRetainedMessages(int(b.retainedCount.Load()))
 }
 
 func (b *Broker) handleSubscribe(clientID string, sess *Session, pkt *protocol.SubscribePacket) {

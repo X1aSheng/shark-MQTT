@@ -7,7 +7,32 @@ import (
 	"time"
 
 	"github.com/X1aSheng/shark-mqtt/protocol"
+	"github.com/X1aSheng/shark-mqtt/store/memory"
 )
+
+type retainedMetrics struct {
+	retained []int
+}
+
+func (m *retainedMetrics) IncConnections()                             {}
+func (m *retainedMetrics) OnDisconnect()                               {}
+func (m *retainedMetrics) IncRejections(reason string)                 {}
+func (m *retainedMetrics) IncAuthFailures()                            {}
+func (m *retainedMetrics) IncMessagesPublished(qos uint8)              {}
+func (m *retainedMetrics) IncMessagesDelivered(qos uint8)              {}
+func (m *retainedMetrics) IncMessagesDropped(reason string)            {}
+func (m *retainedMetrics) IncInflight(clientID string)                 {}
+func (m *retainedMetrics) DecInflight(clientID string)                 {}
+func (m *retainedMetrics) DecInflightBatch(clientID string, count int) {}
+func (m *retainedMetrics) IncInflightDropped(clientID string)          {}
+func (m *retainedMetrics) IncRetries(clientID string)                  {}
+func (m *retainedMetrics) SetOnlineSessions(count int)                 {}
+func (m *retainedMetrics) SetOfflineSessions(count int)                {}
+func (m *retainedMetrics) SetRetainedMessages(count int) {
+	m.retained = append(m.retained, count)
+}
+func (m *retainedMetrics) SetSubscriptions(count int) {}
+func (m *retainedMetrics) IncErrors(component string) {}
 
 func TestNewBroker_Defaults(t *testing.T) {
 	b := New()
@@ -102,6 +127,45 @@ func TestBroker_Publish_NoSubscribers(t *testing.T) {
 		Payload:     []byte("hello"),
 	}
 	b.handlePublish("client1", nil, pkt)
+}
+
+func TestBroker_RetainedMetricsCountUpdatesOnOverwriteAndDelete(t *testing.T) {
+	m := &retainedMetrics{}
+	b := New(
+		WithAuth(AllowAllAuth{}),
+		WithRetainedStore(memory.NewRetainedStore()),
+		WithMetrics(m),
+	)
+	if err := b.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer b.Stop()
+
+	publish := func(payload []byte) {
+		b.handlePublish("client1", nil, &protocol.PublishPacket{
+			FixedHeader: protocol.FixedHeader{
+				PacketType: protocol.PacketTypePublish,
+				Retain:     true,
+			},
+			Topic:   "retain/topic",
+			Payload: payload,
+		})
+	}
+
+	publish([]byte("first"))
+	publish([]byte("replace"))
+	publish(nil)
+	publish(nil)
+
+	want := []int{1, 1, 0, 0}
+	if len(m.retained) != len(want) {
+		t.Fatalf("retained metric updates = %v, want %v", m.retained, want)
+	}
+	for i := range want {
+		if m.retained[i] != want[i] {
+			t.Fatalf("retained metric updates = %v, want %v", m.retained, want)
+		}
+	}
 }
 
 func TestBroker_QoS2DupDetection(t *testing.T) {
