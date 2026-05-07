@@ -7,7 +7,7 @@
 ## Table of Contents
 
 1. [Project Overview](#project-overview)
-2. [Relationship with Shark-Socket](#relationship-with-shark-socket)
+2. [Independent Deployment and Data Interoperability](#independent-deployment-and-data-interoperability)
 3. [Design Principles](#design-principles)
 4. [Layered Architecture](#layered-architecture)
 5. [Directory Structure](#directory-structure)
@@ -51,32 +51,42 @@ Module path: `github.com/X1aSheng/shark-mqtt`
 
 ---
 
-## Relationship with Shark-Socket
+## Independent Deployment and Data Interoperability
 
-### Dependency Graph
+Shark-MQTT is operated as an independent MQTT broker service. It does not expose an in-process gateway adapter for other runtimes. Runtime interoperability with other services should happen at the data plane and event plane through explicit schemas and operational contracts.
+
+### Runtime Boundary
 
 ```
-+-----------------------------------------------------------+
-|                       shark-mqtt                          |
-|                                                           |
-|  +-----------------------------------------------------+ |
-|  |              shark-mqtt core                         | |
-|  |  Broker . TopicTree . QoSEngine . Manager            | |
-|  |  Codec . WillHandler . Session . Authenticator       | |
-|  +-----------------------------------------------------+ |
-|                                                           |
-|  +-----------------------------------------------------+ |
-|  |           tests/integration/sharksocket/              | |
-|  |    shark-socket integration tests (adapter)          | |
-|  +-----------------------------------------------------+ |
-+-----------------------------------------------------------+
++---------------------------+       +---------------------------+
+|        shark-mqtt         |       |      other services       |
+|  MQTT broker runtime      |       |  socket / HTTP / jobs     |
+|  QoS / retain / sessions  |       |  business workflows       |
++-------------+-------------+       +-------------+-------------+
+              |                                   |
+              +---------------+-------------------+
+                              |
+                              v
+              +-----------------------------------+
+              | shared data and event contracts   |
+              | Redis / DB / outbox / CDC / MQ    |
+              +-----------------------------------+
 ```
+
+### Data Interoperability Modes
+
+| Mode | Contract | Notes |
+| --- | --- | --- |
+| Shared Redis/cache | Namespaced keys for session projections, device online state, retained-message projections, idempotency records | Use TTL, versioned payloads, and cache stampede protection |
+| Shared database | Normalized tables or document collections for device metadata, auth ACLs, subscriptions, message audit, and outbox events | Use migrations and ownership rules; avoid multiple writers for MQTT broker-owned state |
+| Event/outbox | Append-only events such as `mqtt.client.connected`, `mqtt.message.published`, `mqtt.session.expired` | Consumers must be idempotent and tolerate retries/reordering |
+| Batch/CDC sync | Periodic or change-data-capture pipelines for analytics and cross-service materialized views | Keep MQTT hot path independent from downstream availability |
 
 ### Usage Modes
 
 ```
-Mode A: Standalone (default)
----------------------------------
+Mode A: Standalone broker (default)
+------------------------------------
   import "github.com/X1aSheng/shark-mqtt/api"
 
   cfg := config.DefaultConfig()
@@ -88,8 +98,8 @@ Mode A: Standalone (default)
   broker.Start()
 
 
-Mode B: Embedding the Broker Core
-----------------------------------
+Mode B: Embedding the Broker Core in another MQTT-specific process
+-------------------------------------------------------------------
   import "github.com/X1aSheng/shark-mqtt/broker"
 
   b := broker.New(
@@ -353,7 +363,6 @@ shark-mqtt/
 |   |-- standalone.go                 # Standalone broker example
 |   |-- custom_auth.go                # Custom authentication example
 |   |-- tls_broker.go                 # TLS broker example
-|   |-- sharksocket.go                # Shark-socket integration example
 |
 |-- tests/
 |   |-- integration/
@@ -1732,7 +1741,7 @@ go tool cover -html=coverage.out -o coverage.html
 - MQTT code volume is substantial and self-contained
 - Optional external dependencies (Redis/BadgerDB) should not pollute other frameworks
 - Supports independent versioning, deployment, and scaling
-- Integration with shark-socket via `tests/integration/sharksocket/` adapter
+- Cross-system interoperability is handled through shared database/cache/event contracts instead of process-level adapters
 
 ---
 

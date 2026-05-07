@@ -37,7 +37,7 @@ shark-mqtt/
 ├── tests/            # Integration and benchmark tests
 │   ├── integration/  # End-to-end MQTT workflow tests + deploy verification
 │   └── bench/        # Performance benchmarks (67 broker + E2E + micro + store)
-├── examples/         # Usage examples (standalone, TLS, custom_auth, sharksocket)
+├── examples/         # Usage examples (standalone, TLS, custom_auth)
 ├── cmd/              # Command-line tools
 ├── scripts/          # Test runner and build scripts
 ├── testutils/        # Test utilities (mock connections, mock stores, helpers)
