@@ -73,7 +73,7 @@ func (c *Codec) encodePublish(w io.Writer, pkt *PublishPacket) error {
 		return err
 	}
 
-	if pkt.FixedHeader.QoS > 0 {
+	if pkt.QoS > 0 {
 		if err := writeUint16(&buf, pkt.PacketID); err != nil {
 			return err
 		}
@@ -270,7 +270,7 @@ func (c *Codec) encodePubRel(w io.Writer, pkt *PubRelPacket) error {
 		}
 	}
 
-	pkt.FixedHeader.QoS = 1
+	pkt.QoS = 1
 	pkt.FixedHeader.Retain = false
 	pkt.RemainingLength = buf.Len()
 	if err := c.encodeFixedHeader(w, &pkt.FixedHeader); err != nil {

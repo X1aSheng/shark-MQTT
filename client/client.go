@@ -45,8 +45,7 @@ type MQTTClient struct {
 }
 
 type inflightEntry struct {
-	pkt   *protocol.PublishPacket
-	timer *time.Timer
+	pkt *protocol.PublishPacket
 }
 
 // New creates a new MQTTClient with the given options.
@@ -128,25 +127,25 @@ func (c *MQTTClient) Connect(ctx context.Context) error {
 
 	// Send CONNECT
 	if err := c.codec.Encode(conn, pkt); err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return fmt.Errorf("send CONNECT: %w", err)
 	}
 
 	// Read CONNACK
 	resp, err := c.codec.Decode(conn)
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return fmt.Errorf("read CONNACK: %w", err)
 	}
 
 	connack, ok := resp.(*protocol.ConnAckPacket)
 	if !ok {
-		conn.Close()
+		_ = conn.Close()
 		return fmt.Errorf("expected CONNACK, got %T", resp)
 	}
 
 	if connack.ReasonCode != protocol.ConnAckAccepted {
-		conn.Close()
+		_ = conn.Close()
 		return fmt.Errorf("connection rejected: reason code 0x%02x", connack.ReasonCode)
 	}
 
@@ -177,13 +176,13 @@ func (c *MQTTClient) Publish(ctx context.Context, topic string, qos byte, retain
 		Topic:   topic,
 		Payload: payload,
 	}
-	pkt.FixedHeader.PacketType = protocol.PacketTypePublish
-	pkt.FixedHeader.Retain = retained
+	pkt.PacketType = protocol.PacketTypePublish
+	pkt.Retain = retained
 
 	var respCh chan protocol.Packet
 
 	if qos > 0 {
-		pkt.FixedHeader.QoS = qos
+		pkt.QoS = qos
 		c.inflightMu.Lock()
 		pid := c.nextPacketID()
 		pkt.PacketID = pid
@@ -486,8 +485,8 @@ func (c *MQTTClient) handlePublish(pkt *protocol.PublishPacket) {
 				pubrec.FixedHeader.PacketType = protocol.PacketTypePubRec
 				pubrec.FixedHeader.QoS = 1
 				if err := c.codec.Encode(conn, pubrec); err != nil {
-				c.logError("failed to send PUBREC for packet %d: %v", pkt.PacketID, err)
-			}
+					c.logError("failed to send PUBREC for packet %d: %v", pkt.PacketID, err)
+				}
 			}
 			return
 		}

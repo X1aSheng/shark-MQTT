@@ -80,7 +80,7 @@ func (c *Codec) encodeSubscribe(w io.Writer, pkt *SubscribePacket) error {
 			return err
 		}
 		// Subscription Options byte
-		var opts byte = topic.QoS & 0x03
+		opts := topic.QoS & 0x03
 		if topic.NoLocal {
 			opts |= 0x04
 		}
@@ -130,7 +130,9 @@ func (c *Codec) decodeSubAck(r io.Reader, fh *FixedHeader) (*SubAckPacket, error
 		reasonLen := reader.Len()
 		if reasonLen > 0 {
 			reasonCodes = make([]byte, reasonLen)
-			reader.Read(reasonCodes)
+			if _, err := io.ReadFull(reader, reasonCodes); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -275,7 +277,9 @@ func (c *Codec) decodeUnsubAck(r io.Reader, fh *FixedHeader) (*UnsubAckPacket, e
 		reasonLen := reader.Len()
 		if reasonLen > 0 {
 			reasonCodes = make([]byte, reasonLen)
-			reader.Read(reasonCodes)
+			if _, err := io.ReadFull(reader, reasonCodes); err != nil {
+				return nil, err
+			}
 		}
 	}
 

@@ -100,7 +100,7 @@ func (wh *WillHandler) TriggerWill(clientID string) error {
 			defer wh.wg.Done()
 			select {
 			case <-time.After(will.Delay):
-				wh.publishWillMessage(will)
+				_ = wh.publishWillMessage(will)
 			case <-ctx.Done():
 				// Will was cancelled (client reconnected before delay elapsed)
 			}
