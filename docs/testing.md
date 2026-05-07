@@ -13,6 +13,8 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 - [基准测试](#基准测试)
 - [测试脚本](#测试脚本)
 - [Makefile 目标](#makefile-目标)
+- [缺陷回归测试](#缺陷回归测试)
+- [静态分析](#静态分析)
 - [日志系统](#日志系统)
 - [覆盖率](#覆盖率)
 
@@ -41,6 +43,10 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 │  ├── retained_test.go        — 保留消息                   │
 │  └── edge_case_test.go       — 边界与异常                 │
 ├────────────────────────────────────────────────────────────┤
+│  Defect Regression Tests                                   │
+│  tests/defects/                                            │
+│  └── protocol_defects_test.go — MQTT 标准兼容回归          │
+├────────────────────────────────────────────────────────────┤
 │  Unit Tests (210 top-level / 307 passed runs)              │
 │  各包内 *_test.go 文件                                     │
 │  broker/ protocol/ store/ pkg/ api/ client/ config/       │
@@ -56,6 +62,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 |------|------|------|
 | 单元测试 | 210 top-level / 307 passed runs | 各包 `*_test.go` |
 | 集成测试 | 77 | `tests/integration/` |
+| 缺陷回归测试 | 2 | `tests/defects/` |
 | 基准测试 | 67 | `tests/bench/`, `store/redis/`, `plugin/` |
 | **合计** | **354 top-level tests + benchmarks** | |
 
@@ -77,6 +84,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 | api/ | 4 | 0 | 公共 API 与健康端点 |
 | errs/ | 4 | 0 | 错误定义 |
 | tests/integration/ | 77 | 0 | 端到端集成测试（含 30 项部署验证） |
+| tests/defects/ | 2 | 0 | 审查发现缺陷的最小复现和回归测试 |
 | tests/bench/ | 0 | 57 | 全栈 TCP、E2E 数据验证、微基准 |
 
 ---
@@ -439,6 +447,36 @@ make bench             # 完整基准（5s x 3 轮）
 make test-coverage     # 覆盖率报告
 make ci                # CI 完整流水线
 ```
+
+---
+
+## 缺陷回归测试
+
+审查过程中确认的缺陷必须先在 `tests/defects/` 中添加最小复现，再修复代码。当前回归项：
+
+| 测试函数 | 覆盖缺陷 |
+|----------|----------|
+| `TestDefectTopicFiltersMayContainEmptyLevels` | MQTT topic filter 中合法的零长度 topic level |
+| `TestDefectLongMQTT5PropertyStringReturnsEncodeError` | MQTT 5.0 UTF-8 属性字符串长度上限 |
+
+运行方式：
+
+```bash
+go test ./tests/defects -v
+```
+
+---
+
+## 静态分析
+
+项目使用 Go 标准工具和 golangci-lint v2：
+
+```bash
+go vet ./...
+golangci-lint run ./...
+```
+
+`golangci-lint` 配置文件为 `.golangci.yaml`，测试文件中清理类 `errcheck` 噪声按规则排除；生产代码仍要求通过默认静态检查。
 
 ---
 
