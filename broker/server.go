@@ -80,6 +80,12 @@ func (s *MQTTServer) SetHandler(h ConnectionHandler) {
 
 // Start begins accepting TCP connections.
 func (s *MQTTServer) Start() error {
+	select {
+	case <-s.ctx.Done():
+		s.ctx, s.cancel = context.WithCancel(context.Background())
+	default:
+	}
+
 	// Use pre-set listener (from options) or create one from config
 	if s.listener == nil {
 		addr := s.cfg.ListenAddr
@@ -96,8 +102,9 @@ func (s *MQTTServer) Start() error {
 
 	log.Printf("[server] listening on %s (TLS: %v)", s.listener.Addr(), s.cfg.TLSEnabled)
 
+	ln := s.listener
 	s.wg.Add(1)
-	go s.acceptLoop()
+	go s.acceptLoop(ln)
 	return nil
 }
 
@@ -108,6 +115,7 @@ func (s *MQTTServer) Stop() {
 		s.listener.Close()
 	}
 	s.wg.Wait()
+	s.listener = nil
 
 	// Close remaining connections
 	s.mu.Lock()
@@ -135,10 +143,10 @@ func (s *MQTTServer) ConnCount() int64 {
 	return s.connCount.Load()
 }
 
-func (s *MQTTServer) acceptLoop() {
+func (s *MQTTServer) acceptLoop(ln net.Listener) {
 	defer s.wg.Done()
 	for {
-		conn, err := s.listener.Accept()
+		conn, err := ln.Accept()
 		if err != nil {
 			select {
 			case <-s.ctx.Done():
