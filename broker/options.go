@@ -13,18 +13,18 @@ import (
 type Option func(*brokerOptions)
 
 type brokerOptions struct {
-	sessionStore   store.SessionStore
-	messageStore   store.MessageStore
-	retainedStore  store.RetainedStore
-	authenticator  Authenticator
-	authorizer     Authorizer
-	pluginManager  *plugin.Manager
-	logger         logger.Logger
-	metrics        metrics.Metrics
-	qosOpts        []QoSOption
-	maxInflight    int
-	retryInterval  time.Duration
-	maxRetries     int
+	sessionStore           store.SessionStore
+	messageStore           store.MessageStore
+	retainedStore          store.RetainedStore
+	authenticator          Authenticator
+	authorizer             Authorizer
+	pluginManager          *plugin.Manager
+	logger                 logger.Logger
+	metrics                metrics.Metrics
+	qosOpts                []QoSOption
+	maxInflight            int
+	retryInterval          time.Duration
+	maxRetries             int
 	maxConnections         int
 	maxPacketSize          int
 	sessionExpiry          time.Duration
@@ -33,17 +33,17 @@ type brokerOptions struct {
 
 func defaultBrokerOptions() brokerOptions {
 	return brokerOptions{
-		authenticator:  DenyAllAuth{},
-		authorizer:     AllowAllAuth{},
-		pluginManager:  plugin.NewManager(),
-		logger:         logger.Noop(),
-		metrics:        metrics.Default(),
-		qosOpts:        []QoSOption{},
-		maxInflight:    100,
-		retryInterval:  10 * time.Second,
-		maxRetries:     3,
-		maxConnections: 10000,
-		maxPacketSize:  256 * 1024,
+		authenticator:          DenyAllAuth{},
+		authorizer:             AllowAllAuth{},
+		pluginManager:          plugin.NewManager(),
+		logger:                 logger.Noop(),
+		metrics:                metrics.Default(),
+		qosOpts:                []QoSOption{},
+		maxInflight:            100,
+		retryInterval:          10 * time.Second,
+		maxRetries:             3,
+		maxConnections:         10000,
+		maxPacketSize:          256 * 1024,
 		sessionExpiry:          24 * time.Hour,
 		sessionCleanupInterval: 60 * time.Second,
 	}

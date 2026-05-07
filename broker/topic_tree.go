@@ -17,8 +17,8 @@ type TopicNode struct {
 // TopicTree implements a trie-based subscription matching system.
 // It supports MQTT topic wildcards: + (single-level) and # (multi-level).
 type TopicTree struct {
-	root     *TopicNode
-	mu       sync.RWMutex
+	root      *TopicNode
+	mu        sync.RWMutex
 	totalSubs atomic.Int64
 }
 
