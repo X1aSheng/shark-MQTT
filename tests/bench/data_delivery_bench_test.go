@@ -33,7 +33,8 @@ import (
 func setupBrokerWithRetain(b *testing.B) *api.Broker {
 	b.Helper()
 	cfg := config.DefaultConfig()
-	cfg.ListenAddr = ":0"
+	cfg.ListenAddr = "127.0.0.1:0"
+	cfg.MetricsAddr = "127.0.0.1:0"
 	brk := api.NewBroker(
 		api.WithConfig(cfg),
 		api.WithAuth(broker.AllowAllAuth{}),

@@ -108,6 +108,8 @@ make bench-mem      # Memory profiling
 make bench-profile  # Both CPU + Memory profiling
 ```
 
+Windows note: `BenchmarkConnectionEstablish` and `BenchmarkMQTTConnect` are skipped on Windows because they intentionally churn thousands of TCP connections and can exhaust ephemeral ports for later benchmarks in the same package process. Publish, fanout, E2E data verification, codec, QoS engine, buffer pool, and store benchmarks still run.
+
 ---
 
 ## Profiling
