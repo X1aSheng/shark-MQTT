@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"fmt"
 	"net"
+	"runtime"
 	"testing"
 	"time"
 
@@ -335,6 +336,10 @@ func BenchmarkE2E_RetainedMessage(b *testing.B) {
 // ---------------------------------------------------------------------------
 
 func BenchmarkE2E_WillMessage(b *testing.B) {
+	if runtime.GOOS == "windows" {
+		b.Skip("skipping will-message connection-churn benchmark on Windows to avoid exhausting ephemeral TCP ports")
+	}
+
 	brk := setupBroker(b)
 	defer brk.Stop()
 
