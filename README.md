@@ -442,11 +442,13 @@ See `.github/workflows/ci.yml` for details.
 
 **Overall: Production-ready core**
 
-All critical and high-severity issues resolved. Seven review phases and four fix plans completed (April 2026).
+All critical and high-severity issues resolved. Latest service-side review completed on 2026-05-07.
 
 ### Completed
 
 - Full MQTT 3.1.1 & 5.0 protocol support (15 packet types + properties)
+- MQTT topic filters support valid zero-length topic levels such as `/finance`, `finance/`, and `finance//usd`
+- MQTT 5.0 property encoding returns errors for overlength UTF-8 strings instead of emitting malformed packets
 - QoS 0/1/2 with automatic retry, inflight tracking, and send error handling
 - Spec-compliant topic filter validation
 - Retained messages and Will messages (with delay interval)
@@ -462,7 +464,8 @@ All critical and high-severity issues resolved. Seven review phases and four fix
 - Health endpoints (`/healthz`, `/readyz`)
 - Config validation (YAML/ENV/CLI)
 - Centralized error definitions (`errs` package)
-- Comprehensive test suite (354 top-level tests + benchmarks; latest full run 307 unit runs, 79 integration runs, 67 benchmarks)
+- Comprehensive test suite with dedicated defect regressions in `tests/defects/`
+- Static analysis baseline: `go vet ./...` and `golangci-lint run ./...` pass
 - Retained message metrics are exact across overwrite/delete paths
 - MQTT fixed-header flags and CONNECT Will flag combinations are rejected when malformed
 - Configurable QoS inflight limit enforcement with MQTT 5.0 ReceiveMaximum advertising
@@ -476,7 +479,6 @@ All critical and high-severity issues resolved. Seven review phases and four fix
 | M-002 | Medium | Implement offline message queueing |
 | M-005 | Medium | Document StaticAuth ACL behavior |
 | M-006 | Medium | TopicTree match caching |
-| L-003 | Low | Improve writePacket error propagation |
 | L-005 | Low | Fix client Connect TOCTOU |
 | L-007 | Low | Use named timeout constants in tests |
 | L-008 | Low | Add protocol fuzz tests |
