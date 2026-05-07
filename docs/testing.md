@@ -375,6 +375,8 @@ go test -bench=. -cpuprofile=cpu.prof ./tests/bench/...
 go tool pprof cpu.prof
 ```
 
+Windows 说明：`BenchmarkConnectionEstablish` 与 `BenchmarkMQTTConnect` 会主动制造大量短连接，Windows 下会跳过这两个连接 churn 基准，以免耗尽 ephemeral TCP ports 并影响同一测试进程后续 E2E 基准。发布、fanout、E2E 数据验证、codec、QoS engine、buffer pool、store 等基准仍会执行。
+
 ---
 
 ## 测试脚本

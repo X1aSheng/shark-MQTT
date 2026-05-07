@@ -17,6 +17,7 @@ package bench
 import (
 	"fmt"
 	"net"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -34,7 +35,8 @@ import (
 func setupBroker(b *testing.B) *api.Broker {
 	b.Helper()
 	cfg := config.DefaultConfig()
-	cfg.ListenAddr = ":0"
+	cfg.ListenAddr = "127.0.0.1:0"
+	cfg.MetricsAddr = "127.0.0.1:0"
 	cfg.QoSMaxInflight = 1000
 
 	brk := api.NewBroker(
@@ -141,6 +143,10 @@ func isTimeout(err error) bool {
 // ---------------------------------------------------------------------------
 
 func BenchmarkConnectionEstablish(b *testing.B) {
+	if runtime.GOOS == "windows" {
+		b.Skip("skipping connection-churn benchmark on Windows to avoid exhausting ephemeral TCP ports for the rest of the suite")
+	}
+
 	brk := setupBroker(b)
 	defer brk.Stop()
 
@@ -157,6 +163,10 @@ func BenchmarkConnectionEstablish(b *testing.B) {
 }
 
 func BenchmarkMQTTConnect(b *testing.B) {
+	if runtime.GOOS == "windows" {
+		b.Skip("skipping connection-churn benchmark on Windows to avoid exhausting ephemeral TCP ports for the rest of the suite")
+	}
+
 	brk := setupBroker(b)
 	defer brk.Stop()
 
