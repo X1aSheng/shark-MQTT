@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // MockPlugin is a test plugin implementation
@@ -266,7 +267,7 @@ func TestManager_Dispatch_ContextPassing(t *testing.T) {
 	pm.Register(p1)
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 1000)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
 	data := &Context{ClientID: "test"}

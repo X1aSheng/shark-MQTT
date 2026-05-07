@@ -29,10 +29,10 @@ var (
 	ErrInvalidQoS        = errors.New("invalid qos level")
 
 	// 存储错误
-	ErrStoreUnavailable  = errors.New("store unavailable")
-	ErrSessionExpired    = errors.New("session expired")
-	ErrMessageNotFound   = errors.New("message not found")
-	ErrRetainedNotFound  = errors.New("retained message not found")
+	ErrStoreUnavailable = errors.New("store unavailable")
+	ErrSessionExpired   = errors.New("session expired")
+	ErrMessageNotFound  = errors.New("message not found")
+	ErrRetainedNotFound = errors.New("retained message not found")
 
 	// 服务错误
 	ErrServerClosed   = errors.New("server closed")
