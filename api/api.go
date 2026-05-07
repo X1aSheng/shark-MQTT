@@ -3,6 +3,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -211,7 +212,9 @@ func (b *Broker) Stop() {
 	if b.healthSrv != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		b.healthSrv.Shutdown(ctx)
+		if err := b.healthSrv.Shutdown(ctx); err != nil {
+			log.Printf("[api] health shutdown error: %v", err)
+		}
 	}
 	b.srv.Stop()
 	b.broker.Stop()
@@ -278,6 +281,10 @@ func (b *Broker) startHealthServer() {
 		WriteTimeout:      5 * time.Second,
 		IdleTimeout:       30 * time.Second,
 	}
-	go b.healthSrv.Serve(ln)
+	go func() {
+		if err := b.healthSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("[api] health server error: %v", err)
+		}
+	}()
 	log.Printf("[api] health endpoint on %s", b.cfg.MetricsAddr)
 }

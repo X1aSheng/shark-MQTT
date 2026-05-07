@@ -125,7 +125,7 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 		b.mu.RUnlock()
 		if count >= b.opts.maxConnections {
 			b.metrics.IncRejections("max_connections")
-			conn.Close()
+			_ = conn.Close()
 			return fmt.Errorf("broker: max connections (%d) reached", b.opts.maxConnections)
 		}
 	}
@@ -136,7 +136,10 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 	})
 
 	// Set read deadline for CONNECT
-	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	if err := conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		b.metrics.IncErrors("deadline")
+		return fmt.Errorf("broker: set CONNECT deadline failed: %w", err)
+	}
 
 	// Wait for CONNECT packet
 	pkt, err := c.Decode(conn)
@@ -166,7 +169,9 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 	}
 
 	// Clear read deadline
-	conn.SetReadDeadline(time.Time{})
+	if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		b.logger.Debug("failed to clear read deadline", "error", err)
+	}
 
 	// Authenticate
 	if b.opts.authenticator != nil {
@@ -226,7 +231,9 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 	// identity before deleting.
 	b.mu.Lock()
 	if old, exists := b.connections[clientID]; exists {
-		old.conn.Close()
+		if err := old.conn.Close(); err != nil {
+			b.logger.Debug("failed to close previous connection", "clientID", clientID, "error", err)
+		}
 		b.logger.Info("session takeover", "clientID", clientID)
 	}
 	b.connections[clientID] = &clientState{conn: conn, codec: c}
@@ -244,7 +251,10 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 		if connectPkt.WillProperties != nil && connectPkt.WillProperties.WillDelayInterval != nil {
 			willDelay = time.Duration(*connectPkt.WillProperties.WillDelayInterval) * time.Second
 		}
-		b.will.RegisterWill(clientID, connectPkt.WillTopic, connectPkt.WillMessage, connectPkt.Flags.WillQoS, connectPkt.Flags.WillRetain, willDelay)
+		if err := b.will.RegisterWill(clientID, connectPkt.WillTopic, connectPkt.WillMessage, connectPkt.Flags.WillQoS, connectPkt.Flags.WillRetain, willDelay); err != nil {
+			b.metrics.IncErrors("will")
+			return fmt.Errorf("broker: register will failed: %w", err)
+		}
 	}
 
 	// Plugin hook: OnConnected
@@ -262,7 +272,9 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 	// Set initial keep-alive deadline so idle clients are detected
 	if sess.KeepAlive > 0 {
 		timeout := time.Duration(sess.KeepAlive) * time.Second * 3 / 2
-		conn.SetReadDeadline(time.Now().Add(timeout))
+		if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+			b.logger.Debug("failed to set keep-alive deadline", "clientID", clientID, "error", err)
+		}
 	}
 
 	// Run read loop (handles its own cleanup via abnormalDisconnect/gracefulDisconnect)
@@ -354,7 +366,9 @@ func (b *Broker) Stop() {
 	// Close all client connections
 	b.mu.Lock()
 	for id, cs := range b.connections {
-		cs.conn.Close()
+		if err := cs.conn.Close(); err != nil {
+			b.logger.Debug("failed to close client connection", "clientID", id, "error", err)
+		}
 		delete(b.connections, id)
 	}
 	b.mu.Unlock()
@@ -367,7 +381,9 @@ func (b *Broker) dispatch(hook plugin.Hook, data *plugin.Context) {
 	if b.pluginMgr == nil {
 		return
 	}
-	b.pluginMgr.Dispatch(b.ctx, hook, data)
+	if err := b.pluginMgr.Dispatch(b.ctx, hook, data); err != nil {
+		b.logger.Debug("plugin dispatch error", "hook", hook, "error", err)
+	}
 }
 
 func (b *Broker) disconnect(clientID string, conn net.Conn) {
@@ -434,7 +450,9 @@ func (b *Broker) readLoop(clientID string, sess *Session, codec *protocol.Codec,
 		// Set keep-alive deadline
 		if sess.KeepAlive > 0 {
 			timeout := time.Duration(sess.KeepAlive) * time.Second * 3 / 2
-			conn.SetReadDeadline(time.Now().Add(timeout))
+			if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+				b.logger.Debug("failed to refresh keep-alive deadline", "clientID", clientID, "error", err)
+			}
 		}
 
 		switch p := pkt.(type) {
@@ -472,7 +490,7 @@ func (b *Broker) readLoop(clientID string, sess *Session, codec *protocol.Codec,
 func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.PublishPacket) {
 	// Reject wildcard topics per MQTT spec §3.3.2
 	if !protocol.ValidatePublishTopic(pkt.Topic) {
-		if pkt.FixedHeader.QoS > 0 {
+		if pkt.QoS > 0 {
 			b.writePacket(clientID, &protocol.PubAckPacket{
 				FixedHeader: protocol.FixedHeader{
 					PacketType: protocol.PacketTypePubAck,
@@ -485,7 +503,7 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 		return
 	}
 
-	b.metrics.IncMessagesPublished(pkt.FixedHeader.QoS)
+	b.metrics.IncMessagesPublished(pkt.QoS)
 
 	// Check authorization
 	username := ""
@@ -493,7 +511,7 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 		username = sess.Username
 	}
 	if b.opts.authorizer != nil && !b.opts.authorizer.CanPublish(b.ctx, username, pkt.Topic) {
-		if pkt.FixedHeader.QoS > 0 {
+		if pkt.QoS > 0 {
 			b.writePacket(clientID, &protocol.PubAckPacket{
 				FixedHeader: protocol.FixedHeader{
 					PacketType: protocol.PacketTypePubAck,
@@ -507,14 +525,14 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 	}
 
 	// Handle retained message
-	if pkt.FixedHeader.Retain {
+	if pkt.Retain {
 		b.handleRetainedMessage(pkt)
 	}
 
 	// QoS 2: detect duplicate PUBLISH (DUP flag). Per MQTT §4.3.3, when a
 	// publisher resends a QoS 2 PUBLISH because the PUBREC was lost, the broker
 	// must re-send PUBREC without re-processing the message.
-	if pkt.FixedHeader.QoS == 2 && pkt.FixedHeader.Dup {
+	if pkt.QoS == 2 && pkt.Dup {
 		b.receivedQoS2Mu.Lock()
 		clientDups := b.receivedQoS2[clientID]
 		if clientDups != nil {
@@ -532,7 +550,7 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 	}
 
 	// QoS 2: defer subscriber delivery until PUBCOMP completes the handshake
-	if pkt.FixedHeader.QoS == 2 {
+	if pkt.QoS == 2 {
 		b.receivedQoS2Mu.Lock()
 		if b.receivedQoS2[clientID] == nil {
 			b.receivedQoS2[clientID] = make(map[uint16]struct{})
@@ -541,7 +559,7 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 		b.receivedQoS2Mu.Unlock()
 
 		var reasonCode byte = protocol.ReasonCodeSuccess
-		if err := b.qos.TrackQoS2(clientID, pkt.PacketID, pkt.Topic, pkt.Payload, pkt.FixedHeader.Retain); err != nil {
+		if err := b.qos.TrackQoS2(clientID, pkt.PacketID, pkt.Topic, pkt.Payload, pkt.Retain); err != nil {
 			reasonCode = protocol.ReasonCodeReceiveMaxExceeded
 		}
 		b.writePacket(clientID, &protocol.PubRecPacket{
@@ -564,9 +582,9 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 	}
 
 	// Send PUBACK for QoS 1
-	if pkt.FixedHeader.QoS == 1 {
+	if pkt.QoS == 1 {
 		var reasonCode byte = protocol.ReasonCodeSuccess
-		if err := b.qos.TrackQoS1(clientID, pkt.PacketID, pkt.Topic, pkt.Payload, pkt.FixedHeader.Retain); err != nil {
+		if err := b.qos.TrackQoS1(clientID, pkt.PacketID, pkt.Topic, pkt.Payload, pkt.Retain); err != nil {
 			reasonCode = protocol.ReasonCodeReceiveMaxExceeded
 		}
 		b.writePacket(clientID, &protocol.PubAckPacket{
@@ -795,7 +813,9 @@ func (b *Broker) sendConnAck(clientID string, reasonCode byte, sessionPresent bo
 	}
 
 	cs.wmu.Lock()
-	cs.codec.Encode(cs.conn, pkt)
+	if err := cs.codec.Encode(cs.conn, pkt); err != nil {
+		b.logger.Debug("write error", "clientID", clientID, "error", err)
+	}
 	cs.wmu.Unlock()
 }
 
@@ -837,7 +857,9 @@ func (b *Broker) sendConnAckRaw(conn net.Conn, codec *protocol.Codec, reasonCode
 		ReasonCode:     reasonCode,
 		SessionPresent: sessionPresent,
 	}
-	codec.Encode(conn, pkt)
+	if err := codec.Encode(conn, pkt); err != nil {
+		b.logger.Debug("failed to send CONNACK", "error", err)
+	}
 }
 
 func (b *Broker) handlePubAck(clientID string, packetID uint16) {
@@ -955,7 +977,9 @@ func (b *Broker) publishWill(topic string, payload []byte, qos uint8, retain boo
 }
 
 func (b *Broker) abnormalDisconnect(clientID string, conn net.Conn) {
-	b.will.TriggerWill(clientID)
+	if err := b.will.TriggerWill(clientID); err != nil {
+		b.logger.Debug("failed to trigger will", "clientID", clientID, "error", err)
+	}
 	b.disconnect(clientID, conn)
 }
 

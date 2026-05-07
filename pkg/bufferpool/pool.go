@@ -17,7 +17,8 @@ func New(size int) *Pool {
 	return &Pool{
 		pool: sync.Pool{
 			New: func() any {
-				return make([]byte, size)
+				buf := make([]byte, size)
+				return &buf
 			},
 		},
 		size: size,
@@ -26,13 +27,21 @@ func New(size int) *Pool {
 
 // Get retrieves a buffer from the pool.
 func (p *Pool) Get() []byte {
-	return p.pool.Get().([]byte)
+	switch buf := p.pool.Get().(type) {
+	case *[]byte:
+		return (*buf)[:p.size]
+	case []byte:
+		return buf[:p.size]
+	default:
+		return make([]byte, p.size)
+	}
 }
 
 // Put returns a buffer to the pool.
 func (p *Pool) Put(buf []byte) {
 	if cap(buf) >= p.size {
-		p.pool.Put(buf[:p.size])
+		buf = buf[:p.size]
+		p.pool.Put(&buf)
 	}
 }
 

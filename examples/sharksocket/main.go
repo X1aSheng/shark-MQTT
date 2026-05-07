@@ -37,6 +37,8 @@ func main() {
 	<-sig
 
 	log.Println("Shutting down adapter...")
-	adapter.Stop(context.Background())
+	if err := adapter.Stop(context.Background()); err != nil {
+		log.Printf("Failed to stop adapter cleanly: %v", err)
+	}
 	log.Println("Adapter stopped")
 }
