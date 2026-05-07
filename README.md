@@ -22,7 +22,7 @@ A high-performance MQTT Broker written in Go, supporting both **MQTT 3.1.1** and
 - **Observability**: Structured logging (`slog`) + Prometheus metrics (17+ methods) + `/healthz`/`/readyz` endpoints
 - **Safe Concurrency**: Per-connection write mutex, atomic ID generation, thread-safe session management, conn-identity-checked cleanup
 - **Config Validation**: Built-in `Validate()` for all config fields, YAML/ENV/CLI configuration
-- **shark-socket Integration**: Can run standalone or as a shark-socket server adapter
+- **Independent Runtime**: Runs as an independent MQTT broker; cross-system interoperability is handled through shared databases, Redis/cache, and explicit data contracts
 
 ## Architecture
 
@@ -80,7 +80,7 @@ A high-performance MQTT Broker written in Go, supporting both **MQTT 3.1.1** and
 | `errs/` | Centralized error definitions |
 | `tests/integration/` | 77 end-to-end integration tests (47 MQTT + 30 deploy verification) |
 | `tests/bench/` | 67 benchmarks (broker + E2E data verify + micro + store) |
-| `examples/` | Runnable example programs (standalone, TLS, custom auth, shark-socket) |
+| `examples/` | Runnable example programs (standalone, TLS, custom auth) |
 | `deploy/` | Docker, docker-compose, k8s, Helm chart deployment assets |
 | `docs/` | Architecture, deployment, performance, testing, and project status docs |
 | `testutils/` | Test utilities (mock connections, mock stores, helpers) |
@@ -421,9 +421,6 @@ go run ./examples/tls_broker
 
 # Custom authentication
 go run ./examples/custom_auth
-
-# shark-socket integration
-go run ./examples/sharksocket
 ```
 
 ## CI
