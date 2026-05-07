@@ -333,101 +333,199 @@ func (c *Codec) encodeProperties(w io.Writer, props *Properties) error {
 	var buf bytes.Buffer
 
 	if props.PayloadFormat != nil {
-		buf.WriteByte(PropPayloadFormat)
-		buf.WriteByte(*props.PayloadFormat)
+		if err := buf.WriteByte(PropPayloadFormat); err != nil {
+			return err
+		}
+		if err := buf.WriteByte(*props.PayloadFormat); err != nil {
+			return err
+		}
 	}
 	if props.MessageExpiryInterval != nil {
-		buf.WriteByte(PropMessageExpiryInterval)
-		writeUint32ToWriter(&buf, *props.MessageExpiryInterval)
+		if err := buf.WriteByte(PropMessageExpiryInterval); err != nil {
+			return err
+		}
+		if err := writeUint32ToWriter(&buf, *props.MessageExpiryInterval); err != nil {
+			return err
+		}
 	}
 	if props.ContentType != "" {
-		buf.WriteByte(PropContentType)
-		writeString(&buf, props.ContentType)
+		if err := buf.WriteByte(PropContentType); err != nil {
+			return err
+		}
+		if err := writeString(&buf, props.ContentType); err != nil {
+			return err
+		}
 	}
 	if props.ResponseTopic != "" {
-		buf.WriteByte(PropResponseTopic)
-		writeString(&buf, props.ResponseTopic)
+		if err := buf.WriteByte(PropResponseTopic); err != nil {
+			return err
+		}
+		if err := writeString(&buf, props.ResponseTopic); err != nil {
+			return err
+		}
 	}
 	if props.CorrelationData != nil {
-		buf.WriteByte(PropCorrelationData)
-		writeBinaryData(&buf, props.CorrelationData)
+		if err := buf.WriteByte(PropCorrelationData); err != nil {
+			return err
+		}
+		if err := writeBinaryData(&buf, props.CorrelationData); err != nil {
+			return err
+		}
 	}
 	if props.SubscriptionIdentifier != nil {
-		buf.WriteByte(PropSubscriptionIdentifier)
-		writeVarInt(&buf, *props.SubscriptionIdentifier)
+		if err := buf.WriteByte(PropSubscriptionIdentifier); err != nil {
+			return err
+		}
+		if err := writeVarInt(&buf, *props.SubscriptionIdentifier); err != nil {
+			return err
+		}
 	}
 	if props.SessionExpiryInterval != nil {
-		buf.WriteByte(PropSessionExpiryInterval)
-		writeUint32ToWriter(&buf, *props.SessionExpiryInterval)
+		if err := buf.WriteByte(PropSessionExpiryInterval); err != nil {
+			return err
+		}
+		if err := writeUint32ToWriter(&buf, *props.SessionExpiryInterval); err != nil {
+			return err
+		}
 	}
 	if props.AssignedClientID != "" {
-		buf.WriteByte(PropAssignedClientID)
-		writeString(&buf, props.AssignedClientID)
+		if err := buf.WriteByte(PropAssignedClientID); err != nil {
+			return err
+		}
+		if err := writeString(&buf, props.AssignedClientID); err != nil {
+			return err
+		}
 	}
 	if props.ServerKeepAlive != nil {
-		buf.WriteByte(PropServerKeepAlive)
-		writeUint16(&buf, *props.ServerKeepAlive)
+		if err := buf.WriteByte(PropServerKeepAlive); err != nil {
+			return err
+		}
+		if err := writeUint16(&buf, *props.ServerKeepAlive); err != nil {
+			return err
+		}
 	}
 	if props.AuthenticationMethod != "" {
-		buf.WriteByte(PropAuthMethod)
-		writeString(&buf, props.AuthenticationMethod)
+		if err := buf.WriteByte(PropAuthMethod); err != nil {
+			return err
+		}
+		if err := writeString(&buf, props.AuthenticationMethod); err != nil {
+			return err
+		}
 	}
 	if props.AuthenticationData != nil {
-		buf.WriteByte(PropAuthData)
-		writeBinaryData(&buf, props.AuthenticationData)
+		if err := buf.WriteByte(PropAuthData); err != nil {
+			return err
+		}
+		if err := writeBinaryData(&buf, props.AuthenticationData); err != nil {
+			return err
+		}
 	}
 	if props.RequestProblemInfo != nil {
-		buf.WriteByte(PropRequestProblemInfo)
-		buf.WriteByte(*props.RequestProblemInfo)
+		if err := buf.WriteByte(PropRequestProblemInfo); err != nil {
+			return err
+		}
+		if err := buf.WriteByte(*props.RequestProblemInfo); err != nil {
+			return err
+		}
 	}
 	if props.WillDelayInterval != nil {
-		buf.WriteByte(PropWillDelayInterval)
-		writeUint32ToWriter(&buf, *props.WillDelayInterval)
+		if err := buf.WriteByte(PropWillDelayInterval); err != nil {
+			return err
+		}
+		if err := writeUint32ToWriter(&buf, *props.WillDelayInterval); err != nil {
+			return err
+		}
 	}
 	if props.ReceiveMaximum != nil {
-		buf.WriteByte(PropReceiveMaximum)
-		writeUint16(&buf, *props.ReceiveMaximum)
+		if err := buf.WriteByte(PropReceiveMaximum); err != nil {
+			return err
+		}
+		if err := writeUint16(&buf, *props.ReceiveMaximum); err != nil {
+			return err
+		}
 	}
 	if props.TopicAliasMaximum != nil {
-		buf.WriteByte(PropTopicAliasMax)
-		writeUint16(&buf, *props.TopicAliasMaximum)
+		if err := buf.WriteByte(PropTopicAliasMax); err != nil {
+			return err
+		}
+		if err := writeUint16(&buf, *props.TopicAliasMaximum); err != nil {
+			return err
+		}
 	}
 	if props.TopicAlias != nil {
-		buf.WriteByte(PropTopicAlias)
-		writeUint16(&buf, *props.TopicAlias)
+		if err := buf.WriteByte(PropTopicAlias); err != nil {
+			return err
+		}
+		if err := writeUint16(&buf, *props.TopicAlias); err != nil {
+			return err
+		}
 	}
 	if props.MaximumQoS != nil {
-		buf.WriteByte(PropMaximumQoS)
-		buf.WriteByte(*props.MaximumQoS)
+		if err := buf.WriteByte(PropMaximumQoS); err != nil {
+			return err
+		}
+		if err := buf.WriteByte(*props.MaximumQoS); err != nil {
+			return err
+		}
 	}
 	if props.RetainAvailable != nil {
-		buf.WriteByte(PropRetainAvailable)
-		buf.WriteByte(*props.RetainAvailable)
+		if err := buf.WriteByte(PropRetainAvailable); err != nil {
+			return err
+		}
+		if err := buf.WriteByte(*props.RetainAvailable); err != nil {
+			return err
+		}
 	}
 	for _, up := range props.UserProperties {
-		buf.WriteByte(PropUserProperty)
-		writeString(&buf, up.Key)
-		writeString(&buf, up.Value)
+		if err := buf.WriteByte(PropUserProperty); err != nil {
+			return err
+		}
+		if err := writeString(&buf, up.Key); err != nil {
+			return err
+		}
+		if err := writeString(&buf, up.Value); err != nil {
+			return err
+		}
 	}
 	if props.MaximumPacketSize != nil {
-		buf.WriteByte(PropMaximumPacketSize)
-		writeUint32ToWriter(&buf, *props.MaximumPacketSize)
+		if err := buf.WriteByte(PropMaximumPacketSize); err != nil {
+			return err
+		}
+		if err := writeUint32ToWriter(&buf, *props.MaximumPacketSize); err != nil {
+			return err
+		}
 	}
 	if props.WildcardSubAvailable != nil {
-		buf.WriteByte(PropWildcardSubAvailable)
-		buf.WriteByte(*props.WildcardSubAvailable)
+		if err := buf.WriteByte(PropWildcardSubAvailable); err != nil {
+			return err
+		}
+		if err := buf.WriteByte(*props.WildcardSubAvailable); err != nil {
+			return err
+		}
 	}
 	if props.SubIDAvailable != nil {
-		buf.WriteByte(PropSubIDAvailable)
-		buf.WriteByte(*props.SubIDAvailable)
+		if err := buf.WriteByte(PropSubIDAvailable); err != nil {
+			return err
+		}
+		if err := buf.WriteByte(*props.SubIDAvailable); err != nil {
+			return err
+		}
 	}
 	if props.SharedSubAvailable != nil {
-		buf.WriteByte(PropSharedSubAvailable)
-		buf.WriteByte(*props.SharedSubAvailable)
+		if err := buf.WriteByte(PropSharedSubAvailable); err != nil {
+			return err
+		}
+		if err := buf.WriteByte(*props.SharedSubAvailable); err != nil {
+			return err
+		}
 	}
 	if props.ReasonString != "" {
-		buf.WriteByte(PropReasonString)
-		writeString(&buf, props.ReasonString)
+		if err := buf.WriteByte(PropReasonString); err != nil {
+			return err
+		}
+		if err := writeString(&buf, props.ReasonString); err != nil {
+			return err
+		}
 	}
 
 	data := buf.Bytes()
@@ -449,10 +547,6 @@ func readByte(r io.Reader) (byte, error) {
 		return 0, err
 	}
 	return buf[0], nil
-}
-
-func readByteFromReader(r *bytes.Reader) (byte, error) {
-	return r.ReadByte()
 }
 
 func readStringFromReader(r *bytes.Reader) (string, error) {
