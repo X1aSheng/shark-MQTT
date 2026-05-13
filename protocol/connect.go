@@ -134,6 +134,16 @@ func ValidateConnect(pkt *ConnectPacket) error {
 	if pkt.ProtocolVersion != Version31 && pkt.ProtocolVersion != Version311 && pkt.ProtocolVersion != Version50 {
 		return fmt.Errorf("protocol: unsupported protocol version %d", pkt.ProtocolVersion)
 	}
+	switch pkt.ProtocolVersion {
+	case Version31:
+		if pkt.ProtocolName != ProtocolNameMQIsdp {
+			return fmt.Errorf("protocol: MQTT 3.1 requires protocol name %q", ProtocolNameMQIsdp)
+		}
+	case Version311, Version50:
+		if pkt.ProtocolName != ProtocolNameMQTT {
+			return fmt.Errorf("protocol: MQTT %d requires protocol name %q", pkt.ProtocolVersion, ProtocolNameMQTT)
+		}
+	}
 
 	// Reserved flag must be 0 (MQTT 3.1.1 §3.1.2.3)
 	if pkt.Flags.Reserved {
