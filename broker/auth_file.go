@@ -19,6 +19,8 @@ type FileAuth struct {
 	userIndex map[string]int // username -> index in users slice
 }
 
+var _ Authenticator = (*FileAuth)(nil)
+
 // UserCredential represents a user entry in the auth file.
 type UserCredential struct {
 	Username  string   `json:"username" yaml:"username"`

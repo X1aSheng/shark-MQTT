@@ -11,6 +11,8 @@ type ChainAuth struct {
 	authenticators []Authenticator
 }
 
+var _ Authenticator = (*ChainAuth)(nil)
+
 // NewChainAuth creates a new chain authenticator.
 func NewChainAuth(auths ...Authenticator) *ChainAuth {
 	return &ChainAuth{
