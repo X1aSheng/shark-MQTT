@@ -11,12 +11,18 @@ func (c *Codec) decodePublish(r io.Reader, fh *FixedHeader) (*PublishPacket, err
 	if err != nil {
 		return nil, err
 	}
+	if !ValidatePublishTopic(topic) {
+		return nil, ErrMalformedPacket
+	}
 
 	var packetID uint16
 	if fh.QoS > 0 {
 		packetID, err = readUint16(r)
 		if err != nil {
 			return nil, err
+		}
+		if packetID == 0 {
+			return nil, ErrMalformedPacket
 		}
 	}
 
@@ -69,6 +75,16 @@ func (c *Codec) decodePublish(r io.Reader, fh *FixedHeader) (*PublishPacket, err
 func (c *Codec) encodePublish(w io.Writer, pkt *PublishPacket) error {
 	var buf bytes.Buffer
 
+	if !ValidatePublishTopic(pkt.Topic) {
+		return ErrMalformedPacket
+	}
+	if pkt.QoS == 0 && pkt.PacketID != 0 {
+		return ErrMalformedPacket
+	}
+	if pkt.QoS > 0 && pkt.PacketID == 0 {
+		return ErrMalformedPacket
+	}
+
 	if err := writeString(&buf, pkt.Topic); err != nil {
 		return err
 	}
@@ -107,25 +123,9 @@ func (c *Codec) encodePublish(w io.Writer, pkt *PublishPacket) error {
 // --- PubAck ---
 
 func (c *Codec) decodePubAck(r io.Reader, fh *FixedHeader) (*PubAckPacket, error) {
-	packetID, err := readUint16(r)
+	packetID, reasonCode, props, err := c.decodeAckFields(r, fh)
 	if err != nil {
 		return nil, err
-	}
-
-	var reasonCode byte = ReasonCodeSuccess
-	if fh.RemainingLength > 2 {
-		reasonCode, err = readByte(r)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	var props *Properties
-	if fh.RemainingLength > 3 {
-		props, err = c.decodeProperties(r)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	return &PubAckPacket{
@@ -137,53 +137,24 @@ func (c *Codec) decodePubAck(r io.Reader, fh *FixedHeader) (*PubAckPacket, error
 }
 
 func (c *Codec) encodePubAck(w io.Writer, pkt *PubAckPacket) error {
-	var buf bytes.Buffer
-
-	if err := writeUint16(&buf, pkt.PacketID); err != nil {
+	buf, err := c.encodeAckFields(pkt.PacketID, pkt.ReasonCode, pkt.Properties)
+	if err != nil {
 		return err
 	}
-
-	if pkt.ReasonCode != ReasonCodeSuccess || pkt.Properties != nil {
-		if err := buf.WriteByte(pkt.ReasonCode); err != nil {
-			return err
-		}
-		if pkt.Properties != nil {
-			if err := c.encodeProperties(&buf, pkt.Properties); err != nil {
-				return err
-			}
-		}
-	}
-
-	pkt.RemainingLength = buf.Len()
+	pkt.RemainingLength = len(buf)
 	if err := c.encodeFixedHeader(w, &pkt.FixedHeader); err != nil {
 		return err
 	}
-	_, err := w.Write(buf.Bytes())
+	_, err = w.Write(buf)
 	return err
 }
 
 // --- PubRec ---
 
 func (c *Codec) decodePubRec(r io.Reader, fh *FixedHeader) (*PubRecPacket, error) {
-	packetID, err := readUint16(r)
+	packetID, reasonCode, props, err := c.decodeAckFields(r, fh)
 	if err != nil {
 		return nil, err
-	}
-
-	var reasonCode byte = ReasonCodeSuccess
-	if fh.RemainingLength > 2 {
-		reasonCode, err = readByte(r)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	var props *Properties
-	if fh.RemainingLength > 3 {
-		props, err = c.decodeProperties(r)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	return &PubRecPacket{
@@ -195,53 +166,24 @@ func (c *Codec) decodePubRec(r io.Reader, fh *FixedHeader) (*PubRecPacket, error
 }
 
 func (c *Codec) encodePubRec(w io.Writer, pkt *PubRecPacket) error {
-	var buf bytes.Buffer
-
-	if err := writeUint16(&buf, pkt.PacketID); err != nil {
+	buf, err := c.encodeAckFields(pkt.PacketID, pkt.ReasonCode, pkt.Properties)
+	if err != nil {
 		return err
 	}
-
-	if pkt.ReasonCode != ReasonCodeSuccess || pkt.Properties != nil {
-		if err := buf.WriteByte(pkt.ReasonCode); err != nil {
-			return err
-		}
-		if pkt.Properties != nil {
-			if err := c.encodeProperties(&buf, pkt.Properties); err != nil {
-				return err
-			}
-		}
-	}
-
-	pkt.RemainingLength = buf.Len()
+	pkt.RemainingLength = len(buf)
 	if err := c.encodeFixedHeader(w, &pkt.FixedHeader); err != nil {
 		return err
 	}
-	_, err := w.Write(buf.Bytes())
+	_, err = w.Write(buf)
 	return err
 }
 
 // --- PubRel ---
 
 func (c *Codec) decodePubRel(r io.Reader, fh *FixedHeader) (*PubRelPacket, error) {
-	packetID, err := readUint16(r)
+	packetID, reasonCode, props, err := c.decodeAckFields(r, fh)
 	if err != nil {
 		return nil, err
-	}
-
-	var reasonCode byte = ReasonCodeSuccess
-	if fh.RemainingLength > 2 {
-		reasonCode, err = readByte(r)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	var props *Properties
-	if fh.RemainingLength > 3 {
-		props, err = c.decodeProperties(r)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	return &PubRelPacket{
@@ -253,55 +195,27 @@ func (c *Codec) decodePubRel(r io.Reader, fh *FixedHeader) (*PubRelPacket, error
 }
 
 func (c *Codec) encodePubRel(w io.Writer, pkt *PubRelPacket) error {
-	var buf bytes.Buffer
-
-	if err := writeUint16(&buf, pkt.PacketID); err != nil {
+	buf, err := c.encodeAckFields(pkt.PacketID, pkt.ReasonCode, pkt.Properties)
+	if err != nil {
 		return err
-	}
-
-	if pkt.ReasonCode != ReasonCodeSuccess || pkt.Properties != nil {
-		if err := buf.WriteByte(pkt.ReasonCode); err != nil {
-			return err
-		}
-		if pkt.Properties != nil {
-			if err := c.encodeProperties(&buf, pkt.Properties); err != nil {
-				return err
-			}
-		}
 	}
 
 	pkt.QoS = 1
 	pkt.FixedHeader.Retain = false
-	pkt.RemainingLength = buf.Len()
+	pkt.RemainingLength = len(buf)
 	if err := c.encodeFixedHeader(w, &pkt.FixedHeader); err != nil {
 		return err
 	}
-	_, err := w.Write(buf.Bytes())
+	_, err = w.Write(buf)
 	return err
 }
 
 // --- PubComp ---
 
 func (c *Codec) decodePubComp(r io.Reader, fh *FixedHeader) (*PubCompPacket, error) {
-	packetID, err := readUint16(r)
+	packetID, reasonCode, props, err := c.decodeAckFields(r, fh)
 	if err != nil {
 		return nil, err
-	}
-
-	var reasonCode byte = ReasonCodeSuccess
-	if fh.RemainingLength > 2 {
-		reasonCode, err = readByte(r)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	var props *Properties
-	if fh.RemainingLength > 3 {
-		props, err = c.decodeProperties(r)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	return &PubCompPacket{
@@ -313,27 +227,83 @@ func (c *Codec) decodePubComp(r io.Reader, fh *FixedHeader) (*PubCompPacket, err
 }
 
 func (c *Codec) encodePubComp(w io.Writer, pkt *PubCompPacket) error {
-	var buf bytes.Buffer
-
-	if err := writeUint16(&buf, pkt.PacketID); err != nil {
+	buf, err := c.encodeAckFields(pkt.PacketID, pkt.ReasonCode, pkt.Properties)
+	if err != nil {
 		return err
 	}
-
-	if pkt.ReasonCode != ReasonCodeSuccess || pkt.Properties != nil {
-		if err := buf.WriteByte(pkt.ReasonCode); err != nil {
-			return err
-		}
-		if pkt.Properties != nil {
-			if err := c.encodeProperties(&buf, pkt.Properties); err != nil {
-				return err
-			}
-		}
-	}
-
-	pkt.RemainingLength = buf.Len()
+	pkt.RemainingLength = len(buf)
 	if err := c.encodeFixedHeader(w, &pkt.FixedHeader); err != nil {
 		return err
 	}
-	_, err := w.Write(buf.Bytes())
+	_, err = w.Write(buf)
 	return err
+}
+
+func (c *Codec) decodeAckFields(r io.Reader, fh *FixedHeader) (uint16, byte, *Properties, error) {
+	if fh.RemainingLength < 2 {
+		return 0, 0, nil, ErrMalformedPacket
+	}
+	if c.protocolVersion != Version50 && fh.RemainingLength != 2 {
+		return 0, 0, nil, ErrMalformedPacket
+	}
+
+	data := make([]byte, fh.RemainingLength)
+	if _, err := io.ReadFull(r, data); err != nil {
+		return 0, 0, nil, err
+	}
+	reader := bytes.NewReader(data)
+
+	packetID, err := readUint16FromReader(reader)
+	if err != nil {
+		return 0, 0, nil, err
+	}
+	if packetID == 0 {
+		return 0, 0, nil, ErrMalformedPacket
+	}
+
+	reasonCode := byte(ReasonCodeSuccess)
+	if reader.Len() > 0 {
+		reasonCode, err = readByte(reader)
+		if err != nil {
+			return 0, 0, nil, err
+		}
+	}
+
+	var props *Properties
+	if reader.Len() > 0 {
+		props, err = c.decodeProperties(reader)
+		if err != nil {
+			return 0, 0, nil, err
+		}
+		if reader.Len() != 0 {
+			return 0, 0, nil, ErrMalformedPacket
+		}
+	}
+
+	return packetID, reasonCode, props, nil
+}
+
+func (c *Codec) encodeAckFields(packetID uint16, reasonCode byte, props *Properties) ([]byte, error) {
+	if packetID == 0 {
+		return nil, ErrMalformedPacket
+	}
+	if c.protocolVersion != Version50 && (reasonCode != ReasonCodeSuccess || props != nil) {
+		return nil, ErrMalformedPacket
+	}
+
+	var buf bytes.Buffer
+	if err := writeUint16(&buf, packetID); err != nil {
+		return nil, err
+	}
+	if reasonCode != ReasonCodeSuccess || props != nil {
+		if err := buf.WriteByte(reasonCode); err != nil {
+			return nil, err
+		}
+		if props != nil {
+			if err := c.encodeProperties(&buf, props); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return buf.Bytes(), nil
 }

@@ -170,7 +170,7 @@ const (
 
 // AUTH reason codes (MQTT 5.0).
 const (
-	AuthSuccess      = 0x18
-	AuthContinueAuth = 0x19
-	AuthReAuth       = 0x1A
+	AuthSuccess      = 0x00
+	AuthContinueAuth = 0x18
+	AuthReAuth       = 0x19
 )

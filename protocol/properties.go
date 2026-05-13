@@ -170,6 +170,9 @@ func (c *Codec) decodeProperties(r io.Reader) (*Properties, error) {
 			if err != nil {
 				return nil, err
 			}
+			if v == 0 {
+				return nil, ErrMalformedPacket
+			}
 			props.SubscriptionIdentifier = &v
 		case PropSessionExpiryInterval:
 			v, err := readUint32FromReader(reader)
@@ -221,6 +224,9 @@ func (c *Codec) decodeProperties(r io.Reader) (*Properties, error) {
 			if err != nil {
 				return nil, err
 			}
+			if v == 0 {
+				return nil, ErrMalformedPacket
+			}
 			props.ReceiveMaximum = &v
 		case PropTopicAliasMax:
 			v, err := readUint16FromReader(reader)
@@ -233,17 +239,26 @@ func (c *Codec) decodeProperties(r io.Reader) (*Properties, error) {
 			if err != nil {
 				return nil, err
 			}
+			if v == 0 {
+				return nil, ErrMalformedPacket
+			}
 			props.TopicAlias = &v
 		case PropMaximumQoS:
 			v, err := reader.ReadByte()
 			if err != nil {
 				return nil, err
 			}
+			if v > 1 {
+				return nil, ErrMalformedPacket
+			}
 			props.MaximumQoS = &v
 		case PropRetainAvailable:
 			v, err := reader.ReadByte()
 			if err != nil {
 				return nil, err
+			}
+			if v > 1 {
+				return nil, ErrMalformedPacket
 			}
 			props.RetainAvailable = &v
 		case PropUserProperty:
@@ -261,11 +276,17 @@ func (c *Codec) decodeProperties(r io.Reader) (*Properties, error) {
 			if err != nil {
 				return nil, err
 			}
+			if v == 0 {
+				return nil, ErrMalformedPacket
+			}
 			props.MaximumPacketSize = &v
 		case PropWildcardSubAvailable:
 			v, err := reader.ReadByte()
 			if err != nil {
 				return nil, err
+			}
+			if v > 1 {
+				return nil, ErrMalformedPacket
 			}
 			props.WildcardSubAvailable = &v
 		case PropSubIDAvailable:
@@ -273,11 +294,17 @@ func (c *Codec) decodeProperties(r io.Reader) (*Properties, error) {
 			if err != nil {
 				return nil, err
 			}
+			if v > 1 {
+				return nil, ErrMalformedPacket
+			}
 			props.SubIDAvailable = &v
 		case PropSharedSubAvailable:
 			v, err := reader.ReadByte()
 			if err != nil {
 				return nil, err
+			}
+			if v > 1 {
+				return nil, ErrMalformedPacket
 			}
 			props.SharedSubAvailable = &v
 		case PropReasonString:
@@ -330,6 +357,10 @@ func skipPropertyValue(r *bytes.Reader, propID byte) error {
 }
 
 func (c *Codec) encodeProperties(w io.Writer, props *Properties) error {
+	if err := validateProperties(props); err != nil {
+		return err
+	}
+
 	var buf bytes.Buffer
 
 	if props.PayloadFormat != nil {
@@ -539,6 +570,46 @@ func (c *Codec) encodeProperties(w io.Writer, props *Properties) error {
 	return err
 }
 
+func validateProperties(props *Properties) error {
+	if props == nil {
+		return nil
+	}
+	if props.PayloadFormat != nil && *props.PayloadFormat > 1 {
+		return ErrMalformedPacket
+	}
+	if props.SubscriptionIdentifier != nil && *props.SubscriptionIdentifier == 0 {
+		return ErrMalformedPacket
+	}
+	if props.RequestProblemInfo != nil && *props.RequestProblemInfo > 1 {
+		return ErrMalformedPacket
+	}
+	if props.ReceiveMaximum != nil && *props.ReceiveMaximum == 0 {
+		return ErrMalformedPacket
+	}
+	if props.TopicAlias != nil && *props.TopicAlias == 0 {
+		return ErrMalformedPacket
+	}
+	if props.MaximumQoS != nil && *props.MaximumQoS > 1 {
+		return ErrMalformedPacket
+	}
+	if props.RetainAvailable != nil && *props.RetainAvailable > 1 {
+		return ErrMalformedPacket
+	}
+	if props.MaximumPacketSize != nil && *props.MaximumPacketSize == 0 {
+		return ErrMalformedPacket
+	}
+	if props.WildcardSubAvailable != nil && *props.WildcardSubAvailable > 1 {
+		return ErrMalformedPacket
+	}
+	if props.SubIDAvailable != nil && *props.SubIDAvailable > 1 {
+		return ErrMalformedPacket
+	}
+	if props.SharedSubAvailable != nil && *props.SharedSubAvailable > 1 {
+		return ErrMalformedPacket
+	}
+	return nil
+}
+
 // --- Helper functions for reading from bytes.Reader ---
 
 func readByte(r io.Reader) (byte, error) {
@@ -563,7 +634,7 @@ func readStringFromReader(r *bytes.Reader) (string, error) {
 		return "", nil
 	}
 	buf := make([]byte, length)
-	if _, err := r.Read(buf); err != nil {
+	if _, err := io.ReadFull(r, buf); err != nil {
 		return "", err
 	}
 	s := string(buf)
@@ -575,7 +646,7 @@ func readStringFromReader(r *bytes.Reader) (string, error) {
 
 func readUint16FromReader(r *bytes.Reader) (uint16, error) {
 	var buf [2]byte
-	if _, err := r.Read(buf[:]); err != nil {
+	if _, err := io.ReadFull(r, buf[:]); err != nil {
 		return 0, err
 	}
 	return binary.BigEndian.Uint16(buf[:]), nil
@@ -583,7 +654,7 @@ func readUint16FromReader(r *bytes.Reader) (uint16, error) {
 
 func readUint32FromReader(r *bytes.Reader) (uint32, error) {
 	var buf [4]byte
-	if _, err := r.Read(buf[:]); err != nil {
+	if _, err := io.ReadFull(r, buf[:]); err != nil {
 		return 0, err
 	}
 	return binary.BigEndian.Uint32(buf[:]), nil
@@ -592,7 +663,7 @@ func readUint32FromReader(r *bytes.Reader) (uint32, error) {
 func readVarIntFromReader(r *bytes.Reader) (uint32, error) {
 	var val uint32
 	var multiplier uint32 = 1
-	for {
+	for i := 0; i < 4; i++ {
 		b, err := r.ReadByte()
 		if err != nil {
 			return 0, err
@@ -603,7 +674,7 @@ func readVarIntFromReader(r *bytes.Reader) (uint32, error) {
 		}
 		multiplier *= 128
 	}
-	return val, nil
+	return 0, fmt.Errorf("protocol: varint exceeds 4 bytes")
 }
 
 func readBinaryDataFromReader(r *bytes.Reader) ([]byte, error) {
@@ -620,7 +691,7 @@ func readBinaryDataFromReader(r *bytes.Reader) ([]byte, error) {
 		return nil, nil
 	}
 	buf := make([]byte, length)
-	if _, err := r.Read(buf); err != nil {
+	if _, err := io.ReadFull(r, buf); err != nil {
 		return nil, err
 	}
 	return buf, nil
