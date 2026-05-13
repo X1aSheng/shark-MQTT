@@ -678,19 +678,31 @@ func (b *Broker) handleSubscribe(clientID string, sess *Session, pkt *protocol.S
 }
 
 func (b *Broker) handleUnsubscribe(clientID string, sess *Session, pkt *protocol.UnsubscribePacket) {
+	var reasonCodes []byte
+	if sess != nil && sess.ProtocolVer == protocol.Version50 {
+		reasonCodes = make([]byte, 0, len(pkt.Topics))
+	}
+
 	for _, topic := range pkt.Topics {
 		if !protocol.ValidateTopicFilter(topic) {
+			if reasonCodes != nil {
+				reasonCodes = append(reasonCodes, protocol.ReasonCodeTopicFilterInvalid)
+			}
 			continue
 		}
 		b.topics.Unsubscribe(topic, clientID)
 		sess.RemoveSubscription(topic)
+		if reasonCodes != nil {
+			reasonCodes = append(reasonCodes, protocol.ReasonCodeSuccess)
+		}
 	}
 
 	b.writePacket(clientID, &protocol.UnsubAckPacket{
 		FixedHeader: protocol.FixedHeader{
 			PacketType: protocol.PacketTypeUnsubAck,
 		},
-		PacketID: pkt.PacketID,
+		PacketID:    pkt.PacketID,
+		ReasonCodes: reasonCodes,
 	})
 
 	b.metrics.SetSubscriptions(int(b.topics.SubscriberCount()))
@@ -833,13 +845,11 @@ func (b *Broker) buildConnAckProperties(sess *Session) *protocol.Properties {
 	if receiveMax == 0 {
 		receiveMax = 65535
 	}
-	maxQoS := byte(2)
 	maxPktSize := uint32(b.opts.maxPacketSize)
 
 	props := &protocol.Properties{
 		SessionExpiryInterval: &sess.ExpiryInterval,
 		ReceiveMaximum:        &receiveMax,
-		MaximumQoS:            &maxQoS,
 		RetainAvailable:       &retainAvailable,
 		MaximumPacketSize:     &maxPktSize,
 		WildcardSubAvailable:  &wildcardAvailable,

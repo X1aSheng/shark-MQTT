@@ -49,6 +49,9 @@ func TestUnsubscribe_StopsDelivery(t *testing.T) {
 	if unsubAck.PacketID != 2 {
 		t.Errorf("expected UNSUBACK packetID 2, got %d", unsubAck.PacketID)
 	}
+	if len(unsubAck.ReasonCodes) != 1 || unsubAck.ReasonCodes[0] != protocol.ReasonCodeSuccess {
+		t.Fatalf("expected MQTT 5 UNSUBACK success reason code, got %#v", unsubAck.ReasonCodes)
+	}
 
 	// Publish again — subscriber should NOT receive it
 	publishQoS0(t, pubConn, pubCodec, "unsub/topic", []byte("after"))

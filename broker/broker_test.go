@@ -192,6 +192,14 @@ func TestBroker_PublishWillStoresRetainedMessage(t *testing.T) {
 	}
 }
 
+func TestBroker_ConnAckPropertiesOmitMaximumQoSWhenQoS2Supported(t *testing.T) {
+	b := New(WithAuth(AllowAllAuth{}))
+	props := b.buildConnAckProperties(&Session{})
+	if props.MaximumQoS != nil {
+		t.Fatalf("MaximumQoS = %d, want omitted because MQTT 5 only allows 0 or 1 and omission means QoS 2 supported", *props.MaximumQoS)
+	}
+}
+
 func TestBroker_QoS2DupDetection(t *testing.T) {
 	b := New(WithAuth(AllowAllAuth{}))
 	err := b.Start()
