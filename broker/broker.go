@@ -969,6 +969,10 @@ func (b *Broker) publishWill(topic string, payload []byte, qos uint8, retain boo
 		Payload: payload,
 	}
 
+	if retain {
+		b.handleRetainedMessage(pubPkt)
+	}
+
 	subscribers := b.topics.Match(topic)
 	for _, sub := range subscribers {
 		b.deliverToClient(sub.ClientID, pubPkt)

@@ -168,6 +168,30 @@ func TestBroker_RetainedMetricsCountUpdatesOnOverwriteAndDelete(t *testing.T) {
 	}
 }
 
+func TestBroker_PublishWillStoresRetainedMessage(t *testing.T) {
+	retained := memory.NewRetainedStore()
+	b := New(
+		WithAuth(AllowAllAuth{}),
+		WithRetainedStore(retained),
+	)
+	if err := b.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer b.Stop()
+
+	if err := b.publishWill("will/retained", []byte("offline"), 1, true); err != nil {
+		t.Fatalf("publishWill: %v", err)
+	}
+
+	msg, err := retained.GetRetained(context.Background(), "will/retained")
+	if err != nil {
+		t.Fatalf("GetRetained: %v", err)
+	}
+	if msg.QoS != 1 || string(msg.Payload) != "offline" {
+		t.Fatalf("retained will = qos %d payload %q, want qos 1 payload offline", msg.QoS, msg.Payload)
+	}
+}
+
 func TestBroker_QoS2DupDetection(t *testing.T) {
 	b := New(WithAuth(AllowAllAuth{}))
 	err := b.Start()

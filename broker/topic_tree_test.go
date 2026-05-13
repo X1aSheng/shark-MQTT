@@ -97,6 +97,35 @@ func TestTopicTree_SubscribeSystem(t *testing.T) {
 	}
 }
 
+func TestTopicTree_SystemTopicWildcardsRequireDollarPrefix(t *testing.T) {
+	tt := NewTopicTree()
+	if !tt.Subscribe("#", "ordinary-hash", 0) {
+		t.Fatal("expected # subscription to be accepted")
+	}
+	if !tt.Subscribe("+/broker/status", "ordinary-plus", 0) {
+		t.Fatal("expected +/broker/status subscription to be accepted")
+	}
+	if !tt.Subscribe("$SYS/#", "system-hash", 0) {
+		t.Fatal("expected $SYS/# subscription to be accepted")
+	}
+	if !tt.Subscribe("$SYS/+/status", "system-plus", 0) {
+		t.Fatal("expected $SYS/+/status subscription to be accepted")
+	}
+
+	subs := tt.Match("$SYS/broker/status")
+	got := make(map[string]bool, len(subs))
+	for _, sub := range subs {
+		got[sub.ClientID] = true
+	}
+
+	if got["ordinary-hash"] || got["ordinary-plus"] {
+		t.Fatalf("ordinary root wildcard matched a system topic: %#v", subs)
+	}
+	if !got["system-hash"] || !got["system-plus"] {
+		t.Fatalf("system-prefixed wildcard did not match system topic: %#v", subs)
+	}
+}
+
 // --- Match / wildcard tests ---
 
 func TestTopicTree_Match_ExactMatch(t *testing.T) {

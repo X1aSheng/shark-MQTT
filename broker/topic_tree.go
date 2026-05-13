@@ -85,7 +85,7 @@ func (tt *TopicTree) Match(topic string) []Subscriber {
 	var results []Subscriber
 	visited := make(map[string]struct{})
 	isSystemTopic := len(parts) > 0 && len(parts[0]) > 0 && parts[0][0] == '$'
-	tt.matchNodeWithSys(tt.root, parts, 0, &results, visited, isSystemTopic)
+	tt.matchNodeWithSys(tt.root, parts, 0, &results, visited, isSystemTopic, !isSystemTopic)
 	return results
 }
 
@@ -133,9 +133,9 @@ func (tt *TopicTree) unsubscribeNode(node *TopicNode, parts []string, clientID s
 }
 
 // matchNodeWithSys performs matching with MQTT §4.7.2 system topic protection.
-// Topics starting with '$' are NOT matched by '+' or '#' wildcards
-// unless the filter explicitly starts with '$'.
-func (tt *TopicTree) matchNodeWithSys(node *TopicNode, parts []string, depth int, results *[]Subscriber, visited map[string]struct{}, isSystemTopic bool) {
+// Root-level '+' and '#' filters never match topics starting with '$'. Once a
+// filter explicitly enters a '$' root segment, its nested wildcards are valid.
+func (tt *TopicTree) matchNodeWithSys(node *TopicNode, parts []string, depth int, results *[]Subscriber, visited map[string]struct{}, isSystemTopic bool, wildcardsAllowed bool) {
 	// Add subscribers at current node
 	for clientID, qos := range node.subscribers {
 		if _, ok := visited[clientID]; !ok {
@@ -144,8 +144,8 @@ func (tt *TopicTree) matchNodeWithSys(node *TopicNode, parts []string, depth int
 		}
 	}
 
-	// # wildcard matches zero or more remaining levels (except for system topics)
-	if !isSystemTopic {
+	// # wildcard matches zero or more remaining levels when allowed.
+	if wildcardsAllowed {
 		if hashChild, exists := node.children["#"]; exists {
 			tt.collectAllSubscribers(hashChild, results, visited)
 		}
@@ -159,14 +159,13 @@ func (tt *TopicTree) matchNodeWithSys(node *TopicNode, parts []string, depth int
 
 	// Match exact child
 	if child, exists := node.children[part]; exists {
-		tt.matchNodeWithSys(child, parts, depth+1, results, visited, isSystemTopic)
+		nextWildcardsAllowed := wildcardsAllowed || (isSystemTopic && depth == 0 && len(part) > 0 && part[0] == '$')
+		tt.matchNodeWithSys(child, parts, depth+1, results, visited, isSystemTopic, nextWildcardsAllowed)
 	}
 
-	// For system topics ($SYS), do NOT match wildcards unless explicitly subscribed
-	if !isSystemTopic {
-		// Match '+' wildcard (single-level)
+	if wildcardsAllowed {
 		if plusChild, exists := node.children["+"]; exists {
-			tt.matchNodeWithSys(plusChild, parts, depth+1, results, visited, false)
+			tt.matchNodeWithSys(plusChild, parts, depth+1, results, visited, isSystemTopic, true)
 		}
 	}
 }
