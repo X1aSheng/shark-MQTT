@@ -36,6 +36,15 @@ type StaticAuth struct {
 	acls        map[string]*ACL   // username -> ACL
 }
 
+var (
+	_ Authenticator = (*StaticAuth)(nil)
+	_ Authorizer    = (*StaticAuth)(nil)
+	_ Authenticator = AllowAllAuth{}
+	_ Authorizer    = AllowAllAuth{}
+	_ Authenticator = DenyAllAuth{}
+	_ Authorizer    = DenyAllAuth{}
+)
+
 // ACL defines access control for a user.
 type ACL struct {
 	PublishTopics   []string
