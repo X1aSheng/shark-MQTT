@@ -17,6 +17,7 @@ go.work
 *.swo
 
 # Coverage
+coverage
 coverage.out
 *.cover
 
