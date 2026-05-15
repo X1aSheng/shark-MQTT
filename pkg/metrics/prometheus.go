@@ -1,11 +1,21 @@
 package metrics
 
 import (
+	"net/http"
+
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// prometheusMetrics implements Metrics using Prometheus.
+// HTTPHandler is an optional interface that Metrics implementations can satisfy
+// to expose an HTTP handler for metrics scraping (e.g., /metrics).
+type HTTPHandler interface {
+	Handler() http.Handler
+}
+
+// prometheusMetrics implements Metrics and HTTPHandler using Prometheus.
 type prometheusMetrics struct {
+	handler http.Handler
 	connections       prometheus.Counter
 	disconnections    prometheus.Counter
 	rejections        *prometheus.CounterVec
@@ -20,7 +30,8 @@ type prometheusMetrics struct {
 	offlineSessions   prometheus.Gauge
 	retainedMsgs      prometheus.Gauge
 	subscriptions     prometheus.Gauge
-	errors            *prometheus.CounterVec
+	errors         *prometheus.CounterVec
+	messageLatency *prometheus.HistogramVec
 }
 
 // registerOrReuse registers a collector, returning the existing one on conflict.
@@ -44,7 +55,9 @@ func NewPrometheusMetrics(reg prometheus.Registerer) Metrics {
 	if reg == nil {
 		reg = prometheus.DefaultRegisterer
 	}
-	m := &prometheusMetrics{}
+	m := &prometheusMetrics{
+		handler: promhttp.Handler(),
+	}
 
 	m.connections = registerOrReuse(reg, prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "shark_mqtt",
@@ -136,7 +149,19 @@ func NewPrometheusMetrics(reg prometheus.Registerer) Metrics {
 		Help:      "Total number of errors by component",
 	}, []string{"component"}))
 
+	m.messageLatency = registerOrReuse(reg, prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "shark_mqtt",
+		Name:      "message_processing_seconds",
+		Help:      "Message processing latency in seconds",
+		Buckets:   []float64{0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1},
+	}, []string{"qos"}))
+
 	return m
+}
+
+// Handler returns the Prometheus HTTP handler for /metrics scraping.
+func (m *prometheusMetrics) Handler() http.Handler {
+	return m.handler
 }
 
 func (m *prometheusMetrics) IncConnections() { m.connections.Inc() }
@@ -183,6 +208,10 @@ func (m *prometheusMetrics) SetSubscriptions(count int) {
 }
 func (m *prometheusMetrics) IncErrors(component string) {
 	m.errors.WithLabelValues(component).Inc()
+}
+
+func (m *prometheusMetrics) ObserveMessageLatency(seconds float64, qos uint8) {
+	m.messageLatency.WithLabelValues(qosLabel(qos)).Observe(seconds)
 }
 
 // qosLabels maps QoS values to Prometheus label strings.

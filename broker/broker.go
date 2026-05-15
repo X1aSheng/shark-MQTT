@@ -290,6 +290,11 @@ func (b *Broker) Start() error {
 	return nil
 }
 
+// Metrics returns the broker's metrics collector.
+func (b *Broker) Metrics() metrics.Metrics {
+	return b.metrics
+}
+
 // sessionCleanupLoop periodically removes expired sessions from the store.
 // It exits when the broker context is cancelled.
 func (b *Broker) sessionCleanupLoop() {
@@ -488,6 +493,11 @@ func (b *Broker) readLoop(clientID string, sess *Session, codec *protocol.Codec,
 }
 
 func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.PublishPacket) {
+	start := time.Now()
+	defer func() {
+		b.metrics.ObserveMessageLatency(time.Since(start).Seconds(), pkt.FixedHeader.QoS)
+	}()
+
 	// Reject wildcard topics per MQTT spec §3.3.2
 	if !protocol.ValidatePublishTopic(pkt.Topic) {
 		if pkt.QoS > 0 {

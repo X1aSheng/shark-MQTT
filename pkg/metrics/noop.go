@@ -19,4 +19,5 @@ func (n *noopMetrics) SetOnlineSessions(_ int)          {}
 func (n *noopMetrics) SetOfflineSessions(_ int)         {}
 func (n *noopMetrics) SetRetainedMessages(_ int)        {}
 func (n *noopMetrics) SetSubscriptions(_ int)           {}
-func (n *noopMetrics) IncErrors(_ string)               {}
+func (n *noopMetrics) IncErrors(_ string)                    {}
+func (n *noopMetrics) ObserveMessageLatency(_ float64, _ uint8) {}
