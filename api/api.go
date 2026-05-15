@@ -20,11 +20,12 @@ import (
 
 // Broker is the main MQTT broker that combines network server with broker core.
 type Broker struct {
-	srv       *broker.MQTTServer
-	broker    *broker.Broker
-	cfg       *config.Config
-	healthSrv *http.Server
-	initErr   error // set if config validation fails during construction
+	srv        *broker.MQTTServer
+	broker     *broker.Broker
+	cfg        *config.Config
+	healthSrv  *http.Server
+	healthAddr string // actual listener address for health/metrics
+	initErr    error  // set if config validation fails during construction
 }
 
 // Option configures the broker.
@@ -240,6 +241,11 @@ func (b *Broker) Broker() *broker.Broker {
 	return b.broker
 }
 
+// MetricsAddr returns the health/metrics server's listening address.
+func (b *Broker) MetricsAddr() string {
+	return b.healthAddr
+}
+
 // Run creates and starts a broker, blocking until ctx is cancelled.
 func Run(ctx context.Context, opts ...Option) error {
 	b := NewBroker(opts...)
@@ -269,11 +275,17 @@ func (b *Broker) startHealthServer() {
 		}
 	})
 
+	// Register /metrics if the metrics implementation provides a handler
+	if m, ok := interface{}(b.broker.Metrics()).(interface{ Handler() http.Handler }); ok {
+		mux.Handle("/metrics", m.Handler())
+	}
+
 	ln, err := net.Listen("tcp", b.cfg.MetricsAddr)
 	if err != nil {
 		log.Printf("[api] health server: %v (skipped)", err)
 		return
 	}
+	b.healthAddr = ln.Addr().String()
 	b.healthSrv = &http.Server{
 		Handler:           mux,
 		ReadTimeout:       5 * time.Second,
@@ -286,5 +298,5 @@ func (b *Broker) startHealthServer() {
 			log.Printf("[api] health server error: %v", err)
 		}
 	}()
-	log.Printf("[api] health endpoint on %s", b.cfg.MetricsAddr)
+	log.Printf("[api] health endpoint on %s", b.healthAddr)
 }

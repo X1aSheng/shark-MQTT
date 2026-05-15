@@ -32,7 +32,8 @@ func (m *retainedMetrics) SetRetainedMessages(count int) {
 	m.retained = append(m.retained, count)
 }
 func (m *retainedMetrics) SetSubscriptions(count int) {}
-func (m *retainedMetrics) IncErrors(component string) {}
+func (m *retainedMetrics) IncErrors(component string)                        {}
+func (m *retainedMetrics) ObserveMessageLatency(seconds float64, qos uint8) {}
 
 func TestNewBroker_Defaults(t *testing.T) {
 	b := New()
@@ -341,5 +342,86 @@ func TestBroker_SubscribeAndUnsubscribe(t *testing.T) {
 
 	if _, ok := sess.Subscriptions["test/topic"]; ok {
 		t.Error("expected subscription to be removed")
+	}
+}
+
+func TestBroker_SessionTakeover(t *testing.T) {
+	b := New(WithAuth(AllowAllAuth{}))
+	if err := b.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer b.Stop()
+
+	serverConn1, clientConn1 := net.Pipe()
+	serverConn2, _ := net.Pipe()
+
+	// Register first connection (simulating a connected client)
+	b.mu.Lock()
+	b.connections["takeover-client"] = &clientState{
+		conn:  serverConn1,
+		codec: protocol.NewCodec(0),
+	}
+	b.mu.Unlock()
+
+	// Simulate session takeover: close old connection, register new one.
+	// Mirrors HandleConnection lines 233-239.
+	b.mu.Lock()
+	if old, exists := b.connections["takeover-client"]; exists {
+		old.conn.Close()
+	}
+	b.connections["takeover-client"] = &clientState{
+		conn:  serverConn2,
+		codec: protocol.NewCodec(0),
+	}
+	b.mu.Unlock()
+
+	// First connection's client side should detect the close
+	buf := make([]byte, 1)
+	_, err := clientConn1.Read(buf)
+	if err == nil {
+		t.Error("expected first connection to be closed after takeover")
+	}
+
+	// Second connection should be the active one
+	b.mu.RLock()
+	cs := b.connections["takeover-client"]
+	b.mu.RUnlock()
+	if cs.conn != serverConn2 {
+		t.Error("expected second connection to be the active one")
+	}
+
+	serverConn2.Close()
+	clientConn1.Close()
+}
+
+func TestBroker_MaxConnections(t *testing.T) {
+	b := New(
+		WithAuth(AllowAllAuth{}),
+		WithMaxConnections(1),
+	)
+	if err := b.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer b.Stop()
+
+	// Fill the connection limit
+	serverConn1, clientConn1 := net.Pipe()
+	defer serverConn1.Close()
+	defer clientConn1.Close()
+
+	b.mu.Lock()
+	b.connections["client-1"] = &clientState{
+		conn:  serverConn1,
+		codec: protocol.NewCodec(0),
+	}
+	b.mu.Unlock()
+
+	// Attempting another connection should be rejected
+	serverConn2, clientConn2 := net.Pipe()
+	defer clientConn2.Close()
+
+	err := b.HandleConnection(context.Background(), serverConn2, protocol.NewCodec(0))
+	if err == nil {
+		t.Error("expected error when max connections exceeded")
 	}
 }

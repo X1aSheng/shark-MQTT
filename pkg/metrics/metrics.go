@@ -29,6 +29,9 @@ type Metrics interface {
 
 	// System metrics
 	IncErrors(component string)
+
+	// Latency metrics
+	ObserveMessageLatency(seconds float64, qos uint8)
 }
 
 // Default returns the default metrics implementation (no-op).
