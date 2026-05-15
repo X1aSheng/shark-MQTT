@@ -6,12 +6,15 @@ import (
 	"io"
 	"math"
 	"unicode/utf8"
+
+	"github.com/X1aSheng/shark-mqtt/pkg/bufferpool"
 )
 
 // Codec handles encoding and decoding of MQTT packets.
 type Codec struct {
 	maxPacketSize   int
-	protocolVersion uint8 // set after CONNECT is decoded
+	protocolVersion uint8            // set after CONNECT is decoded
+	pool            *bufferpool.Pool // optional buffer pool for decode buffers
 }
 
 // NewCodec creates a new Codec with the specified maximum packet size.
@@ -19,7 +22,12 @@ func NewCodec(maxPacketSize int) *Codec {
 	if maxPacketSize <= 0 {
 		maxPacketSize = 256 * 1024 // 256KB default
 	}
-	return &Codec{maxPacketSize: maxPacketSize, protocolVersion: 4} // default MQTT 3.1.1
+	return &Codec{maxPacketSize: maxPacketSize, protocolVersion: 4, pool: bufferpool.Default()} // default MQTT 3.1.1
+}
+
+// SetPool sets an optional buffer pool for decode operations.
+func (c *Codec) SetPool(p *bufferpool.Pool) {
+	c.pool = p
 }
 
 // Decode reads a packet from the reader and returns the appropriate Packet type.
@@ -212,7 +220,7 @@ func (c *Codec) encodeFixedHeader(w io.Writer, fh *FixedHeader) error {
 
 // --- UTF-8 string encoding/decoding ---
 
-func readString(r io.Reader) (string, error) {
+func readString(r io.Reader, pool *bufferpool.Pool) (string, error) {
 	var lenBuf [2]byte
 	if _, err := io.ReadFull(r, lenBuf[:]); err != nil {
 		return "", err
@@ -221,7 +229,13 @@ func readString(r io.Reader) (string, error) {
 	if length == 0 {
 		return "", nil
 	}
-	buf := make([]byte, length)
+	var buf []byte
+	if pool != nil && length <= pool.BufSize() {
+		buf = pool.Get()[:length]
+		defer pool.Put(buf)
+	} else {
+		buf = make([]byte, length)
+	}
 	if _, err := io.ReadFull(r, buf); err != nil {
 		return "", err
 	}

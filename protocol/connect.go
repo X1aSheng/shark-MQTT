@@ -13,7 +13,7 @@ func (c *Codec) decodeConnect(r io.Reader, fh *FixedHeader) (*ConnectPacket, err
 	}
 	reader := bytes.NewReader(buf)
 
-	protoName, err := readString(reader)
+	protoName, err := readString(reader, c.pool)
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +54,7 @@ func (c *Codec) decodeConnect(r io.Reader, fh *FixedHeader) (*ConnectPacket, err
 		}
 	}
 
-	clientID, err := readString(reader)
+	clientID, err := readString(reader, c.pool)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +68,7 @@ func (c *Codec) decodeConnect(r io.Reader, fh *FixedHeader) (*ConnectPacket, err
 				return nil, err
 			}
 		}
-		willTopic, err = readString(reader)
+		willTopic, err = readString(reader, c.pool)
 		if err != nil {
 			return nil, err
 		}
@@ -87,7 +87,7 @@ func (c *Codec) decodeConnect(r io.Reader, fh *FixedHeader) (*ConnectPacket, err
 	var username string
 	var password []byte
 	if flags.UsernameFlag {
-		username, err = readString(reader)
+		username, err = readString(reader, c.pool)
 		if err != nil {
 			return nil, err
 		}
