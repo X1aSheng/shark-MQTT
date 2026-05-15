@@ -480,13 +480,13 @@ All critical and high-severity issues resolved. Latest service-side review compl
 | L-007 | Low | Use named timeout constants in tests |
 | L-008 | Low | Add protocol fuzz tests |
 
-See `docs/PROJECT_STATUS.md` for the latest status and `docs/CODE_REVIEW_AND_FIX_PLAN.md` for the consolidated review and fix-plan archive.
+See `docs/PROJECT-REVIEW-260515-133700.md` for the latest project review report.
 
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
-| [Architecture](docs/shark-mqtt%20architecture.md) | Detailed architecture design |
+| [Architecture](docs/Architecture.md) | Detailed architecture design |
 | [API Reference](docs/API.md) | Public API documentation |
 | [Configuration](docs/configuration.md) | Full configuration guide |
 | [Performance](docs/performance.md) | Benchmarking and profiling |
@@ -494,8 +494,7 @@ See `docs/PROJECT_STATUS.md` for the latest status and `docs/CODE_REVIEW_AND_FIX
 | [Security](docs/SECURITY.md) | Security considerations |
 | [Testing](docs/testing.md) | Testing guide |
 | [Development](docs/development.md) | Development workflow |
-| [Project Status](docs/PROJECT_STATUS.md) | Current project state, coverage, roadmap |
-| [Review Archive](docs/CODE_REVIEW_AND_FIX_PLAN.md) | Consolidated code review and fix-plan history |
+| [Review Report](docs/PROJECT-REVIEW-260515-133700.md) | Latest project review |
 
 ## License
 
