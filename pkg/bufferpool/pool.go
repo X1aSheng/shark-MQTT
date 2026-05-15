@@ -45,6 +45,11 @@ func (p *Pool) Put(buf []byte) {
 	}
 }
 
+// BufSize returns the buffer size used by this pool.
+func (p *Pool) BufSize() int {
+	return p.size
+}
+
 // Default returns a shared default buffer pool with 4KB buffers.
 func Default() *Pool {
 	return defaultPool

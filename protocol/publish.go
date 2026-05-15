@@ -7,7 +7,7 @@ import (
 )
 
 func (c *Codec) decodePublish(r io.Reader, fh *FixedHeader) (*PublishPacket, error) {
-	topic, err := readString(r)
+	topic, err := readString(r, c.pool)
 	if err != nil {
 		return nil, err
 	}
