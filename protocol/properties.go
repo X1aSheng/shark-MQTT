@@ -670,7 +670,7 @@ func readVarIntFromReader(r *bytes.Reader) (uint32, error) {
 		}
 		val += uint32(b&0x7F) * multiplier
 		if (b & 0x80) == 0 {
-			break
+			return val, nil
 		}
 		multiplier *= 128
 	}
