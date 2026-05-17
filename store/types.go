@@ -20,8 +20,11 @@ type SessionData struct {
 
 // Subscription represents a topic subscription.
 type Subscription struct {
-	Topic string
-	QoS   uint8
+	Topic             string
+	QoS               uint8
+	NoLocal           bool
+	RetainAsPublished bool
+	RetainHandling    uint8
 }
 
 // InflightMessage represents a message awaiting acknowledgment.

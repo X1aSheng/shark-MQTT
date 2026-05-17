@@ -434,8 +434,9 @@ func TestMultiTopicSubscribe(t *testing.T) {
 	subConn.Close()
 }
 
-// TestPublishToSelf verifies a publisher does NOT receive its own message
-// when it is also subscribed to the same topic.
+// TestPublishToSelf verifies a publisher receives its own message by default
+// when it is also subscribed to the same topic. MQTT 5.0 No Local is the
+// opt-in suppression mechanism.
 func TestPublishToSelf(t *testing.T) {
 	broker := testBroker(t)
 
@@ -445,7 +446,7 @@ func TestPublishToSelf(t *testing.T) {
 
 	publishQoS0(t, conn, codec, "self/topic", []byte("echo"))
 
-	assertNoMessage(t, conn, "publisher should not receive its own message")
+	mustReceivePublish(t, conn, codec, "self/topic", "echo")
 	conn.Close()
 }
 

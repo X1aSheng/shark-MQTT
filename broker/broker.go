@@ -585,10 +585,7 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 	// Route to subscribers for QoS 0 and QoS 1
 	subscribers := b.topics.Match(pkt.Topic)
 	for _, sub := range subscribers {
-		if sub.ClientID == clientID {
-			continue
-		}
-		b.deliverToClient(sub.ClientID, pkt)
+		b.deliverToClient(sub.ClientID, clientID, pkt)
 	}
 
 	// Send PUBACK for QoS 1
@@ -667,7 +664,7 @@ func (b *Broker) handleSubscribe(clientID string, sess *Session, pkt *protocol.S
 			reasonCodes[i] = protocol.SubAckFailure
 			continue
 		}
-		sess.AddSubscription(topic.Topic, topic.QoS)
+		sess.AddSubscriptionFilter(topic)
 		reasonCodes[i] = topic.QoS
 	}
 
@@ -718,9 +715,12 @@ func (b *Broker) handleUnsubscribe(clientID string, sess *Session, pkt *protocol
 	b.metrics.SetSubscriptions(int(b.topics.SubscriberCount()))
 }
 
-func (b *Broker) deliverToClient(clientID string, pkt *protocol.PublishPacket) {
+func (b *Broker) deliverToClient(clientID, sourceClientID string, pkt *protocol.PublishPacket) {
 	sess, ok := b.sessions.GetSession(clientID)
 	if !ok {
+		return
+	}
+	if sourceClientID != "" && clientID == sourceClientID && !sess.AllowsLocalPublish(pkt.Topic) {
 		return
 	}
 
@@ -906,10 +906,7 @@ func (b *Broker) handlePubRel(clientID string, packetID uint16) {
 		}
 		subscribers := b.topics.Match(msg.Topic)
 		for _, sub := range subscribers {
-			if sub.ClientID == clientID {
-				continue
-			}
-			b.deliverToClient(sub.ClientID, pubPkt)
+			b.deliverToClient(sub.ClientID, clientID, pubPkt)
 		}
 	}
 	b.qos.AckPubRel(clientID, packetID)
@@ -973,7 +970,7 @@ func (b *Broker) republish(clientID string, packetID uint16, topic string, paylo
 	// Route to subscribers via TopicTree
 	subscribers := b.topics.Match(topic)
 	for _, sub := range subscribers {
-		b.deliverToClient(sub.ClientID, pubPkt)
+		b.deliverToClient(sub.ClientID, clientID, pubPkt)
 	}
 	return nil
 }
@@ -995,7 +992,7 @@ func (b *Broker) publishWill(topic string, payload []byte, qos uint8, retain boo
 
 	subscribers := b.topics.Match(topic)
 	for _, sub := range subscribers {
-		b.deliverToClient(sub.ClientID, pubPkt)
+		b.deliverToClient(sub.ClientID, "", pubPkt)
 	}
 	return nil
 }

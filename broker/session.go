@@ -20,6 +20,7 @@ type Session struct {
 	ConnectedAt   time.Time
 	LastActivity  time.Time
 	Subscriptions map[string]uint8 // topic -> qos
+	SubOptions    map[string]SubscriptionOptions
 	Inflight      map[uint16]*InflightMsg
 	packetIDSeq   uint16
 	ReceiveMax    uint16
@@ -36,6 +37,14 @@ type Session struct {
 
 	// Stats tracking
 	stats Stats
+}
+
+// SubscriptionOptions captures MQTT subscription options that affect delivery.
+type SubscriptionOptions struct {
+	QoS               uint8
+	NoLocal           bool
+	RetainAsPublished bool
+	RetainHandling    uint8
 }
 
 // InflightMsg tracks an in-flight QoS message.
@@ -98,6 +107,12 @@ func (m *Manager) CreateSession(clientID string, connectPkt *protocol.ConnectPac
 			existing.ProtocolVer = connectPkt.ProtocolVersion
 			existing.LastActivity = time.Now()
 			existing.ConnectedAt = time.Now()
+			if existing.SubOptions == nil {
+				existing.SubOptions = make(map[string]SubscriptionOptions, len(existing.Subscriptions))
+				for topic, qos := range existing.Subscriptions {
+					existing.SubOptions[topic] = SubscriptionOptions{QoS: qos}
+				}
+			}
 			existing.mu.Unlock()
 			return existing
 		}
@@ -118,6 +133,7 @@ func (m *Manager) CreateSession(clientID string, connectPkt *protocol.ConnectPac
 		ConnectedAt:   time.Now(),
 		LastActivity:  time.Now(),
 		Subscriptions: make(map[string]uint8),
+		SubOptions:    make(map[string]SubscriptionOptions),
 		Inflight:      make(map[uint16]*InflightMsg),
 		packetIDSeq:   1,
 		ReceiveMax:    65535,
@@ -195,9 +211,26 @@ func (s *Session) IsExpired() bool {
 
 // AddSubscription adds or updates a subscription.
 func (s *Session) AddSubscription(topic string, qos uint8) {
+	s.AddSubscriptionFilter(protocol.TopicFilter{Topic: topic, QoS: qos})
+}
+
+// AddSubscriptionFilter adds or updates a subscription with MQTT 5.0 options.
+func (s *Session) AddSubscriptionFilter(filter protocol.TopicFilter) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.Subscriptions[topic] = qos
+	if s.SubOptions == nil {
+		s.SubOptions = make(map[string]SubscriptionOptions, len(s.Subscriptions))
+		for topic, qos := range s.Subscriptions {
+			s.SubOptions[topic] = SubscriptionOptions{QoS: qos}
+		}
+	}
+	s.Subscriptions[filter.Topic] = filter.QoS
+	s.SubOptions[filter.Topic] = SubscriptionOptions{
+		QoS:               filter.QoS,
+		NoLocal:           filter.NoLocal,
+		RetainAsPublished: filter.RetainAsPublished,
+		RetainHandling:    filter.RetainHandling,
+	}
 }
 
 // RemoveSubscription removes a subscription.
@@ -205,6 +238,7 @@ func (s *Session) RemoveSubscription(topic string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.Subscriptions, topic)
+	delete(s.SubOptions, topic)
 }
 
 // MatchesSubscription checks if a topic matches any of the session's subscriptions.
@@ -217,6 +251,27 @@ func (s *Session) MatchesSubscription(topic string) (bool, uint8) {
 		}
 	}
 	return false, 0
+}
+
+// AllowsLocalPublish reports whether a matching subscription accepts messages
+// published by the same client. MQTT delivers local publishes by default;
+// MQTT 5.0 No Local suppresses them per subscription.
+func (s *Session) AllowsLocalPublish(topic string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	matched := false
+	for pattern := range s.Subscriptions {
+		if !protocol.MatchTopic(pattern, topic) {
+			continue
+		}
+		matched = true
+		opts, ok := s.SubOptions[pattern]
+		if !ok || !opts.NoLocal {
+			return true
+		}
+	}
+	return !matched
 }
 
 // NextPacketID generates the next packet ID, skipping IDs already in use.
@@ -287,7 +342,14 @@ func (s *Session) Save(ctx context.Context, sessionStore store.SessionStore) err
 
 	subscriptions := make([]store.Subscription, 0, len(s.Subscriptions))
 	for topic, qos := range s.Subscriptions {
-		subscriptions = append(subscriptions, store.Subscription{Topic: topic, QoS: qos})
+		opts := s.SubOptions[topic]
+		subscriptions = append(subscriptions, store.Subscription{
+			Topic:             topic,
+			QoS:               qos,
+			NoLocal:           opts.NoLocal,
+			RetainAsPublished: opts.RetainAsPublished,
+			RetainHandling:    opts.RetainHandling,
+		})
 	}
 	data.Subscriptions = subscriptions
 
@@ -349,6 +411,7 @@ func (m *Manager) Restore(ctx context.Context, clientID string) (*Session, error
 		ProtocolVer:    data.ProtocolVer,
 		ExpiryInterval: data.ExpiryInterval,
 		Subscriptions:  make(map[string]uint8),
+		SubOptions:     make(map[string]SubscriptionOptions),
 		Inflight:       make(map[uint16]*InflightMsg),
 		packetIDSeq:    1,
 		ReceiveMax:     65535,
@@ -356,6 +419,12 @@ func (m *Manager) Restore(ctx context.Context, clientID string) (*Session, error
 
 	for _, sub := range data.Subscriptions {
 		sess.Subscriptions[sub.Topic] = sub.QoS
+		sess.SubOptions[sub.Topic] = SubscriptionOptions{
+			QoS:               sub.QoS,
+			NoLocal:           sub.NoLocal,
+			RetainAsPublished: sub.RetainAsPublished,
+			RetainHandling:    sub.RetainHandling,
+		}
 	}
 
 	for id, msg := range data.Inflight {
