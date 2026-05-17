@@ -108,7 +108,7 @@ go test -v ./store/memory/...
 go test -v -race -count=1 ./...
 ```
 
-注意：Go race detector 依赖 CGO。本机 Windows 验证时 `CGO_ENABLED=1 go test -race -count=1 ./...` 因缺少 `gcc` 无法构建 `runtime/cgo`，CI 或开发机需要安装 C 编译器后执行。
+注意：Go race detector 依赖 CGO 和 C 编译器。Windows 本机可安装 w64devkit，并在当前 shell 中加入 `D:\Programs\w64devkit\bin` 后执行：`CGO_ENABLED=1 go test -race -count=1 ./...`。本轮已用该环境通过全仓 race 测试。
 
 ### 编写规范
 

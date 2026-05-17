@@ -323,7 +323,7 @@ Full results: `make bench` or see `docs/performance.md`.
 | **Latest scripted run** | `logs/20260517_114826_*` | **0 failures** |
 
 > 13 Redis tests skipped when `MQTT_REDIS_ADDR` is not set.
-> Latest full run: `logs/20260517_114826_*`; unit log reports 406 passed and 13 Redis tests skipped when Redis is not configured. Race detector requires CGO and a C compiler (`gcc` on this Windows host).
+> Latest full run: `logs/20260517_114826_*`; unit log reports 406 passed and 13 Redis tests skipped when Redis is not configured. Race detector passed after adding `D:\Programs\w64devkit\bin` to `PATH`.
 
 ### Integration Test Coverage
 
