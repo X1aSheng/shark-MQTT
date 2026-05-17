@@ -1,5 +1,5 @@
 @echo off
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 
 REM ============================================================
 REM  shark-mqtt test runner for Windows CMD
@@ -27,6 +27,7 @@ for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss
 
 set "MODE=%~1"
 if not defined MODE set "MODE=--all"
+set "STATUS=0"
 
 if "%MODE%"=="--unit"        goto :do_unit
 if "%MODE%"=="--integration" goto :do_integration
@@ -38,14 +39,17 @@ goto :usage
 REM ============================================================
 :do_unit
 call :run_test unit "Unit Tests" ./broker/... ./protocol/... ./store/... ./client/... ./config/... ./errs/... ./pkg/... ./plugin/... ./api/...
+set "STATUS=%ERRORLEVEL%"
 goto :end
 
 :do_integration
 call :run_test integration "Integration Tests" ./tests/integration/...
+set "STATUS=%ERRORLEVEL%"
 goto :end
 
 :do_benchmark
 call :run_test benchmark "Benchmarks" -bench=. -benchmem -run=^^ ./tests/bench/... ./broker/... ./protocol/... ./store/... ./pkg/...
+set "STATUS=%ERRORLEVEL%"
 goto :end
 
 :do_cover
@@ -56,10 +60,15 @@ echo [33m========================================[0m
 echo.
 pushd "%PROJECT_DIR%"
 go test ./... -count=1 -cover -timeout 300s > "%LOGDIR%\%TS%_cover.log" 2>&1
+set "STATUS=%ERRORLEVEL%"
 popd
 type "%LOGDIR%\%TS%_cover.log"
 echo.
-echo [32m^>^>^> Coverage log: %LOGDIR%\%TS%_cover.log[0m
+if not "%STATUS%"=="0" (
+    echo [31m^>^>^> Coverage failed with exit code %STATUS%.[0m
+) else (
+    echo [32m^>^>^> Coverage log: %LOGDIR%\%TS%_cover.log[0m
+)
 goto :end
 
 :do_all
@@ -70,8 +79,11 @@ echo [33m  %DATE% %TIME%[0m
 echo [33m========================================[0m
 
 call :run_test unit "Unit Tests" ./broker/... ./protocol/... ./store/... ./client/... ./config/... ./errs/... ./pkg/... ./plugin/... ./api/...
+if errorlevel 1 set "STATUS=1"
 call :run_test integration "Integration Tests" ./tests/integration/...
+if errorlevel 1 set "STATUS=1"
 call :run_test benchmark "Benchmarks" -bench=. -benchmem -run=^^ ./tests/bench/... ./broker/... ./protocol/... ./store/... ./pkg/...
+if errorlevel 1 set "STATUS=1"
 
 echo.
 echo [32m========================================[0m
@@ -100,15 +112,27 @@ echo [36m    Report=^> %RT_LOG%[0m
 echo.
 
 pushd "%PROJECT_DIR%"
-shift /1 & shift /1
-go test %* -json -v -count=1 -timeout 300s > "%RT_JSON%" 2>&1
+set "RT_ARGS="
+:collect_args
+if "%~3"=="" goto :run_go_test
+set "RT_ARGS=!RT_ARGS! %3"
+shift /3
+goto :collect_args
+
+:run_go_test
+go test !RT_ARGS! -json -v -count=1 -timeout 300s > "%RT_JSON%" 2>&1
+set "RT_STATUS=%ERRORLEVEL%"
 go run scripts/parse_test_log.go "%RT_JSON%" > "%RT_LOG%" 2>nul
 popd
 
 if exist "%RT_LOG%" type "%RT_LOG%"
 echo.
-echo [32m^>^>^> [%RT_LABEL%] Done. Log saved.[0m
-goto :eof
+if not "%RT_STATUS%"=="0" (
+    echo [31m^>^>^> [%RT_LABEL%] Failed with exit code %RT_STATUS%.[0m
+    exit /b %RT_STATUS%
+)
+echo [32m^>^>^> [%RT_LABEL%] Passed. Log saved.[0m
+exit /b 0
 
 REM ============================================================
 :usage
@@ -124,4 +148,4 @@ echo.
 exit /b 1
 
 :end
-endlocal
+endlocal & exit /b %STATUS%

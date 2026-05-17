@@ -46,31 +46,43 @@ func main() {
 
 	switch *mode {
 	case "unit":
-		runTest(projectDir, logsDir, ts, "unit", "Unit Tests",
+		if !runTest(projectDir, logsDir, ts, "unit", "Unit Tests",
 			"./broker/...", "./protocol/...", "./store/...", "./client/...",
-			"./config/...", "./errs/...", "./pkg/...", "./plugin/...", "./api/...")
+			"./config/...", "./errs/...", "./pkg/...", "./plugin/...", "./api/...") {
+			os.Exit(1)
+		}
 	case "integration":
-		runTest(projectDir, logsDir, ts, "integration", "Integration Tests",
-			"./tests/integration/...")
+		if !runTest(projectDir, logsDir, ts, "integration", "Integration Tests",
+			"./tests/integration/...") {
+			os.Exit(1)
+		}
 	case "benchmark":
-		runBenchmark(projectDir, logsDir, ts)
+		if !runBenchmark(projectDir, logsDir, ts) {
+			os.Exit(1)
+		}
 	case "cover":
-		runCover(projectDir, logsDir, ts, timeout)
+		if !runCover(projectDir, logsDir, ts, timeout) {
+			os.Exit(1)
+		}
 	case "all":
 		fmt.Println()
 		printBanner("shark-mqtt full test suite", time.Now().Format("2006-01-02 15:04:05"))
 
-		runTest(projectDir, logsDir, ts, "unit", "Unit Tests",
+		ok := true
+		ok = runTest(projectDir, logsDir, ts, "unit", "Unit Tests",
 			"./broker/...", "./protocol/...", "./store/...", "./client/...",
-			"./config/...", "./errs/...", "./pkg/...", "./plugin/...", "./api/...")
-		runTest(projectDir, logsDir, ts, "integration", "Integration Tests",
-			"./tests/integration/...")
-		runBenchmark(projectDir, logsDir, ts)
+			"./config/...", "./errs/...", "./pkg/...", "./plugin/...", "./api/...") && ok
+		ok = runTest(projectDir, logsDir, ts, "integration", "Integration Tests",
+			"./tests/integration/...") && ok
+		ok = runBenchmark(projectDir, logsDir, ts) && ok
 
 		fmt.Println()
 		printBanner("All tests complete", "")
 		fmt.Printf("  Logs in: %s\n", logsDir)
 		listLogs(logsDir, ts)
+		if !ok {
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown mode: %s\n", *mode)
 		fmt.Fprintln(os.Stderr, "Usage: go run scripts/run_tests.go -mode [unit|integration|benchmark|cover|all]")
@@ -81,7 +93,7 @@ func main() {
 // -------------------------------------------------------------------
 // runTest runs go test with -json, saves .json + parsed .log
 // -------------------------------------------------------------------
-func runTest(projectDir, logsDir, ts, name, label string, packages ...string) {
+func runTest(projectDir, logsDir, ts, name, label string, packages ...string) bool {
 	jsonFile := filepath.Join(logsDir, ts+"_"+name+".json")
 	logFile := filepath.Join(logsDir, ts+"_"+name+".log")
 
@@ -93,7 +105,7 @@ func runTest(projectDir, logsDir, ts, name, label string, packages ...string) {
 
 	args := []string{"test", "-json", "-v", "-count=1", "-timeout=300s"}
 	args = append(args, packages...)
-	goCapture(projectDir, args, jsonFile)
+	testErr := goCapture(projectDir, args, jsonFile)
 
 	// Parse JSON to readable report
 	out, _ := goOutput(projectDir, []string{"run", "scripts/parse_test_log.go", jsonFile})
@@ -103,13 +115,18 @@ func runTest(projectDir, logsDir, ts, name, label string, packages ...string) {
 	}
 
 	fmt.Println()
-	printGreen(fmt.Sprintf(">>> [%s] Done. Log saved.", label))
+	if testErr != nil {
+		printRed(fmt.Sprintf(">>> [%s] Failed: %v", label, testErr))
+		return false
+	}
+	printGreen(fmt.Sprintf(">>> [%s] Passed. Log saved.", label))
+	return true
 }
 
 // -------------------------------------------------------------------
 // runBenchmark runs go test -bench, saves .json + parsed .log
 // -------------------------------------------------------------------
-func runBenchmark(projectDir, logsDir, ts string) {
+func runBenchmark(projectDir, logsDir, ts string) bool {
 	packages := []string{
 		"./tests/bench/...",
 		"./broker/...",
@@ -129,7 +146,7 @@ func runBenchmark(projectDir, logsDir, ts string) {
 
 	args := []string{"test", "-bench=.", "-benchmem", "-benchtime=500ms", "-run=^$", "-count=1", "-timeout=300s", "-json"}
 	args = append(args, packages...)
-	goCapture(projectDir, args, jsonFile)
+	testErr := goCapture(projectDir, args, jsonFile)
 
 	out, _ := goOutput(projectDir, []string{"run", "scripts/parse_test_log.go", jsonFile})
 	os.WriteFile(logFile, out, 0o644)
@@ -138,25 +155,35 @@ func runBenchmark(projectDir, logsDir, ts string) {
 	}
 
 	fmt.Println()
-	printGreen(">>> [Benchmarks] Done. Log saved.")
+	if testErr != nil {
+		printRed(fmt.Sprintf(">>> [Benchmarks] Failed: %v", testErr))
+		return false
+	}
+	printGreen(">>> [Benchmarks] Passed. Log saved.")
+	return true
 }
 
 // -------------------------------------------------------------------
 // runCover runs coverage and saves .log
 // -------------------------------------------------------------------
-func runCover(projectDir, logsDir, ts string, timeout *time.Duration) {
+func runCover(projectDir, logsDir, ts string, timeout *time.Duration) bool {
 	logFile := filepath.Join(logsDir, ts+"_cover.log")
 
 	fmt.Println()
 	printBanner("Coverage Report", time.Now().Format("2006-01-02 15:04:05"))
 
 	args := []string{"test", "./...", "-count=1", "-cover", fmt.Sprintf("-timeout=%s", *timeout)}
-	out, _ := goOutput(projectDir, args)
+	out, err := goOutput(projectDir, args)
 	os.WriteFile(logFile, out, 0o644)
 	fmt.Print(string(out))
 
 	fmt.Println()
+	if err != nil {
+		printRed(fmt.Sprintf(">>> Coverage failed: %v", err))
+		return false
+	}
 	printGreen(fmt.Sprintf(">>> Coverage log: %s", logFile))
+	return true
 }
 
 // -------------------------------------------------------------------
@@ -180,11 +207,12 @@ func findProjectDir() string {
 	return ""
 }
 
-func goCapture(dir string, args []string, outFile string) {
+func goCapture(dir string, args []string, outFile string) error {
 	cmd := exec.Command("go", args...)
 	cmd.Dir = dir
-	out, _ := cmd.CombinedOutput()
+	out, err := cmd.CombinedOutput()
 	os.WriteFile(outFile, sanitizeJSON(out), 0o644)
+	return err
 }
 
 func goOutput(dir string, args []string) ([]byte, error) {
@@ -238,3 +266,4 @@ func printBanner(title, subtitle string) {
 
 func printCyan(msg string)  { fmt.Printf("\x1b[36m%s\x1b[0m\n", msg) }
 func printGreen(msg string) { fmt.Printf("\x1b[32m%s\x1b[0m\n", msg) }
+func printRed(msg string)   { fmt.Printf("\x1b[31m%s\x1b[0m\n", msg) }
