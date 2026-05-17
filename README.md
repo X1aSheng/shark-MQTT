@@ -320,10 +320,10 @@ Full results: `make bench` or see `docs/performance.md`.
 | Unit Tests | 406 passed runs / 13 Redis skips | All pass |
 | Integration Tests | 83 passed runs | All pass |
 | Benchmarks | 64 executed / 3 Windows skips | All pass |
-| **Latest scripted run** | `logs/20260517_114826_*` | **0 failures** |
+| **Latest scripted run** | `logs/20260517_122841_*` | **0 failures** |
 
 > 13 Redis tests skipped when `MQTT_REDIS_ADDR` is not set.
-> Latest full run: `logs/20260517_114826_*`; unit log reports 406 passed and 13 Redis tests skipped when Redis is not configured. Race detector passed after adding `D:\Programs\w64devkit\bin` to `PATH`.
+> Latest full run: `logs/20260517_122841_*`; unit log reports 406 passed and 13 Redis tests skipped when Redis is not configured. Race detector passed after adding `D:\Programs\w64devkit\bin` to `PATH`.
 
 ### Integration Test Coverage
 
