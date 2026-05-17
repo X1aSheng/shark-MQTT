@@ -16,7 +16,7 @@
 | `go run scripts/run_tests.go -mode all` | PASS, logs: `logs/20260517_114826_*` |
 | `cmd /c scripts\run_tests.bat --unit` | PASS |
 | Runner failure propagation with temporary failing module | PASS, Go runner and BAT return non-zero |
-| `CGO_ENABLED=1 go test -race -count=1 ./...` | BLOCKED: local Windows host has no `gcc`, so `runtime/cgo` cannot build |
+| `PATH=D:\Programs\w64devkit\bin;%PATH% CGO_ENABLED=1 go test -race -count=1 ./...` | PASS |
 
 Latest scripted run summary:
 
@@ -42,9 +42,8 @@ Latest scripted run summary:
 
 ## Remaining Risks
 
-- Race detector was not executed on this Windows machine because `gcc` is missing. CI already has Linux/macOS race jobs; local verification should install a C compiler or use a Linux environment.
 - Bash runner normal-path execution was not repeated in this Windows/WSL shell because that shell does not expose `go`; failure propagation was still validated with a temporary failing module.
 
 ## Final Recommendation
 
-The project is in a passing state for normal tests, scripted tests, vet, integration tests, and benchmarks. Before release, run the race job in an environment with CGO and a C compiler.
+The project is in a passing state for normal tests, scripted tests, vet, race tests, integration tests, and benchmarks.
