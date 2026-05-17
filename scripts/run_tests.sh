@@ -47,7 +47,10 @@ run_test() {
     echo ""
 
     cd "$PROJECT_DIR"
-    go test "$@" -json -v -count=1 -timeout 300s > "$jsonfile" 2>&1 || true
+    set +e
+    go test "$@" -json -v -count=1 -timeout 300s > "$jsonfile" 2>&1
+    local status=$?
+    set -e
     go run scripts/parse_test_log.go "$jsonfile" > "$logfile" 2>/dev/null || true
 
     if [ -s "$logfile" ]; then
@@ -55,7 +58,12 @@ run_test() {
     fi
 
     echo ""
-    echo -e "${C_GREEN}>>> [$label] Done. Log saved.${C_NC}"
+    if [ "$status" -ne 0 ]; then
+        echo -e "\033[0;31m>>> [$label] Failed with exit code $status.${C_NC}"
+        return "$status"
+    fi
+    echo -e "${C_GREEN}>>> [$label] Passed. Log saved.${C_NC}"
+    return 0
 }
 
 # -------------------------------------------------------------------
@@ -72,11 +80,19 @@ run_cover() {
     echo ""
 
     cd "$PROJECT_DIR"
-    go test ./... -count=1 -cover -timeout 300s > "$logfile" 2>&1 || true
+    set +e
+    go test ./... -count=1 -cover -timeout 300s > "$logfile" 2>&1
+    local status=$?
+    set -e
     cat "$logfile"
 
     echo ""
+    if [ "$status" -ne 0 ]; then
+        echo -e "\033[0;31m>>> Coverage failed with exit code $status.${C_NC}"
+        return "$status"
+    fi
     echo -e "${C_GREEN}>>> Coverage log: $logfile${C_NC}"
+    return 0
 }
 
 # -------------------------------------------------------------------
@@ -108,13 +124,15 @@ case "$MODE" in
         echo -e "${C_YELLOW}  $(date '+%Y-%m-%d %H:%M:%S')${C_NC}"
         echo -e "${C_YELLOW}========================================${C_NC}"
 
+        status=0
+
         run_test unit "Unit Tests" \
             ./broker/... ./protocol/... ./store/... ./client/... \
-            ./config/... ./errs/... ./pkg/... ./plugin/... ./api/...
-        run_test integration "Integration Tests" ./tests/integration/...
+            ./config/... ./errs/... ./pkg/... ./plugin/... ./api/... || status=$?
+        run_test integration "Integration Tests" ./tests/integration/... || status=$?
         run_test benchmark "Benchmarks" \
             -bench=. -benchmem -benchtime=500ms -run=^$ \
-            ./tests/bench/... ./broker/... ./protocol/... ./store/... ./pkg/...
+            ./tests/bench/... ./broker/... ./protocol/... ./store/... ./pkg/... || status=$?
 
         echo ""
         echo -e "${C_GREEN}========================================${C_NC}"
@@ -125,6 +143,7 @@ case "$MODE" in
             [ -f "$f" ] && ls -lh "$f"
         done
         echo -e "${C_GREEN}========================================${C_NC}"
+        exit "$status"
         ;;
     *)
         echo "Usage: bash scripts/run_tests.sh [--unit|--integration|--benchmark|--cover|--all]"
