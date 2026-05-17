@@ -74,3 +74,84 @@ func TestPubSub(t *testing.T) {
 	pubConn.Close()
 	subConn.Close()
 }
+
+func TestSelfPublishDeliveredByDefault(t *testing.T) {
+	broker := testBroker(t)
+
+	conn := dialTestBroker(t, broker)
+	codec := protocol.NewCodec(0)
+	connectAndSubscribe(t, conn, codec, "self-pub-client", "self/topic", 0)
+
+	pubPkt := &protocol.PublishPacket{
+		FixedHeader: protocol.FixedHeader{
+			PacketType: protocol.PacketTypePublish,
+			QoS:        0,
+		},
+		Topic:   "self/topic",
+		Payload: []byte("loopback"),
+	}
+
+	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := codec.Encode(conn, pubPkt); err != nil {
+		t.Fatalf("PUBLISH failed: %v", err)
+	}
+
+	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	pkt, err := codec.Decode(conn)
+	if err != nil {
+		t.Fatalf("subscriber did not receive its own PUBLISH by default: %v", err)
+	}
+	delivered, ok := pkt.(*protocol.PublishPacket)
+	if !ok {
+		t.Fatalf("expected PUBLISH, got %T", pkt)
+	}
+	if delivered.Topic != "self/topic" || string(delivered.Payload) != "loopback" {
+		t.Fatalf("delivered message = topic %q payload %q", delivered.Topic, delivered.Payload)
+	}
+}
+
+func TestNoLocalSuppressesSelfPublish(t *testing.T) {
+	broker := testBroker(t)
+
+	conn := dialTestBroker(t, broker)
+	codec := protocol.NewCodec(0)
+	connectClient(t, conn, codec, "no-local-client")
+
+	subPkt := &protocol.SubscribePacket{
+		FixedHeader: protocol.FixedHeader{
+			PacketType: protocol.PacketTypeSubscribe,
+			QoS:        1,
+		},
+		PacketID: 1,
+		Topics: []protocol.TopicFilter{
+			{Topic: "self/nolocal", QoS: 0, NoLocal: true},
+		},
+	}
+	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := codec.Encode(conn, subPkt); err != nil {
+		t.Fatalf("SUBSCRIBE failed: %v", err)
+	}
+	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	pkt, err := codec.Decode(conn)
+	if err != nil {
+		t.Fatalf("failed to read SUBACK: %v", err)
+	}
+	if _, ok := pkt.(*protocol.SubAckPacket); !ok {
+		t.Fatalf("expected SUBACK, got %T", pkt)
+	}
+
+	pubPkt := &protocol.PublishPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish},
+		Topic:       "self/nolocal",
+		Payload:     []byte("suppressed"),
+	}
+	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := codec.Encode(conn, pubPkt); err != nil {
+		t.Fatalf("PUBLISH failed: %v", err)
+	}
+
+	conn.SetDeadline(time.Now().Add(200 * time.Millisecond))
+	if pkt, err := codec.Decode(conn); err == nil {
+		t.Fatalf("received self PUBLISH despite NoLocal: %T", pkt)
+	}
+}
