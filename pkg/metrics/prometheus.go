@@ -15,7 +15,7 @@ type HTTPHandler interface {
 
 // prometheusMetrics implements Metrics and HTTPHandler using Prometheus.
 type prometheusMetrics struct {
-	handler http.Handler
+	handler           http.Handler
 	connections       prometheus.Counter
 	disconnections    prometheus.Counter
 	rejections        *prometheus.CounterVec
@@ -30,8 +30,8 @@ type prometheusMetrics struct {
 	offlineSessions   prometheus.Gauge
 	retainedMsgs      prometheus.Gauge
 	subscriptions     prometheus.Gauge
-	errors         *prometheus.CounterVec
-	messageLatency *prometheus.HistogramVec
+	errors            *prometheus.CounterVec
+	messageLatency    *prometheus.HistogramVec
 }
 
 // registerOrReuse registers a collector, returning the existing one on conflict.

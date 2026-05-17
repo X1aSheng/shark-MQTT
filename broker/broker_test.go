@@ -31,8 +31,8 @@ func (m *retainedMetrics) SetOfflineSessions(count int)                {}
 func (m *retainedMetrics) SetRetainedMessages(count int) {
 	m.retained = append(m.retained, count)
 }
-func (m *retainedMetrics) SetSubscriptions(count int) {}
-func (m *retainedMetrics) IncErrors(component string)                        {}
+func (m *retainedMetrics) SetSubscriptions(count int)                       {}
+func (m *retainedMetrics) IncErrors(component string)                       {}
 func (m *retainedMetrics) ObserveMessageLatency(seconds float64, qos uint8) {}
 
 func TestNewBroker_Defaults(t *testing.T) {
