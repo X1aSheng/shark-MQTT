@@ -78,23 +78,22 @@ func TestDecodeRejectsInvalidUTF8(t *testing.T) {
 		{
 			name: "invalid utf8 in client id",
 			// CONNECT with client ID containing invalid UTF-8 byte 0xFF
-			raw: append(
-				[]byte{
-					0x10, 0x15,                   // fixed header
-					0x00, 0x04, 'M', 'Q', 'T', 'T', // protocol name
-					0x04,       // version 3.1.1
-					0x02,       // clean session
-					0x00, 0x3C, // keepalive 60
-					0x00, 0x03, 0xFF, 0xFF, 0xFF, // client id length 3, invalid bytes
-				}),
+			raw: []byte{
+				0x10, 0x15, // fixed header
+				0x00, 0x04, 'M', 'Q', 'T', 'T', // protocol name
+				0x04,       // version 3.1.1
+				0x02,       // clean session
+				0x00, 0x3C, // keepalive 60
+				0x00, 0x03, 0xFF, 0xFF, 0xFF, // client id length 3, invalid bytes
+			},
 		},
 		{
 			name: "null byte in topic",
 			// PUBLISH with topic containing U+0000
 			raw: []byte{
-				0x30, 0x07,             // fixed header
+				0x30, 0x07, // fixed header
 				0x00, 0x03, 0x00, 0x00, 'a', // topic containing null
-				'x',                     // payload
+				'x', // payload
 			},
 		},
 		{
