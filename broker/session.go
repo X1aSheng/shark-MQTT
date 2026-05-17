@@ -241,6 +241,14 @@ func (s *Session) RemoveSubscription(topic string) {
 	delete(s.SubOptions, topic)
 }
 
+// HasSubscription reports whether the exact topic filter is already present.
+func (s *Session) HasSubscription(topic string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.Subscriptions[topic]
+	return ok
+}
+
 // MatchesSubscription checks if a topic matches any of the session's subscriptions.
 func (s *Session) MatchesSubscription(topic string) (bool, uint8) {
 	s.mu.RLock()

@@ -283,7 +283,77 @@ func TestRetainedMessage_QoSDowngrade(t *testing.T) {
 	subConn.Close()
 }
 
+func TestRetainHandlingDoNotSend(t *testing.T) {
+	broker := testBrokerWithRetain(t)
+	publishRetained(t, broker, "retain-handling/policy", "stored")
+
+	subConn := dialTestBroker(t, broker)
+	subCodec := protocol.NewCodec(0)
+	connectClient(t, subConn, subCodec, "retain-handling-none")
+	subscribeWithRetainHandling(t, subConn, subCodec, "retain-handling/policy", 2)
+
+	assertNoMessage(t, subConn, "retained message should be suppressed when RetainHandling=2")
+	subConn.Close()
+}
+
+func TestRetainHandlingSendOnlyOnNewSubscription(t *testing.T) {
+	broker := testBrokerWithRetain(t)
+	publishRetained(t, broker, "retain-handling/new-only", "stored")
+
+	subConn := dialTestBroker(t, broker)
+	subCodec := protocol.NewCodec(0)
+	connectClient(t, subConn, subCodec, "retain-handling-new-only")
+
+	subscribeWithRetainHandling(t, subConn, subCodec, "retain-handling/new-only", 1)
+	mustReceivePublish(t, subConn, subCodec, "retain-handling/new-only", "stored")
+
+	subscribeWithRetainHandling(t, subConn, subCodec, "retain-handling/new-only", 1)
+	assertNoMessage(t, subConn, "retained message should only be sent for a new subscription when RetainHandling=1")
+	subConn.Close()
+}
+
 // --- retained test helpers ---
+
+func publishRetained(t *testing.T, broker *api.Broker, topic, payload string) {
+	t.Helper()
+	pubConn := dialTestBroker(t, broker)
+	pubCodec := protocol.NewCodec(0)
+	connectClient(t, pubConn, pubCodec, "retain-helper-pub-"+topic)
+
+	pkt := &protocol.PublishPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, Retain: true},
+		Topic:       topic,
+		Payload:     []byte(payload),
+	}
+	pubConn.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := pubCodec.Encode(pubConn, pkt); err != nil {
+		t.Fatalf("PUBLISH retained: %v", err)
+	}
+	pubConn.Close()
+}
+
+func subscribeWithRetainHandling(t *testing.T, conn net.Conn, codec *protocol.Codec, topic string, retainHandling uint8) {
+	t.Helper()
+	subPkt := &protocol.SubscribePacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe, QoS: 1},
+		PacketID:    1,
+		Topics: []protocol.TopicFilter{
+			{Topic: topic, QoS: 0, RetainHandling: retainHandling},
+		},
+	}
+	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := codec.Encode(conn, subPkt); err != nil {
+		t.Fatalf("SUBSCRIBE: %v", err)
+	}
+	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	pkt, err := codec.Decode(conn)
+	if err != nil {
+		t.Fatalf("SUBACK: %v", err)
+	}
+	if _, ok := pkt.(*protocol.SubAckPacket); !ok {
+		t.Fatalf("expected SUBACK, got %T", pkt)
+	}
+}
 
 func collectPublishes(t *testing.T, conn net.Conn, codec *protocol.Codec, count int, timeout time.Duration) []*protocol.PublishPacket {
 	t.Helper()

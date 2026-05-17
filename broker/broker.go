@@ -649,6 +649,7 @@ func (b *Broker) handleRetainedMessage(pkt *protocol.PublishPacket) {
 
 func (b *Broker) handleSubscribe(clientID string, sess *Session, pkt *protocol.SubscribePacket) {
 	reasonCodes := make([]byte, len(pkt.Topics))
+	deliverRetained := make([]bool, len(pkt.Topics))
 	for i, topic := range pkt.Topics {
 		// Check authorization
 		username := ""
@@ -660,12 +661,14 @@ func (b *Broker) handleSubscribe(clientID string, sess *Session, pkt *protocol.S
 			continue
 		}
 
+		existed := sess.HasSubscription(topic.Topic)
 		if !b.topics.Subscribe(topic.Topic, clientID, topic.QoS) {
 			reasonCodes[i] = protocol.SubAckFailure
 			continue
 		}
 		sess.AddSubscriptionFilter(topic)
 		reasonCodes[i] = topic.QoS
+		deliverRetained[i] = shouldDeliverRetained(topic.RetainHandling, existed)
 	}
 
 	b.writePacket(clientID, &protocol.SubAckPacket{
@@ -679,8 +682,22 @@ func (b *Broker) handleSubscribe(clientID string, sess *Session, pkt *protocol.S
 	b.metrics.SetSubscriptions(int(b.topics.SubscriberCount()))
 
 	// Deliver retained messages matching the new subscriptions
-	for _, topic := range pkt.Topics {
+	for i, topic := range pkt.Topics {
+		if !deliverRetained[i] {
+			continue
+		}
 		b.deliverRetainedMessages(clientID, sess, topic.Topic)
+	}
+}
+
+func shouldDeliverRetained(retainHandling uint8, existed bool) bool {
+	switch retainHandling {
+	case 1:
+		return !existed
+	case 2:
+		return false
+	default:
+		return true
 	}
 }
 
