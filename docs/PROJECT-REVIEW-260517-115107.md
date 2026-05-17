@@ -13,7 +13,7 @@
 |---|---|
 | `go test -count=1 ./...` | PASS |
 | `go vet ./...` | PASS |
-| `go run scripts/run_tests.go -mode all` | PASS, latest logs: `logs/20260517_122841_*` |
+| `go run scripts/run_tests.go -mode all` | PASS, latest logs: `logs/20260517_123532_*` |
 | `cmd /c scripts\run_tests.bat --unit` | PASS |
 | Runner failure propagation with temporary failing module | PASS, Go runner and BAT return non-zero |
 | `PATH=D:\Programs\w64devkit\bin;%PATH% CGO_ENABLED=1 go test -race -count=1 ./...` | PASS |
@@ -32,6 +32,15 @@ Latest scripted run summary:
 | `go vet ./...` | PASS |
 | `PATH=D:\Programs\w64devkit\bin;%PATH% CGO_ENABLED=1 go test -race -count=1 ./...` | PASS |
 | `go run scripts/run_tests.go -mode all` | PASS, logs: `logs/20260517_122841_*` |
+
+## Iteration Verification 260517-123532
+
+| Command | Result |
+|---|---|
+| `go vet ./...` | PASS |
+| `go test -count=1 ./...` | PASS |
+| `PATH=D:\Programs\w64devkit\bin;%PATH% CGO_ENABLED=1 go test -race -count=1 ./...` | PASS |
+| `go run scripts/run_tests.go -mode all` | PASS, logs: `logs/20260517_123532_*` |
 
 ## Fixed Defects
 

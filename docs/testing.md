@@ -1,6 +1,6 @@
 # Testing Guide
 
-Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。最新完整脚本运行为 `logs/20260517_122841_*`：406 个单元测试运行通过、13 个 Redis 测试跳过、83 个集成测试运行通过、64 个基准测试执行通过、3 个 Windows 连接 churn 基准跳过。
+Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。最新完整脚本运行为 `logs/20260517_123532_*`：406 个单元测试运行通过、13 个 Redis 测试跳过、83 个集成测试运行通过、64 个基准测试执行通过、3 个 Windows 连接 churn 基准跳过。
 
 ---
 
@@ -64,7 +64,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 | 集成测试 | 83 | `tests/integration/` |
 | 缺陷回归测试 | 2 | `tests/defects/` |
 | 基准测试 | 64 executed / 3 skipped | `tests/bench/`, `store/redis/`, `plugin/` |
-| **最新脚本运行** | **406 unit passed, 83 integration passed, 64 benchmarks passed** | `logs/20260517_122841_*` |
+| **最新脚本运行** | **406 unit passed, 83 integration passed, 64 benchmarks passed** | `logs/20260517_123532_*` |
 
 ### 各包测试明细
 
