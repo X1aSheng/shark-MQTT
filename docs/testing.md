@@ -1,6 +1,6 @@
 # Testing Guide
 
-Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试和基准测试共 354 项（最新完整运行：307 个单元测试运行通过、13 个 Redis 测试跳过、79 个集成测试运行通过、67 个基准测试通过）。
+Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。最新完整脚本运行为 `logs/20260517_114826_*`：406 个单元测试运行通过、13 个 Redis 测试跳过、83 个集成测试运行通过、64 个基准测试执行通过、3 个 Windows 连接 churn 基准跳过。
 
 ---
 
@@ -24,13 +24,13 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 
 ```
 ┌────────────────────────────────────────────────────────────┐
-│  Benchmark Tests (67)                                     │
+│  Benchmark Tests (64 executed / 3 Windows skips)          │
 │  tests/bench/                                             │
 │  ├── broker_bench_test.go    — 全栈 TCP 基准              │
 │  ├── data_delivery_bench_test.go — E2E 数据验证基准       │
 │  └── micro_bench_test.go     — 组件级微基准               │
 ├────────────────────────────────────────────────────────────┤
-│  Integration Tests (47)                                    │
+│  Integration Tests (83 total, 53 MQTT + 30 deploy)         │
 │  tests/integration/                                        │
 │  ├── connect_test.go         — 连接与会话                 │
 │  ├── pubsub_test.go          — 发布订阅                   │
@@ -61,10 +61,10 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 | 类型 | 数量 | 位置 |
 |------|------|------|
 | 单元测试 | 210 top-level / 307 passed runs | 各包 `*_test.go` |
-| 集成测试 | 77 | `tests/integration/` |
+| 集成测试 | 83 | `tests/integration/` |
 | 缺陷回归测试 | 2 | `tests/defects/` |
-| 基准测试 | 67 | `tests/bench/`, `store/redis/`, `plugin/` |
-| **合计** | **354 top-level tests + benchmarks** | |
+| 基准测试 | 64 executed / 3 skipped | `tests/bench/`, `store/redis/`, `plugin/` |
+| **最新脚本运行** | **406 unit passed, 83 integration passed, 64 benchmarks passed** | `logs/20260517_114826_*` |
 
 ### 各包测试明细
 
@@ -83,7 +83,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 | pkg/metrics/ | 3 | 0 | Prometheus 指标 |
 | api/ | 4 | 0 | 公共 API 与健康端点 |
 | errs/ | 4 | 0 | 错误定义 |
-| tests/integration/ | 77 | 0 | 端到端集成测试（含 30 项部署验证） |
+| tests/integration/ | 83 | 0 | 端到端集成测试（含 30 项部署验证） |
 | tests/defects/ | 2 | 0 | 审查发现缺陷的最小复现和回归测试 |
 | tests/bench/ | 0 | 57 | 全栈 TCP、E2E 数据验证、微基准 |
 
@@ -107,6 +107,8 @@ go test -v ./store/memory/...
 # 带 race 检测
 go test -v -race -count=1 ./...
 ```
+
+注意：Go race detector 依赖 CGO。本机 Windows 验证时 `CGO_ENABLED=1 go test -race -count=1 ./...` 因缺少 `gcc` 无法构建 `runtime/cgo`，CI 或开发机需要安装 C 编译器后执行。
 
 ### 编写规范
 
@@ -145,13 +147,16 @@ func TestTopicTree_Subscribe(t *testing.T) {
 | `TestPersistentSession_KickPrevious` | 重复 ClientID 踢掉旧连接 |
 | `TestPubSub` | 基础发布-订阅消息验证 |
 
-#### 发布订阅（3 项）
+#### 发布订阅（6 项）
 
 | 测试函数 | 说明 |
 |----------|------|
 | `TestQoS0` | QoS 0 消息投递 |
 | `TestQoS1` | QoS 1 完整 PUBACK 流程 |
 | `TestQoS2` | QoS 2 四报文握手（PUBLISH→PUBREC→PUBREL→PUBCOMP） |
+| `TestPubSub` | 基础发布-订阅消息验证 |
+| `TestSelfPublishDeliveredByDefault` | 默认允许发布者收到自己的匹配订阅消息 |
+| `TestNoLocalSuppressesSelfPublish` | MQTT 5.0 No Local 抑制自发布投递 |
 
 #### 多订阅者消息投递（12 项）
 
@@ -167,7 +172,7 @@ func TestTopicTree_Subscribe(t *testing.T) {
 | `TestUnicodePayload` | Unicode 负载投递 |
 | `TestOverlappingSubscriptions` | 重叠订阅匹配 |
 | `TestMultiTopicSubscribe` | 单次 SUBSCRIBE 多主题 |
-| `TestPublishToSelf` | 发布者也是订阅者（跳过自身） |
+| `TestPublishToSelf` | 发布者也是订阅者（默认接收自身消息） |
 | `TestStructuredBinaryPayload` | 结构化二进制数据 |
 
 #### 遗嘱消息（3 项）
@@ -188,7 +193,7 @@ func TestTopicTree_Subscribe(t *testing.T) {
 | `TestWildcardMixed` | 混合 `+` 和 `#` |
 | `TestWildcardMultipleSubscribers` | 多订阅者通配符 |
 
-#### 保留消息（5 项）
+#### 保留消息（7 项）
 
 | 测试函数 | 说明 |
 |----------|------|
@@ -197,6 +202,8 @@ func TestTopicTree_Subscribe(t *testing.T) {
 | `TestRetainedMessage_Delete` | 空负载删除保留消息 |
 | `TestRetainedMessage_WildcardDelivery` | 通配符匹配保留消息 |
 | `TestRetainedMessage_QoSDowngrade` | QoS 降级投递 |
+| `TestRetainHandlingDoNotSend` | MQTT 5.0 RetainHandling=2 不发送保留消息 |
+| `TestRetainHandlingSendOnlyOnNewSubscription` | MQTT 5.0 RetainHandling=1 仅新订阅发送 |
 
 #### 取消订阅与系统主题（8 项）
 
@@ -382,6 +389,7 @@ Windows 说明：`BenchmarkConnectionEstablish`、`BenchmarkMQTTConnect` 与 `Be
 ## 测试脚本
 
 一个 Go 编写的跨平台测试运行器，搭配轻量级 shell 包装脚本，提供统一的测试执行体验。所有测试运行自动保存 JSON（原始 `go test -json` 输出）和 `.log`（解析后的报告）到 `logs/` 目录。
+脚本在底层 `go test` 或基准命令失败时返回非零退出码，同时保留 JSON 和解析报告，便于 CI 正确失败并保留诊断材料。
 
 日志格式：`logs/{YYYYMMDD_HHmmss}_{type}.{json,log}`
 

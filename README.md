@@ -11,7 +11,7 @@ A high-performance MQTT Broker written in Go, supporting both **MQTT 3.1.1** and
 - **Persistent Sessions**: Cross-connection session persistence (`CleanSession=false`) with MQTT 5.0 Session Expiry Interval support
 - **Session Takeover**: Safe client ID takeover — new connection kicks old, old cleanup does not corrupt new state
 - **Topic Wildcards**: Full `+` and `#` wildcard support with spec-compliant `$SYS` system topic protection
-- **Retained Messages**: Store-and-forward last message per topic with wildcard delivery and QoS downgrade
+- **Retained Messages**: Store-and-forward last message per topic with wildcard delivery, QoS downgrade, and MQTT 5.0 Retain Handling
 - **Will Messages**: Automatic last-will delivery on abnormal disconnect, with MQTT 5.0 Will Delay Interval support
 - **Pluggable Auth**: Chain authentication — `AllowAll`, `DenyAll`, `StaticAuth` (credentials + ACL), `FileAuth` (YAML), `ChainAuth`, or custom `Authenticator`/`Authorizer` interfaces
 - **Plugin System**: Extensible hooks for `OnAccept`, `OnConnected`, `OnMessage`, `OnClose` — continues dispatching after plugin errors
@@ -19,6 +19,7 @@ A high-performance MQTT Broker written in Go, supporting both **MQTT 3.1.1** and
 - **Connection Limit**: Configurable max connections with pre-auth enforcement
 - **TLS Support**: Secure connections with configurable TLS (min TLS 1.2)
 - **MQTT 5.0 CONNACK Capabilities**: Server advertises ReceiveMaximum, MaximumQoS, RetainAvailable, WildcardSubAvailable, etc.
+- **MQTT 5.0 Subscription Options**: Supports No Local and Retain Handling semantics while preserving MQTT default self-publish delivery
 - **Observability**: Structured logging (`slog`) + Prometheus metrics (17+ methods) + `/healthz`/`/readyz` endpoints
 - **Safe Concurrency**: Per-connection write mutex, atomic ID generation, thread-safe session management, conn-identity-checked cleanup
 - **Config Validation**: Built-in `Validate()` for all config fields, YAML/ENV/CLI configuration
@@ -78,8 +79,8 @@ A high-performance MQTT Broker written in Go, supporting both **MQTT 3.1.1** and
 | `plugin/` | Plugin system with hook-based architecture |
 | `client/` | MQTT client implementation |
 | `errs/` | Centralized error definitions |
-| `tests/integration/` | 77 end-to-end integration tests (47 MQTT + 30 deploy verification) |
-| `tests/bench/` | 67 benchmarks (broker + E2E data verify + micro + store) |
+| `tests/integration/` | 83 end-to-end integration tests (53 MQTT + 30 deploy verification) |
+| `tests/bench/` | 64 executed benchmarks on Windows (broker + E2E data verify + micro + store; 3 churn benchmarks skipped) |
 | `examples/` | Runnable example programs (standalone, TLS, custom auth) |
 | `deploy/` | Docker, docker-compose, k8s, Helm chart deployment assets |
 | `docs/` | Architecture, deployment, performance, testing, and project status docs |
@@ -316,29 +317,29 @@ Full results: `make bench` or see `docs/performance.md`.
 
 | Type | Count | Status |
 |------|-------|--------|
-| Unit Tests | 210 top-level / 307 passed runs | All pass |
-| Integration Tests | 77 top-level / 79 passed runs | All pass |
-| Benchmarks | 67 | All pass |
-| **Total** | **354 top-level tests + benchmarks** | **0 failures** |
+| Unit Tests | 406 passed runs / 13 Redis skips | All pass |
+| Integration Tests | 83 passed runs | All pass |
+| Benchmarks | 64 executed / 3 Windows skips | All pass |
+| **Latest scripted run** | `logs/20260517_114826_*` | **0 failures** |
 
 > 13 Redis tests skipped when `MQTT_REDIS_ADDR` is not set.
-> Latest full run: `logs/20260506_123128_*`; unit log reports 307 passed and 13 Redis tests skipped when Redis is not configured.
+> Latest full run: `logs/20260517_114826_*`; unit log reports 406 passed and 13 Redis tests skipped when Redis is not configured. Race detector requires CGO and a C compiler (`gcc` on this Windows host).
 
 ### Integration Test Coverage
 
 | Category | Tests | Details |
 |----------|-------|---------|
-| Connect & Session | 7 | CONNECT flow, persistent session, reconnect, kick, QoS1 ACK, PubAck flow |
-| Pub/Sub | 3 | Basic, QoS 0/1/2 |
+| Connect & Session | 6 | CONNECT flow, persistent session, reconnect, kick, QoS1 ACK |
+| Pub/Sub | 6 | Basic, QoS 0/1/2, default self-publish delivery, MQTT 5.0 No Local suppression |
 | Will Messages | 3 | Abnormal/graceful disconnect, QoS 0/1 |
 | Topic Wildcards | 5 | `+`, `#`, root, mixed, multiple subscribers |
-| Retained Messages | 5 | New subscriber, update, delete, wildcard, QoS downgrade |
+| Retained Messages | 7 | New subscriber, update, delete, wildcard, QoS downgrade, MQTT 5.0 Retain Handling 1/2 |
 | Multi-subscriber | 12 | Same topic, mixed QoS, ordering, burst, large/binary/empty/unicode payload, overlapping, publish-to-self, structured binary |
 | Unsubscribe & QoS | 8 | Stop delivery, multi-topic, wildcard, resubscribe, system topic, QoS 1 ACK, QoS 2 handshake, no-subscriber publish |
-| Edge Cases | 4 | Auth failure, duplicate clientID, invalid filter, empty clientID |
+| Edge Cases | 6 | Auth failure, duplicate clientID, invalid filter, empty clientID, max connections, system-topic isolation |
 | Deploy Verification | 30 | Dockerfile, docker-compose, k8s manifests, Helm chart structure, security context, probes |
 
-All MQTT integration tests (47 of 77) verify **end-to-end data delivery**: publish a message after subscribe and confirm the subscriber receives the correct topic and payload. The remaining 30 tests validate deployment artifacts (Dockerfile, docker-compose, k8s manifests, Helm chart).
+All MQTT integration tests (53 of 83) verify **end-to-end data delivery**: publish a message after subscribe and confirm the subscriber receives the correct topic and payload. The remaining 30 tests validate deployment artifacts (Dockerfile, docker-compose, k8s manifests, Helm chart).
 
 ### Running Tests
 
@@ -347,6 +348,7 @@ All test runs automatically save timestamped logs to the `logs/` directory in JS
 #### Cross-Platform Test Scripts
 
 A single Go-based runner provides identical functionality across all platforms, with thin shell wrappers for convenience.
+All runners return a non-zero exit code when the underlying `go test` or benchmark command fails, while still writing the parsed log report.
 
 | Platform | Script |
 |----------|--------|

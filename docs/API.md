@@ -9,6 +9,7 @@ This document provides detailed API documentation for Shark-MQTT.
 - [Quick Start](#quick-start)
 - [api.Broker](#apibroker)
 - [Configuration](#configuration)
+- [MQTT Subscription Behavior](#mqtt-subscription-behavior)
 - [Authentication](#authentication)
 - [Storage](#storage)
 - [Customization](#customization)
@@ -181,6 +182,26 @@ Environment variables with `MQTT_` prefix:
 - `MQTT_LOG_LEVEL`
 
 See [configuration.md](configuration.md) for the full list.
+
+---
+
+## MQTT Subscription Behavior
+
+Shark-MQTT delivers a client's own matching publications by default, which matches MQTT behavior unless MQTT 5.0 `NoLocal` is set on the subscription.
+
+`protocol.TopicFilter` supports MQTT 5.0 subscription options:
+
+```go
+type TopicFilter struct {
+    Topic             string
+    QoS               uint8
+    NoLocal           bool
+    RetainAsPublished bool
+    RetainHandling    uint8 // 0=send, 1=send if new, 2=do not send
+}
+```
+
+Retained message delivery follows `RetainHandling`: `0` sends matching retained messages, `1` sends them only for a new exact subscription, and `2` suppresses retained delivery.
 
 ---
 
