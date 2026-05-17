@@ -147,7 +147,7 @@ Connection:
 Session (broker.Session):
   Lifecycle >= connection lifecycle (when CleanSession=false)
   Can persist across connections
-  Holds: subscription list, QoS inflight queue
+  Holds: subscription list, MQTT 5.0 subscription options, QoS inflight queue
   State machine: Disconnected -> Connecting -> Connected -> Disconnecting
 ```
 
@@ -547,10 +547,13 @@ type ConnectFlags struct {
     Reserved      bool
 }
 
-// TopicFilter represents a subscription topic with QoS.
+// TopicFilter represents a subscription topic with QoS and MQTT 5.0 options.
 type TopicFilter struct {
-    Topic string
-    QoS   uint8
+    Topic             string
+    QoS               uint8
+    NoLocal           bool  // suppress self-publish delivery
+    RetainAsPublished bool  // preserve incoming retain flag
+    RetainHandling    uint8 // 0=send, 1=send if new, 2=do not send
 }
 ```
 
@@ -829,6 +832,7 @@ type Session struct {
     ConnectedAt    time.Time
     LastActivity   time.Time
     Subscriptions  map[string]uint8   // topic -> qos
+    SubOptions     map[string]SubscriptionOptions
     Inflight       map[uint16]*InflightMsg
     // ... internal fields
 }
@@ -848,8 +852,11 @@ type InflightMsg struct {
 func (s *Session) UpdateActivity()
 func (s *Session) IsExpired() bool
 func (s *Session) AddSubscription(topic string, qos uint8)
+func (s *Session) AddSubscriptionFilter(filter protocol.TopicFilter)
 func (s *Session) RemoveSubscription(topic string)
+func (s *Session) HasSubscription(topic string) bool
 func (s *Session) MatchesSubscription(topic string) (bool, uint8)
+func (s *Session) AllowsLocalPublish(topic string) bool
 func (s *Session) NextPacketID() uint16
 func (s *Session) AddInflight(msg *InflightMsg)
 func (s *Session) RemoveInflight(packetID uint16)
@@ -952,8 +959,11 @@ type SessionData struct {
 }
 
 type Subscription struct {
-    Topic string
-    QoS   uint8
+    Topic             string
+    QoS               uint8
+    NoLocal           bool
+    RetainAsPublished bool
+    RetainHandling    uint8
 }
 
 type InflightMessage struct {
@@ -1478,9 +1488,11 @@ Client sends PUBLISH(topic, payload, QoS=1)
     |   Retain=true, payload=present -> retainedStore.SaveRetained
     |
     |-- Route to subscribers: topics.Match(topic) -> []Subscriber
-    |   For each subscriber (excluding publisher):
+    |   For each subscriber:
     |     deliverToClient(subscriber, pkt)
     |       Match session subscription -> effective QoS = min(pubQoS, subQoS)
+    |       Publisher's own subscription is delivered by default
+    |       MQTT 5.0 NoLocal suppresses self delivery when set on matching subscriptions
     |       Assign packet ID if QoS > 0
     |       writePacketTo -> encode and send
     |       Metrics: IncMessagesDelivered
@@ -1488,6 +1500,11 @@ Client sends PUBLISH(topic, payload, QoS=1)
     |-- QoS acknowledgment (to publisher):
     |   QoS 1 -> send PubAck, qos.TrackQoS1
     |   QoS 2 -> send PubRec, qos.TrackQoS2
+
+Retained delivery on SUBSCRIBE:
+    RetainHandling=0 -> send matching retained messages
+    RetainHandling=1 -> send only when the exact subscription is new
+    RetainHandling=2 -> do not send retained messages
 ```
 
 ### QoS 2 Complete Flow

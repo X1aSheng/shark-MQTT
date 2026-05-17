@@ -36,7 +36,7 @@ shark-mqtt/
 ├── errs/             # Centralized error definitions
 ├── tests/            # Integration and benchmark tests
 │   ├── integration/  # End-to-end MQTT workflow tests + deploy verification
-│   └── bench/        # Performance benchmarks (67 broker + E2E + micro + store)
+│   └── bench/        # Performance benchmarks (64 executed on Windows, 3 churn benchmarks skipped)
 ├── examples/         # Usage examples (standalone, TLS, custom_auth)
 ├── cmd/              # Command-line tools
 ├── scripts/          # Test runner and build scripts
@@ -183,7 +183,7 @@ Client session management is handled by `Manager` in `broker/session.go`.
 **Session data:**
 - Client ID, username, protocol version
 - ExpiryInterval (MQTT 5.0 Session Expiry Interval)
-- Subscriptions (topic -> QoS)
+- Subscriptions (topic -> QoS) plus MQTT 5.0 subscription options (`NoLocal`, `RetainHandling`, `RetainAsPublished`)
 - Inflight messages (QoS 1/2)
 - Statistics (bytes sent/received, message counts)
 
