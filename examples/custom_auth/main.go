@@ -40,7 +40,7 @@ func main() {
 	auth := NewTokenAuth("secret-token-1", "secret-token-2")
 
 	cfg := config.DefaultConfig()
-	cfg.ListenAddr = ":1883"
+	cfg.ListenAddr = ":18983"
 
 	broker := api.NewBroker(
 		api.WithConfig(cfg),
@@ -50,7 +50,7 @@ func main() {
 	if err := broker.Start(); err != nil {
 		log.Fatalf("Failed to start broker: %v", err)
 	}
-	log.Println("Broker started on :1883 (token auth enabled)")
+	log.Println("Broker started on :18983 (token auth enabled)")
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)

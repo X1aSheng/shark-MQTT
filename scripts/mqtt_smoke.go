@@ -13,7 +13,7 @@ import (
 )
 
 func main() {
-	addr := flag.String("addr", "localhost:1883", "broker address")
+	addr := flag.String("addr", "localhost:18983", "broker address")
 	flag.Parse()
 
 	id := fmt.Sprintf("smoke-test-%d", time.Now().UnixNano())

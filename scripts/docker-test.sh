@@ -11,8 +11,8 @@ set -euo pipefail
 
 IMAGE="shark-mqtt:test"
 CONTAINER="shark-mqtt-smoke"
-MQTT_PORT=11883
-HEALTH_PORT=19090
+MQTT_PORT=18983
+HEALTH_PORT=18999
 
 echo "=== shark-mqtt Docker smoke test ==="
 echo ""
@@ -21,14 +21,14 @@ echo ""
 docker rm -f "$CONTAINER" 2>/dev/null || true
 
 echo "[1/4] Building Docker image..."
-docker build -t "$IMAGE" .
+docker build -f deploy/docker/Dockerfile -t "$IMAGE" .
 
 echo ""
 echo "[2/4] Starting container..."
 docker run -d \
     --name "$CONTAINER" \
-    -p "$MQTT_PORT:1883" \
-    -p "$HEALTH_PORT:9090" \
+    -p "$MQTT_PORT:18983" \
+    -p "$HEALTH_PORT:18999" \
     "$IMAGE"
 
 # Wait for healthy

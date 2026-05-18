@@ -24,7 +24,7 @@ spec:
         app.kubernetes.io/component: broker
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "9090"
+        prometheus.io/port: "18999"
         prometheus.io/path: "/metrics"
     spec:
       terminationGracePeriodSeconds: 60
@@ -38,13 +38,13 @@ spec:
           image: x1asheng/shark-mqtt:latest
           imagePullPolicy: IfNotPresent
           args:
-            - "-addr=:1883"
+            - "-addr=:18983"
           ports:
             - name: mqtt
-              containerPort: 1883
+              containerPort: 18983
               protocol: TCP
             - name: metrics
-              containerPort: 9090
+              containerPort: 18999
               protocol: TCP
           env:
             - name: MQTT_LOG_LEVEL

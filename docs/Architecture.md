@@ -90,7 +90,7 @@ Mode A: Standalone broker (default)
   import "github.com/X1aSheng/shark-mqtt/api"
 
   cfg := config.DefaultConfig()
-  cfg.ListenAddr = ":1883"
+  cfg.ListenAddr = ":18983"
   broker := api.NewBroker(
       api.WithConfig(cfg),
       api.WithAuth(broker.AllowAllAuth{}),
@@ -1219,7 +1219,7 @@ func Run(ctx context.Context, opts ...Option) error
 ```go
 // Standalone broker
 cfg := config.DefaultConfig()
-cfg.ListenAddr = ":1883"
+cfg.ListenAddr = ":18983"
 broker := api.NewBroker(
     api.WithConfig(cfg),
     api.WithAuth(broker.AllowAllAuth{}),
@@ -1320,7 +1320,7 @@ func (c *Config) TLSConfig() (*tls.Config, error)
 
 ```go
 DefaultConfig() returns:
-    ListenAddr:            ":1883"
+    ListenAddr:            ":18983"
     ConnectTimeout:        10 * time.Second
     KeepAlive:             60
     MaxPacketSize:         256 * 1024  // 256KB
@@ -1334,7 +1334,7 @@ DefaultConfig() returns:
     LogLevel:              "info"
     LogFormat:             "text"
     MetricsEnabled:        false
-    MetricsAddr:           ":9090"
+    MetricsAddr:           ":18999"
 ```
 
 ### config/loader.go

@@ -33,7 +33,7 @@ import (
 
 func main() {
     cfg := config.DefaultConfig()
-    cfg.ListenAddr = ":1883"
+    cfg.ListenAddr = ":18983"
 
     broker := api.NewBroker(api.WithConfig(cfg))
     if err := broker.Start(); err != nil {
@@ -121,7 +121,7 @@ func (b *Broker) Addr() string
 Returns the listening address as a string.
 
 **Returns:**
-- IP:port string (e.g., "0.0.0.0:1883")
+- IP:port string (e.g., "0.0.0.0:18983")
 - Empty string if not started
 
 #### ConnCount()
@@ -159,7 +159,7 @@ cfg := config.DefaultConfig()
 
 ```go
 cfg := config.DefaultConfig()
-cfg.ListenAddr = ":1883"
+cfg.ListenAddr = ":18983"
 cfg.KeepAlive = 60
 cfg.MaxPacketSize = 262144
 cfg.MaxConnections = 10000
@@ -478,7 +478,7 @@ import (
 func main() {
     // Load configuration
     cfg := config.DefaultConfig()
-    cfg.ListenAddr = ":1883"
+    cfg.ListenAddr = ":18983"
     cfg.MaxConnections = 1000
 
     // Set up authentication

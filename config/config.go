@@ -7,6 +7,12 @@ import (
 	"time"
 )
 
+const (
+	DefaultListenAddr    = ":18983"
+	DefaultTLSListenAddr = ":18993"
+	DefaultMetricsAddr   = ":18999"
+)
+
 // Config holds all configuration for the MQTT broker.
 type Config struct {
 	// Server settings
@@ -51,7 +57,7 @@ type Config struct {
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
-		ListenAddr:            ":1883",
+		ListenAddr:            DefaultListenAddr,
 		TLSEnabled:            false,
 		ConnectTimeout:        10 * time.Second,
 		KeepAlive:             60,
@@ -66,7 +72,7 @@ func DefaultConfig() *Config {
 		LogLevel:              "info",
 		LogFormat:             "text",
 		MetricsEnabled:        false,
-		MetricsAddr:           ":9090",
+		MetricsAddr:           DefaultMetricsAddr,
 	}
 }
 

@@ -20,7 +20,7 @@ spec:
               service:
                 name: shark-mqtt
                 port:
-                  number: 1883
+                  number: 18983
   # TLS (uncomment and configure)
   # tls:
   #   - hosts:

@@ -26,7 +26,7 @@ type Options struct {
 type Option func(*Options)
 
 // WithAddr sets the broker address as "host:port".
-// Supports IPv4 (e.g., "localhost:1883") and IPv6 (e.g., "[::1]:1883").
+// Supports IPv4 (e.g., "localhost:18983") and IPv6 (e.g., "[::1]:18983").
 func WithAddr(addr string) Option {
 	return func(o *Options) {
 		host, portStr, err := net.SplitHostPort(addr)
@@ -105,7 +105,7 @@ func WithConnectTimeout(d time.Duration) Option {
 func defaultOptions() *Options {
 	return &Options{
 		Host:            "localhost",
-		Port:            1883,
+		Port:            18983,
 		ClientID:        "",
 		Username:        "",
 		Password:        "",

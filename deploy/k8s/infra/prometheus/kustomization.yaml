@@ -9,9 +9,6 @@ labels:
     includeSelectors: true
 
 resources:
-  - namespace.yaml
   - configmap.yaml
   - deployment.yaml
   - service.yaml
-  - hpa.yaml
-  - networkpolicy.yaml

@@ -13,10 +13,10 @@ spec:
   ports:
     - name: mqtt
       protocol: TCP
-      port: 1883
-      targetPort: 1883
+      port: 18983
+      targetPort: 18983
     - name: metrics
       protocol: TCP
-      port: 9090
-      targetPort: 9090
+      port: 18999
+      targetPort: 18999
   type: ClusterIP

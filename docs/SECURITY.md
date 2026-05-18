@@ -49,6 +49,7 @@ Shark-MQTT supports TLS 1.2 and TLS 1.3 for encrypted connections.
 ```go
 // Using API with TLS certificates
 cfg := config.DefaultConfig()
+cfg.ListenAddr = ":18993"
 cfg.TLSEnabled = true
 cfg.TLSCertFile = "server.crt"
 cfg.TLSKeyFile = "server.key"
@@ -125,16 +126,16 @@ keep_alive: 60
 ### Firewall Configuration
 
 **Inbound Rules**:
-- TCP 1883: MQTT (consider blocking for public internet)
-- TCP 8883: MQTT over TLS (recommended for production)
+- TCP 18983: MQTT (consider blocking for public internet)
+- TCP 18993: MQTT over TLS (recommended for production)
 - TCP 8080: WebSocket/MQTT over WebSocket (if enabled)
-- TCP 9090: Prometheus metrics (internal only)
+- TCP 18999: Prometheus metrics and health endpoints (internal only)
 
 **Recommended Setup**:
 ```
 Internet → Load Balancer (TLS termination) → Shark-MQTT
                                      ↓
-                              Internal Network (1883)
+                              Internal Network (18983)
 ```
 
 ### Rate Limiting

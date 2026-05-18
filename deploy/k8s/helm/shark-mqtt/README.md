@@ -26,6 +26,9 @@ helm install shark-mqtt ./deploy/k8s/helm/shark-mqtt/ \
 | `image.repository` | `x1asheng/shark-mqtt` | 镜像仓库 |
 | `image.tag` | `1.0.0` | 镜像标签 |
 | `service.type` | `ClusterIP` | Service 类型 |
+| `service.mqttPort` | `18983` | MQTT 默认端口 |
+| `service.metricsPort` | `18999` | Metrics/Health 端口 |
 | `autoscaling.enabled` | `true` | 启用 HPA |
+| `config.listenAddr` | `:18983` | Broker 监听地址 |
 | `config.logLevel` | `info` | 日志级别 |
 | `config.storageBackend` | `memory` | 存储后端 |

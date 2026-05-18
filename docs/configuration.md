@@ -34,7 +34,7 @@ Shark-MQTT supports configuration from multiple sources with the following prior
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `listen_addr` | string | `:1883` | Address to listen on |
+| `listen_addr` | string | `:18983` | Address to listen on |
 | `tls_enabled` | bool | `false` | Enable TLS |
 | `tls_cert_file` | string | - | TLS certificate file path |
 | `tls_key_file` | string | - | TLS private key file path |
@@ -42,12 +42,12 @@ Shark-MQTT supports configuration from multiple sources with the following prior
 
 **Examples:**
 ```yaml
-listen_addr: "0.0.0.0:1883"
+listen_addr: "0.0.0.0:18983"
 connect_timeout: 15s
 ```
 
 ```bash
-export MQTT_LISTEN_ADDR=":1883"
+export MQTT_LISTEN_ADDR=":18983"
 export MQTT_CONNECT_TIMEOUT="15s"
 ```
 
@@ -140,12 +140,12 @@ log_format: json
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `metrics_enabled` | bool | `false` | Enable Prometheus metrics |
-| `metrics_addr` | string | `:9090` | Metrics server address |
+| `metrics_addr` | string | `:18999` | Metrics server address |
 
 **Examples:**
 ```yaml
 metrics_enabled: true
-metrics_addr: ":9090"
+metrics_addr: ":18999"
 ```
 
 ---
@@ -156,7 +156,7 @@ metrics_addr: ":9090"
 
 ```yaml
 # Network
-listen_addr: ":1883"
+listen_addr: ":18993"
 connect_timeout: 15s
 max_connections: 10000
 max_packet_size: 262144
@@ -187,12 +187,13 @@ log_format: json
 
 # Metrics
 metrics_enabled: true
-metrics_addr: ":9090"
+metrics_addr: ":18999"
 ```
 
 ### TLS Configuration
 
 ```yaml
+listen_addr: ":18993"
 tls_enabled: true
 tls_cert_file: "/path/to/cert.pem"
 tls_key_file: "/path/to/key.pem"
@@ -250,7 +251,7 @@ All configuration options can be set via environment variables with the `MQTT_` 
 
 ```bash
 # Basic configuration
-export MQTT_LISTEN_ADDR=":1883"
+export MQTT_LISTEN_ADDR=":18983"
 export MQTT_LOG_LEVEL="info"
 
 # TLS configuration
@@ -265,7 +266,7 @@ export MQTT_REDIS_PASSWORD="secret"
 
 # Metrics
 export MQTT_METRICS_ENABLED="true"
-export MQTT_METRICS_ADDR=":9090"
+export MQTT_METRICS_ADDR=":18999"
 ```
 
 ---
@@ -284,7 +285,7 @@ import (
 func main() {
     // Create custom config
     cfg := &config.Config{
-        ListenAddr:      ":1883",
+        ListenAddr:      ":18983",
         KeepAlive:       60,
         MaxConnections:  10000,
         QoSRetryInterval: 10 * time.Second,
@@ -364,13 +365,14 @@ session_expiry_interval: 1h
 
 # Enable metrics for monitoring
 metrics_enabled: true
-metrics_addr: ":9090"
+metrics_addr: ":18999"
 ```
 
 ### Security-First Configuration
 
 ```yaml
 # Production TLS
+listen_addr: ":18993"
 tls_enabled: true
 tls_cert_file: "/etc/shark-mqtt/fullchain.pem"
 tls_key_file: "/etc/shark-mqtt/privkey.pem"

@@ -113,7 +113,7 @@ import (
 
 func main() {
     cfg := config.DefaultConfig()
-    cfg.ListenAddr = ":1883"
+    cfg.ListenAddr = ":18983"
 
     b := api.NewBroker(
         api.WithConfig(cfg),
@@ -135,10 +135,10 @@ func main() {
 ```bash
 # Build and run
 docker build -t shark-mqtt .
-docker run -d -p 1883:1883 -p 9090:9090 shark-mqtt
+docker run -d -p 18983:18983 -p 18999:18999 shark-mqtt
 
 # Verify
-curl http://localhost:9090/healthz
+curl http://localhost:18999/healthz
 ```
 
 See `docker-compose.yml` for Redis and multi-service setups.
@@ -147,26 +147,29 @@ See `docker-compose.yml` for Redis and multi-service setups.
 
 ```bash
 # Deploy
-kubectl apply -k k8s/base/
+kubectl apply -k deploy/k8s/app/
+
+# Optional Prometheus monitoring
+kubectl apply -k deploy/k8s/infra/prometheus/
 
 # Check
 kubectl -n shark-mqtt get pods
 ```
 
-See `k8s/` for production overlays and configuration.
+See `deploy/k8s/` for Kubernetes manifests and Helm chart configuration.
 
 ### CLI
 
 ```bash
 # Build and run
 go build -o shark-mqtt ./cmd/
-./shark-mqtt -addr :1883 -log-level info
+./shark-mqtt -addr :18983 -log-level info
 
 # With TLS
-./shark-mqtt -addr :8883 -tls -tls-cert cert.pem -tls-key key.pem
+./shark-mqtt -addr :18993 -tls -tls-cert cert.pem -tls-key key.pem
 
 # With connection limit
-./shark-mqtt -addr :1883 -max-conn 10000
+./shark-mqtt -addr :18983 -max-conn 10000
 ```
 
 ### Authentication
@@ -185,6 +188,7 @@ b := api.NewBroker(api.WithAuth(auth))
 
 ```go
 cfg := config.DefaultConfig()
+cfg.ListenAddr = ":18993"
 cfg.TLSEnabled = true
 cfg.TLSCertFile = "cert.pem"
 cfg.TLSKeyFile = "key.pem"
@@ -234,7 +238,7 @@ b := api.NewBroker(api.WithPluginManager(pm))
 ### YAML
 
 ```yaml
-listen_addr: ":1883"
+listen_addr: ":18983"
 keep_alive: 60
 max_packet_size: 262144
 max_connections: 10000
@@ -261,7 +265,7 @@ badger_path: "./data"
 
 # Metrics
 metrics_enabled: true
-metrics_addr: ":9090"
+metrics_addr: ":18999"
 ```
 
 ### Environment Variables
@@ -269,7 +273,7 @@ metrics_addr: ":9090"
 All config options support the `MQTT_` prefix:
 
 ```bash
-MQTT_LISTEN_ADDR=:1883 MQTT_MAX_CONNECTIONS=5000 ./shark-mqtt
+MQTT_LISTEN_ADDR=:18983 MQTT_MAX_CONNECTIONS=5000 ./shark-mqtt
 ```
 
 ### Options API

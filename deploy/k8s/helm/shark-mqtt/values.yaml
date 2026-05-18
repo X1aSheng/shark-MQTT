@@ -9,8 +9,8 @@ image:
 
 service:
   type: ClusterIP
-  mqttPort: 1883
-  metricsPort: 9090
+  mqttPort: 18983
+  metricsPort: 18999
 
 resources:
   requests:
@@ -28,7 +28,7 @@ autoscaling:
   targetMemoryUtilizationPercentage: 80
 
 config:
-  listenAddr: ":1883"
+  listenAddr: ":18983"
   maxConnections: 10000
   keepAlive: 60
   maxPacketSize: 262144
@@ -40,7 +40,7 @@ config:
   sessionExpiryInterval: 86400
   storageBackend: "memory"
   metricsEnabled: true
-  metricsAddr: "0.0.0.0:9090"
+  metricsAddr: "0.0.0.0:18999"
 
 networkPolicy:
   enabled: true

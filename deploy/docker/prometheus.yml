@@ -6,6 +6,6 @@ global:
 scrape_configs:
   - job_name: "shark-mqtt"
     static_configs:
-      - targets: ["shark-mqtt:9090"]
+      - targets: ["shark-mqtt:18999"]
     metrics_path: /metrics
     scheme: http
