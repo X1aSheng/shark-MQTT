@@ -28,6 +28,7 @@ services:
         condition: service_healthy
     environment:
       - MQTT_BROKER_ADDR=shark-mqtt:18983
+      - GOPROXY=https://goproxy.cn,direct
     working_dir: /test
     volumes:
       - ../..:/test

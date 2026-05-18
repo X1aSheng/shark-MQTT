@@ -120,6 +120,16 @@ func TestDockerComposeTestEnablesDevelopmentAuthForSmoke(t *testing.T) {
 	}
 }
 
+func TestDockerComposeTestUsesReachableGoProxy(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "deploy", "docker", "docker-compose.test.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "GOPROXY=https://goproxy.cn,direct") {
+		t.Error("docker-compose.test.yml should set GOPROXY for cloud smoke test reliability")
+	}
+}
+
 func TestGitHubActionsDockerSmokeUsesRuntimePorts(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yml"))
 	if err != nil {
