@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/X1aSheng/shark-mqtt/api"
+	"github.com/X1aSheng/shark-mqtt/broker"
 	"github.com/X1aSheng/shark-mqtt/config"
 	"github.com/X1aSheng/shark-mqtt/protocol"
 	"github.com/X1aSheng/shark-mqtt/store/memory"
@@ -19,6 +20,7 @@ func testBrokerWithRetain(t *testing.T) *api.Broker {
 	cfg.MetricsAddr = ":0"
 	brk := api.NewBroker(
 		api.WithConfig(cfg),
+		api.WithAuth(broker.AllowAllAuth{}),
 		api.WithRetainedStore(memory.NewRetainedStore()),
 	)
 	if err := brk.Start(); err != nil {
