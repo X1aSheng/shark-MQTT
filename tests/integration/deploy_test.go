@@ -93,10 +93,43 @@ func TestDockerComposeHasHealthcheck(t *testing.T) {
 	}
 }
 
+func TestDockerComposeEnablesDevelopmentAuthForSmoke(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "deploy", "docker", "docker-compose.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "-allow-all") {
+		t.Error("docker-compose.yml should pass -allow-all for demo smoke connectivity")
+	}
+}
+
 func TestDockerComposeTestExists(t *testing.T) {
 	path := filepath.Join("..", "..", "deploy", "docker", "docker-compose.test.yml")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		t.Fatal("docker-compose.test.yml not found at deploy/docker/docker-compose.test.yml")
+	}
+}
+
+func TestDockerComposeTestEnablesDevelopmentAuthForSmoke(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "deploy", "docker", "docker-compose.test.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "-allow-all") {
+		t.Error("docker-compose.test.yml should pass -allow-all for smoke connectivity")
+	}
+}
+
+func TestGitHubActionsDockerSmokeUsesRuntimePorts(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	for _, expected := range []string{"18983:18983", "18999:18999", "localhost:18999/healthz", "localhost:18983", "-allow-all"} {
+		if !strings.Contains(content, expected) {
+			t.Errorf("ci.yml Docker smoke test missing %q", expected)
+		}
 	}
 }
 
@@ -173,6 +206,16 @@ func TestK8sDeploymentHasProbes(t *testing.T) {
 	}
 	if !strings.Contains(content, "preStop") {
 		t.Error("deployment.yaml missing preStop lifecycle hook")
+	}
+}
+
+func TestK8sDeploymentEnablesDevelopmentAuthForSmoke(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "deploy", "k8s", "app", "deployment.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "-allow-all") {
+		t.Error("deployment.yaml should pass -allow-all for sample smoke connectivity")
 	}
 }
 
@@ -298,10 +341,23 @@ func TestHelmValuesHasConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(data)
-	required := []string{"config:", "autoscaling:", "networkPolicy:", "resources:"}
+	required := []string{"config:", "allowAllAuth:", "autoscaling:", "networkPolicy:", "resources:"}
 	for _, section := range required {
 		if !strings.Contains(content, section) {
 			t.Errorf("values.yaml missing section: %s", section)
+		}
+	}
+}
+
+func TestHelmDeploymentConditionallyEnablesDevelopmentAuth(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(helmChartDir, "templates", "deployment.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	for _, expected := range []string{".Values.config.allowAllAuth", "-allow-all"} {
+		if !strings.Contains(content, expected) {
+			t.Errorf("Helm deployment template missing %q", expected)
 		}
 	}
 }

@@ -39,6 +39,7 @@ spec:
           imagePullPolicy: IfNotPresent
           args:
             - "-addr=:18983"
+            - "-allow-all"
           ports:
             - name: mqtt
               containerPort: 18983

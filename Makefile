@@ -1,4 +1,4 @@
-.PHONY: build test test-unit test-integration test-race benchmark race clean tidy fmt vet lint \
+.PHONY: build test test-unit test-integration test-race benchmark bench bench-quick bench-cpu bench-mem bench-profile race clean tidy fmt vet lint ci \
         docker-build docker-compose-up docker-compose-down docker-test \
         helm-lint k8s-validate k8s-deploy k8s-delete \
         test-coverage all help
@@ -31,6 +31,19 @@ test-race:
 benchmark:
 	$(GO) test -bench=. -benchmem -count=3 ./tests/bench/...
 
+bench: benchmark
+
+bench-quick:
+	$(GO) test -bench=. -benchmem -benchtime=1s -count=1 ./tests/bench/...
+
+bench-cpu:
+	$(GO) test -bench=. -benchmem -cpuprofile=cpu.prof ./tests/bench/...
+
+bench-mem:
+	$(GO) test -bench=. -benchmem -memprofile=mem.prof ./tests/bench/...
+
+bench-profile: bench-cpu bench-mem
+
 test-coverage:
 	$(GO) test -coverprofile=coverage.out -covermode=atomic -count=1 ./...
 	$(GO) tool cover -html=coverage.out -o coverage.html
@@ -49,6 +62,8 @@ lint:
 
 tidy:
 	$(GO) mod tidy
+
+ci: vet fmt build test-unit test-integration test-coverage
 
 # ─── Docker ────────────────────────────────────────────────
 
@@ -98,6 +113,11 @@ help:
 	@echo "  test-integration   Run integration tests"
 	@echo "  test-race          Run tests with race detector"
 	@echo "  benchmark          Run benchmarks"
+	@echo "  bench              Alias for benchmark"
+	@echo "  bench-quick        Run quick benchmarks"
+	@echo "  bench-cpu          Run benchmarks with CPU profile"
+	@echo "  bench-mem          Run benchmarks with memory profile"
+	@echo "  bench-profile      Run CPU and memory profiling benchmarks"
 	@echo "  test-coverage      Generate coverage report"
 	@echo ""
 	@echo "Code Quality:"
@@ -105,6 +125,7 @@ help:
 	@echo "  fmt                Format code"
 	@echo "  lint               Run golangci-lint"
 	@echo "  tidy               Tidy go.mod"
+	@echo "  ci                 Run local CI checks"
 	@echo ""
 	@echo "Docker:"
 	@echo "  docker-build       Build Docker image"
