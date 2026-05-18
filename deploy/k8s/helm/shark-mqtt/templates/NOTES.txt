@@ -4,15 +4,15 @@ shark-mqtt has been installed!
    kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "shark-mqtt.name" . }}
 
 2. Port forward for local testing:
-   kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "shark-mqtt.fullname" . }} 1883:1883 9090:9090
+   kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "shark-mqtt.fullname" . }} 18983:18983 18999:18999
 
 3. Test with an MQTT client:
-   mqttui --broker localhost:1883
+   mqttui --broker localhost:18983
 
 4. Check metrics:
-   curl http://localhost:9090/metrics
-   curl http://localhost:9090/healthz
-   curl http://localhost:9090/readyz
+   curl http://localhost:18999/metrics
+   curl http://localhost:18999/healthz
+   curl http://localhost:18999/readyz
 
 {{- if .Values.ingress.enabled }}
 5. External access via Ingress:

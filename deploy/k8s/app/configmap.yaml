@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/component: broker
 data:
   config.yaml: |
-    listen_addr: ":1883"
+    listen_addr: ":18983"
     max_connections: 10000
     keep_alive: 60
     max_packet_size: 262144
@@ -20,4 +20,4 @@ data:
     session_expiry_interval: 86400
     storage_backend: "memory"
     metrics_enabled: true
-    metrics_addr: "0.0.0.0:9090"
+    metrics_addr: "0.0.0.0:18999"

@@ -25,7 +25,7 @@ var _ net.Conn = (*MockConn)(nil)
 // NewMockConn creates a new mock connection.
 func NewMockConn() *MockConn {
 	return &MockConn{
-		localAddr:  &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1883},
+		localAddr:  &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 18983},
 		remoteAddr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 50000},
 	}
 }

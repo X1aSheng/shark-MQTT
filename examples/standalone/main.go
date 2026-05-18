@@ -16,7 +16,7 @@ import (
 
 func main() {
 	cfg := config.DefaultConfig()
-	cfg.ListenAddr = ":1883"
+	cfg.ListenAddr = ":18983"
 
 	// Create broker with default auth (allow all)
 	broker := api.NewBroker(
@@ -27,7 +27,7 @@ func main() {
 	if err := broker.Start(); err != nil {
 		log.Fatalf("Failed to start broker: %v", err)
 	}
-	log.Println("Broker started on :1883")
+	log.Println("Broker started on :18983")
 
 	// Wait for interrupt signal
 	sig := make(chan os.Signal, 1)

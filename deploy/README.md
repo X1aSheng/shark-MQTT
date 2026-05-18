@@ -23,9 +23,9 @@ docker build -f deploy/docker/Dockerfile -t shark-mqtt:latest .
 
 # 运行容器
 docker run -d \
-  -p 1883:1883 \
-  -p 8883:8883 \
-  -p 9090:9090 \
+  -p 18983:18983 \
+  -p 18993:18993 \
+  -p 18999:18999 \
   -e MQTT_LOG_LEVEL=info \
   shark-mqtt:latest
 ```
@@ -36,9 +36,9 @@ docker run -d \
 
 | 端口 | 协议 | 说明 |
 |------|------|------|
-| 1883 | TCP | MQTT 标准端口 |
-| 8883 | TCP | MQTT TLS 端口 |
-| 9090 | TCP | Metrics/Health/Ready（/metrics, /healthz, /readyz） |
+| 18983 | TCP | MQTT 默认端口 |
+| 18993 | TCP | MQTT TLS 端口 |
+| 18999 | TCP | Metrics/Health/Ready（/metrics, /healthz, /readyz） |
 
 ---
 
@@ -48,7 +48,7 @@ docker run -d \
 |------|--------|------|
 | `MQTT_LOG_LEVEL` | `info` | 日志级别: debug, info, warn, error |
 | `MQTT_LOG_FORMAT` | `json` | 日志格式: json, text |
-| `MQTT_METRICS_ADDR` | `:9090` | Metrics 监听地址 |
+| `MQTT_METRICS_ADDR` | `:18999` | Metrics 监听地址 |
 | `MQTT_METRICS_ENABLED` | `true` | 启用 Prometheus 指标 |
 
 ---
@@ -59,6 +59,9 @@ docker run -d \
 
 ```bash
 kubectl apply -k deploy/k8s/app/
+
+# 可选：部署 Prometheus 监控
+kubectl apply -k deploy/k8s/infra/prometheus/
 ```
 
 ### 使用 Helm
@@ -85,7 +88,7 @@ helm upgrade shark-mqtt deploy/k8s/helm/shark-mqtt/ \
 
 ### Prometheus 指标
 
-指标地址: `http://<host>:9090/metrics`
+指标地址: `http://<host>:18999/metrics`
 
 主要指标:
 - `shark_mqtt_connections_total` — 连接总数
@@ -103,7 +106,7 @@ helm upgrade shark-mqtt deploy/k8s/helm/shark-mqtt/ \
 
 ## 生产检查清单
 
-- [ ] 配置 TLS 证书（MQTT over TLS 端口 8883）
+- [ ] 配置 TLS 证书（MQTT over TLS 端口 18993）
 - [ ] 设置资源限制（CPU/Memory）
 - [ ] 配置 HPA 自动扩缩
 - [ ] 启用 NetworkPolicy 网络隔离
@@ -121,7 +124,7 @@ helm upgrade shark-mqtt deploy/k8s/helm/shark-mqtt/ \
 
 ### 端口冲突
 
-确保 1883（MQTT）、9090（Metrics）端口未被占用。
+确保 18983（MQTT）、18999（Metrics/Health）端口未被占用。
 
 ### Redis 连接
 
@@ -135,6 +138,6 @@ helm upgrade shark-mqtt deploy/k8s/helm/shark-mqtt/ \
 
 ```bash
 # 使用 mosquitto 客户端测试
-mosquitto_pub -h localhost -p 1883 -t "test/topic" -m "hello"
-mosquitto_sub -h localhost -p 1883 -t "test/topic"
+mosquitto_pub -h localhost -p 18983 -t "test/topic" -m "hello"
+mosquitto_sub -h localhost -p 18983 -t "test/topic"
 ```

@@ -29,6 +29,16 @@ func main() {
 	flag.BoolVar(&allowAllAuth, "allow-all", false, "allow all connections without authentication (DEVELOPMENT ONLY)")
 	flag.Parse()
 
+	addrSet := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "addr" {
+			addrSet = true
+		}
+	})
+	if cfg.TLSEnabled && !addrSet {
+		cfg.ListenAddr = config.DefaultTLSListenAddr
+	}
+
 	// Setup signal handling
 	ctx, stop := signal.NotifyContext(context.Background(),
 		syscall.SIGINT,

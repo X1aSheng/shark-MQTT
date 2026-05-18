@@ -18,7 +18,7 @@ This guide covers various deployment options for Shark-MQTT.
 ## Docker
 
 A multi-stage `Dockerfile` is provided at the project root. The image exposes three
-ports: `1883` (MQTT), `8883` (MQTT+TLS), and `9090` (health/metrics).
+ports: `18983` (MQTT), `18993` (MQTT+TLS), and `18999` (health/metrics).
 
 ### Build
 
@@ -35,12 +35,12 @@ make docker-build
 ```bash
 docker run -d \
   --name mqtt-broker \
-  -p 1883:1883 \
-  -p 9090:9090 \
+  -p 18983:18983 \
+  -p 18999:18999 \
   shark-mqtt:latest
 
 # Verify health
-curl http://localhost:9090/healthz
+curl http://localhost:18999/healthz
 ```
 
 ### With Environment Variables
@@ -50,9 +50,9 @@ All `MQTT_*` environment variables are supported:
 ```bash
 docker run -d \
   --name mqtt-broker \
-  -p 1883:1883 \
-  -p 8883:8883 \
-  -p 9090:9090 \
+  -p 18983:18983 \
+  -p 18993:18993 \
+  -p 18999:18999 \
   -e MQTT_LOG_LEVEL=debug \
   -e MQTT_TLS_ENABLED=true \
   -e MQTT_TLS_CERT_FILE=/certs/cert.pem \
@@ -66,7 +66,7 @@ docker run -d \
 ```bash
 docker run -d \
   --name mqtt-broker \
-  -p 1883:1883 \
+  -p 18983:18983 \
   -e MQTT_STORAGE_BACKEND=redis \
   -e MQTT_REDIS_ADDR=redis-host:6379 \
   shark-mqtt:latest
@@ -93,7 +93,7 @@ docker compose up -d
 
 # Check status
 docker compose ps
-curl http://localhost:9090/healthz
+curl http://localhost:18999/healthz
 
 # Stop
 docker compose down
@@ -109,7 +109,7 @@ docker compose up -d
 ```
 
 The standalone `mqtt` and Redis-backed `mqtt-redis` services cannot run at the same
-time on port 1883 — comment out the one you don't need.
+time on port 18983 — comment out the one you don't need.
 
 ### Smoke Test (CI)
 
@@ -122,35 +122,35 @@ docker compose -f docker-compose.test.yml up --build --exit-code-from test
 
 ## Kubernetes
 
-Kustomize-ready manifests are in `k8s/base/` with a production overlay in
-`k8s/overlays/production/`.
+Kustomize-ready manifests are in `deploy/k8s/app/`. Optional Prometheus
+infrastructure lives in `deploy/k8s/infra/prometheus/`.
 
 ### Directory Structure
 
 ```
-k8s/
-├── base/
+deploy/k8s/
+├── app/
 │   ├── kustomization.yaml
-│   ├── namespace.yaml        # shark-mqtt namespace
-│   ├── configmap.yaml        # broker configuration
-│   ├── deployment.yaml       # replicas: 2, health probes on :9090
-│   └── service.yaml          # ClusterIP (MQTT + health ports)
-└── overlays/
-    └── production/
-        └── kustomization.yaml # replicas: 3, LoadBalancer, more resources
+│   ├── namespace.yaml         # shark-mqtt namespace
+│   ├── configmap.yaml         # broker configuration
+│   ├── deployment.yaml        # replicas: 2, health probes on :18999
+│   └── service.yaml           # ClusterIP (MQTT + health ports)
+└── infra/
+    └── prometheus/
+        ├── kustomization.yaml
+        ├── configmap.yaml
+        ├── deployment.yaml
+        └── service.yaml
 ```
 
 ### Deploy
 
 ```bash
 # Deploy base
-kubectl apply -k k8s/base/
+kubectl apply -k deploy/k8s/app/
 
-# Or via Make
-make k8s-deploy
-
-# Production overlay
-make k8s-deploy-prod
+# Optional Prometheus monitoring
+kubectl apply -k deploy/k8s/infra/prometheus/
 ```
 
 ### Verify
@@ -160,8 +160,8 @@ kubectl -n shark-mqtt get pods
 kubectl -n shark-mqtt get svc
 
 # Health check (port-forward)
-kubectl -n shark-mqtt port-forward svc/shark-mqtt 9090:9090
-curl http://localhost:9090/healthz
+kubectl -n shark-mqtt port-forward svc/shark-mqtt 18999:18999
+curl http://localhost:18999/healthz
 ```
 
 ### Delete
@@ -173,12 +173,12 @@ kubectl delete -k k8s/base/
 
 ### Liveness & Readiness
 
-The deployment uses HTTP probes against the health server (port 9090):
+The deployment uses HTTP probes against the health server (port 18999):
 
 | Probe | Path | Port | Initial Delay |
 |-------|------|------|---------------|
-| liveness | `/healthz` | 9090 | 10s |
-| readiness | `/readyz` | 9090 | 5s |
+| liveness | `/healthz` | 18999 | 10s |
+| readiness | `/readyz` | 18999 | 5s |
 
 `/healthz` always returns 200 while the process is running.
 `/readyz` returns 200 once the MQTT server is accepting connections, 503 otherwise.
@@ -254,11 +254,11 @@ defaults
     option  tcplog
 
 frontend mqtt_front
-    bind *:1883
+    bind *:18983
     default_backend mqtt_backend
 
 frontend mqtt_tls_front
-    bind *:8883 ssl crt /etc/ssl/certs/mqtt.pem
+    bind *:18993 ssl crt /etc/ssl/certs/mqtt.pem
     default_backend mqtt_backend
 
 backend mqtt_backend
@@ -277,7 +277,7 @@ stream {
     }
 
     server {
-        listen 1883;
+        listen 18983;
         proxy_pass mqtt_cluster;
         proxy_timeout 300s;
         proxy_connect_timeout 1s;
@@ -291,7 +291,7 @@ stream {
 
 ### Security
 
-- [ ] Enable TLS on port 8883
+- [ ] Enable TLS on port 18993
 - [ ] Use valid SSL certificates
 - [ ] Implement authentication (never use AllowAllAuth in production)
 - [ ] Configure ACLs for topic access control
@@ -333,7 +333,7 @@ Recommended metrics to monitor:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `MQTT_LISTEN_ADDR` | Listen address | `:1883` |
+| `MQTT_LISTEN_ADDR` | Listen address | `:18983` |
 | `MQTT_TLS_ENABLED` | Enable TLS | `false` |
 | `MQTT_TLS_CERT_FILE` | TLS certificate file | - |
 | `MQTT_TLS_KEY_FILE` | TLS key file | - |
@@ -354,7 +354,7 @@ Recommended metrics to monitor:
 | `MQTT_LOG_LEVEL` | Log level (debug/info/warn/error) | `info` |
 | `MQTT_LOG_FORMAT` | Log format (text/json) | `text` |
 | `MQTT_METRICS_ENABLED` | Enable Prometheus metrics | `false` |
-| `MQTT_METRICS_ADDR` | Metrics server address | `:9090` |
+| `MQTT_METRICS_ADDR` | Metrics server address | `:18999` |
 
 ---
 

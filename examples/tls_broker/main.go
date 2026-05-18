@@ -20,7 +20,7 @@ import (
 
 func main() {
 	cfg := config.DefaultConfig()
-	cfg.ListenAddr = ":8883"
+	cfg.ListenAddr = ":18993"
 	cfg.TLSEnabled = true
 	cfg.TLSCertFile = "cert.pem"
 	cfg.TLSKeyFile = "key.pem"
@@ -33,7 +33,7 @@ func main() {
 	if err := broker.Start(); err != nil {
 		log.Fatalf("Failed to start broker: %v", err)
 	}
-	log.Println("TLS Broker started on :8883")
+	log.Println("TLS Broker started on :18993")
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)

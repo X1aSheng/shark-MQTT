@@ -33,7 +33,7 @@ func TestDockerfileHasAllPorts(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(data)
-	required := []string{"1883", "8883", "9090"}
+	required := []string{"18983", "18993", "18999"}
 	for _, port := range required {
 		if !strings.Contains(content, port) {
 			t.Errorf("Dockerfile missing port %s in EXPOSE", port)
@@ -75,7 +75,7 @@ func TestDockerComposeHasAllPorts(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(data)
-	required := []string{"1883:1883", "9090:9090"}
+	required := []string{"18983:18983", "18999:18999"}
 	for _, port := range required {
 		if !strings.Contains(content, port) {
 			t.Errorf("docker-compose.yml missing port mapping %s", port)
@@ -137,11 +137,11 @@ func TestK8sDeploymentHasAllPorts(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(data)
-	if !strings.Contains(content, "containerPort: 1883") {
-		t.Error("deployment.yaml missing MQTT port 1883")
+	if !strings.Contains(content, "containerPort: 18983") {
+		t.Error("deployment.yaml missing MQTT port 18983")
 	}
-	if !strings.Contains(content, "containerPort: 9090") {
-		t.Error("deployment.yaml missing metrics port 9090")
+	if !strings.Contains(content, "containerPort: 18999") {
+		t.Error("deployment.yaml missing metrics port 18999")
 	}
 }
 
@@ -207,11 +207,11 @@ func TestK8sNetworkPolicyExists(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(data)
-	if !strings.Contains(content, "1883") {
-		t.Error("networkpolicy.yaml should allow MQTT port 1883")
+	if !strings.Contains(content, "18983") {
+		t.Error("networkpolicy.yaml should allow MQTT port 18983")
 	}
-	if !strings.Contains(content, "9090") {
-		t.Error("networkpolicy.yaml should allow metrics port 9090")
+	if !strings.Contains(content, "18999") {
+		t.Error("networkpolicy.yaml should allow metrics port 18999")
 	}
 }
 
@@ -231,12 +231,22 @@ func TestK8sAppConfigmapExists(t *testing.T) {
 
 func TestK8sInfraPrometheusExists(t *testing.T) {
 	base := filepath.Join("..", "..", "deploy", "k8s", "infra", "prometheus")
-	files := []string{"deployment.yaml", "service.yaml", "configmap.yaml"}
+	files := []string{"deployment.yaml", "service.yaml", "configmap.yaml", "kustomization.yaml"}
 	for _, f := range files {
 		path := filepath.Join(base, f)
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			t.Errorf("Missing prometheus manifest: %s", f)
 		}
+	}
+}
+
+func TestK8sAppKustomizationStaysWithinAppDir(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "deploy", "k8s", "app", "kustomization.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "../") {
+		t.Error("app kustomization should not reference files outside deploy/k8s/app")
 	}
 }
 

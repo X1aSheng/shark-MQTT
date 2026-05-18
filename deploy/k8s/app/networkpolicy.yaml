@@ -20,20 +20,20 @@ spec:
               kubernetes.io/metadata.name: shark-mqtt
       ports:
         - protocol: TCP
-          port: 1883
+          port: 18983
         - protocol: TCP
-          port: 9090
+          port: 18999
     - from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: ingress-nginx
       ports:
         - protocol: TCP
-          port: 1883
+          port: 18983
     - from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: monitoring
       ports:
         - protocol: TCP
-          port: 9090
+          port: 18999

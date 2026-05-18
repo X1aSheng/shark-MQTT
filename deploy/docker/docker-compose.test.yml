@@ -8,12 +8,12 @@ services:
     image: shark-mqtt:test
     container_name: shark-mqtt-test
     ports:
-      - "1883:1883"
-      - "9090:9090"
+      - "18983:18983"
+      - "18999:18999"
     environment:
       - MQTT_LOG_LEVEL=info
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:9090/healthz"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:18999/healthz"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -26,7 +26,7 @@ services:
       shark-mqtt:
         condition: service_healthy
     environment:
-      - MQTT_BROKER_ADDR=shark-mqtt:1883
+      - MQTT_BROKER_ADDR=shark-mqtt:18983
     working_dir: /test
     volumes:
       - ../..:/test
@@ -35,7 +35,7 @@ services:
       - -c
       - |
         echo ">>> Health check..."
-        wget -qO- http://shark-mqtt:9090/healthz
+        wget -qO- http://shark-mqtt:18999/healthz
         echo ""
         echo ">>> Running integration smoke tests..."
         go test -v -count=1 -timeout 60s -run "TestConnectFlow|TestPubSub|TestQoS0" ./tests/integration/...

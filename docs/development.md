@@ -316,7 +316,7 @@ broker := api.NewBroker(
 Enable metrics endpoint:
 ```yaml
 metrics_enabled: true
-metrics_addr: ":9090"
+metrics_addr: ":18999"
 ```
 
 Key metrics to monitor:
@@ -328,7 +328,7 @@ Key metrics to monitor:
 
 Access metrics:
 ```bash
-curl http://localhost:9090/metrics
+curl http://localhost:18999/metrics
 ```
 
 ### Common Issues

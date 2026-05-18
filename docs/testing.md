@@ -234,7 +234,7 @@ func TestTopicTree_Subscribe(t *testing.T) {
 |----------|------|
 | `TestDockerfileExists` | Dockerfile 文件存在 |
 | `TestDockerfileBuildsCorrectTarget` | 构建目标验证 |
-| `TestDockerfileHasAllPorts` | 端口暴露（1883, 9090） |
+| `TestDockerfileHasAllPorts` | 端口暴露（18983, 18993, 18999） |
 | `TestDockerfileHasHealthcheck` | HEALTHCHECK 指令 |
 | `TestDockerfileHasNonRootUser` | 非 root 用户 |
 | `TestDockerComposeExists` | docker-compose 文件存在 |

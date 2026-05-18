@@ -11,8 +11,8 @@ func TestOptions(t *testing.T) {
 		if c.opts.Host != "localhost" {
 			t.Errorf("expected host localhost, got %s", c.opts.Host)
 		}
-		if c.opts.Port != 1883 {
-			t.Errorf("expected port 1883, got %d", c.opts.Port)
+		if c.opts.Port != 18983 {
+			t.Errorf("expected port 18983, got %d", c.opts.Port)
 		}
 		if c.opts.KeepAlive != 60 {
 			t.Errorf("expected keepalive 60, got %d", c.opts.KeepAlive)
@@ -23,12 +23,12 @@ func TestOptions(t *testing.T) {
 	})
 
 	t.Run("WithHostPort", func(t *testing.T) {
-		c := New(WithHostPort("broker.example.com", 8883))
+		c := New(WithHostPort("broker.example.com", 18993))
 		if c.opts.Host != "broker.example.com" {
 			t.Errorf("expected host broker.example.com, got %s", c.opts.Host)
 		}
-		if c.opts.Port != 8883 {
-			t.Errorf("expected port 8883, got %d", c.opts.Port)
+		if c.opts.Port != 18993 {
+			t.Errorf("expected port 18993, got %d", c.opts.Port)
 		}
 	})
 
@@ -89,7 +89,7 @@ func TestOptions(t *testing.T) {
 
 	t.Run("Combined", func(t *testing.T) {
 		c := New(
-			WithHostPort("mqtt.example.com", 1883),
+			WithHostPort("mqtt.example.com", 18983),
 			WithClientID("my-client"),
 			WithCredentials("admin", "secret"),
 			WithKeepAlive(120),
@@ -100,7 +100,7 @@ func TestOptions(t *testing.T) {
 		if c.opts.Host != "mqtt.example.com" {
 			t.Errorf("host: %s", c.opts.Host)
 		}
-		if c.opts.Port != 1883 {
+		if c.opts.Port != 18983 {
 			t.Errorf("port: %d", c.opts.Port)
 		}
 		if c.opts.ClientID != "my-client" {
@@ -191,7 +191,7 @@ func TestNextPacketID(t *testing.T) {
 
 func TestConnectNotConnected(t *testing.T) {
 	// Test that Publish returns error when not connected
-	c := New(WithHostPort("127.0.0.1", 1883))
+	c := New(WithHostPort("127.0.0.1", 18983))
 	c.ctx.Done() // ensure context is available
 
 	err := c.Publish(c.ctx, "test", 0, false, []byte("data"))

@@ -9,8 +9,11 @@ import (
 
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
-	if cfg.ListenAddr != ":1883" {
-		t.Errorf("expected :1883, got %s", cfg.ListenAddr)
+	if cfg.ListenAddr != ":18983" {
+		t.Errorf("expected :18983, got %s", cfg.ListenAddr)
+	}
+	if cfg.MetricsAddr != ":18999" {
+		t.Errorf("expected :18999, got %s", cfg.MetricsAddr)
 	}
 	if cfg.KeepAlive != 60 {
 		t.Errorf("expected 60, got %d", cfg.KeepAlive)
@@ -69,7 +72,7 @@ func TestLoadFile(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")
 	content := `
-listen_addr: ":8883"
+listen_addr: ":18993"
 keep_alive: 30
 log_level: warn
 qos_max_retries: 5
@@ -83,8 +86,8 @@ qos_max_retries: 5
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.ListenAddr != ":8883" {
-		t.Errorf("expected :8883, got %s", cfg.ListenAddr)
+	if cfg.ListenAddr != ":18993" {
+		t.Errorf("expected :18993, got %s", cfg.ListenAddr)
 	}
 	if cfg.KeepAlive != 30 {
 		t.Errorf("expected 30, got %d", cfg.KeepAlive)

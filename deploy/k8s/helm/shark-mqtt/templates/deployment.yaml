@@ -21,7 +21,7 @@ spec:
         {{- include "shark-mqtt.selectorLabels" . | nindent 8 }}
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "9090"
+        prometheus.io/port: {{ .Values.service.metricsPort | quote }}
         prometheus.io/path: "/metrics"
     spec:
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
@@ -32,7 +32,7 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
-            - "-addr=:1883"
+            - "-addr={{ .Values.config.listenAddr }}"
           ports:
             - name: mqtt
               containerPort: {{ .Values.service.mqttPort }}
