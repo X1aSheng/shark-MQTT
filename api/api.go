@@ -135,11 +135,18 @@ func NewBroker(opts ...Option) *Broker {
 		log.Printf("[api] config validation error: %v", err)
 	}
 
-	// Build broker options
-	bopts := []broker.Option{
-		broker.WithAuth(o.auth),
-		broker.WithAuthorizer(o.authorizer),
-		broker.WithPluginManager(o.pluginManager),
+	// Build broker options. Preserve broker package defaults unless the API
+	// caller explicitly provides an override.
+	bopts := []broker.Option{}
+
+	if o.auth != nil {
+		bopts = append(bopts, broker.WithAuth(o.auth))
+	}
+	if o.authorizer != nil {
+		bopts = append(bopts, broker.WithAuthorizer(o.authorizer))
+	}
+	if o.pluginManager != nil {
+		bopts = append(bopts, broker.WithPluginManager(o.pluginManager))
 	}
 
 	if o.maxConnections > 0 {
