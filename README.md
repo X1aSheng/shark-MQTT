@@ -321,13 +321,13 @@ Full results: `make bench` or see `docs/performance.md`.
 
 | Type | Count | Status |
 |------|-------|--------|
-| Unit Tests | 406 passed runs / 13 Redis skips | All pass |
-| Integration Tests | 84 passed runs | All pass |
+| Unit Tests | 416 passed runs / 13 Redis skips | All pass |
+| Integration Tests | 89 passed runs | All pass |
 | Benchmarks | 64 executed / 3 Windows skips | All pass |
-| **Latest scripted run** | `logs/20260518_233302_*` | **0 failures** |
+| **Latest scripted run** | `logs/20260518_234147_*` | **0 failures** |
 
 > 13 Redis tests skipped when `MQTT_REDIS_ADDR` is not set.
-> Latest full run: `logs/20260518_233302_*`; unit log reports 407 passed and 13 Redis tests skipped when Redis is not configured. Race detector passed after adding `D:\Programs\w64devkit\bin` to `PATH`.
+> Latest full run: `logs/20260518_234147_*`; unit log reports 416 passed and 13 Redis tests skipped when Redis is not configured. Race detector passed after adding `D:\Programs\w64devkit\bin` to `PATH`.
 
 ### Integration Test Coverage
 
@@ -343,7 +343,7 @@ Full results: `make bench` or see `docs/performance.md`.
 | Edge Cases | 6 | Auth failure, duplicate clientID, invalid filter, empty clientID, max connections, system-topic isolation |
 | Deploy Verification | 30 | Dockerfile, docker-compose, k8s manifests, Helm chart structure, security context, probes |
 
-All MQTT integration tests (54 of 84) verify **end-to-end data delivery** or security handshake behavior: publish a message after subscribe and confirm the subscriber receives the correct topic and payload, or confirm the expected CONNACK rejection. The remaining 30 tests validate deployment artifacts (Dockerfile, docker-compose, k8s manifests, Helm chart).
+All MQTT integration tests (53 MQTT data/security tests plus 36 deployment checks) verify **end-to-end data delivery**, security handshake behavior, or deployment artifact correctness.
 
 ### Running Tests
 
