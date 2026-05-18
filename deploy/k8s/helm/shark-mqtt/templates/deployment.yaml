@@ -33,6 +33,9 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             - "-addr={{ .Values.config.listenAddr }}"
+            {{- if .Values.config.allowAllAuth }}
+            - "-allow-all"
+            {{- end }}
           ports:
             - name: mqtt
               containerPort: {{ .Values.service.mqttPort }}

@@ -157,10 +157,10 @@ jobs:
 
       - name: Start container
         run: |
-          docker run -d --name mqtt-ci -p 1883:1883 -p 9090:9090 shark-mqtt:ci
+          docker run -d --name mqtt-ci -p 18983:18983 -p 18999:18999 shark-mqtt:ci -addr=:18983 -allow-all
           echo "Waiting for health check..."
           for i in $(seq 1 30); do
-            if curl -sf http://localhost:9090/healthz >/dev/null 2>&1; then
+            if curl -sf http://localhost:18999/healthz >/dev/null 2>&1; then
               echo "Container healthy."
               exit 0
             fi
@@ -171,7 +171,7 @@ jobs:
           exit 1
 
       - name: Run MQTT smoke test
-        run: go run scripts/mqtt_smoke.go -addr localhost:1883
+        run: go run scripts/mqtt_smoke.go -addr localhost:18983
 
       - name: Cleanup
         if: always()

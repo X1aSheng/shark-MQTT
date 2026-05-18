@@ -24,7 +24,7 @@ ports: `18983` (MQTT), `18993` (MQTT+TLS), and `18999` (health/metrics).
 
 ```bash
 # Build from source
-docker build -t shark-mqtt:latest .
+docker build -f deploy/docker/Dockerfile -t shark-mqtt:latest .
 
 # Or via Make
 make docker-build
@@ -37,7 +37,7 @@ docker run -d \
   --name mqtt-broker \
   -p 18983:18983 \
   -p 18999:18999 \
-  shark-mqtt:latest
+  shark-mqtt:latest -addr=:18983 -allow-all
 
 # Verify health
 curl http://localhost:18999/healthz
@@ -58,7 +58,7 @@ docker run -d \
   -e MQTT_TLS_CERT_FILE=/certs/cert.pem \
   -e MQTT_TLS_KEY_FILE=/certs/key.pem \
   -v $(pwd)/certs:/certs \
-  shark-mqtt:latest
+  shark-mqtt:latest -addr=:18983 -allow-all
 ```
 
 ### With Redis
@@ -69,8 +69,11 @@ docker run -d \
   -p 18983:18983 \
   -e MQTT_STORAGE_BACKEND=redis \
   -e MQTT_REDIS_ADDR=redis-host:6379 \
-  shark-mqtt:latest
+  shark-mqtt:latest -addr=:18983 -allow-all
 ```
+
+`-allow-all` is for smoke tests and development-only deployments. Production
+deployments must replace it with a real authenticator/authorizer integration.
 
 ### Smoke Test
 
@@ -83,29 +86,29 @@ bash scripts/docker-test.sh
 
 ## Docker Compose
 
-A `docker-compose.yml` is provided at the project root with standalone and
+A Docker Compose file is provided at `deploy/docker/docker-compose.yml` with standalone and
 Redis-backed configurations.
 
 ### Standalone
 
 ```bash
-docker compose up -d
+docker compose -f deploy/docker/docker-compose.yml up -d
 
 # Check status
-docker compose ps
+docker compose -f deploy/docker/docker-compose.yml ps
 curl http://localhost:18999/healthz
 
 # Stop
-docker compose down
+docker compose -f deploy/docker/docker-compose.yml down
 ```
 
 ### Full Stack with Redis
 
-Edit `docker-compose.yml` and uncomment the `redis` and `mqtt-redis` service blocks,
+Edit `deploy/docker/docker-compose.yml` and uncomment the `redis` and `mqtt-redis` service blocks,
 then:
 
 ```bash
-docker compose up -d
+docker compose -f deploy/docker/docker-compose.yml up -d
 ```
 
 The standalone `mqtt` and Redis-backed `mqtt-redis` services cannot run at the same
@@ -115,7 +118,7 @@ time on port 18983 — comment out the one you don't need.
 
 ```bash
 # Build, start, run tests, cleanup
-docker compose -f docker-compose.test.yml up --build --exit-code-from test
+docker compose -f deploy/docker/docker-compose.test.yml up --build --exit-code-from test-runner
 ```
 
 ---
@@ -363,4 +366,4 @@ Recommended metrics to monitor:
 - [Configuration Guide](configuration.md)
 - [API Reference](API.md)
 - [Examples](../examples/)
-- [Project Status](PROJECT_STATUS.md)
+- [Latest Review](PROJECT-REVIEW-260518-233900.md)

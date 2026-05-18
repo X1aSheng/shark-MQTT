@@ -364,5 +364,5 @@ curl http://localhost:18999/metrics
 - [Testing Guide](testing.md)
 - [Configuration Guide](configuration.md)
 - [API Reference](API.md)
-- [Project Status](PROJECT_STATUS.md)
+- [Latest Review](PROJECT-REVIEW-260518-233900.md)
 - [CONTRIBUTING.md](../CONTRIBUTING.md)

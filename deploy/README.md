@@ -27,8 +27,11 @@ docker run -d \
   -p 18993:18993 \
   -p 18999:18999 \
   -e MQTT_LOG_LEVEL=info \
-  shark-mqtt:latest
+  shark-mqtt:latest -addr=:18983 -allow-all
 ```
+
+`-allow-all` is intended for local smoke tests and demo deployments only. Use
+real authentication and ACLs before exposing the broker in production.
 
 ---
 

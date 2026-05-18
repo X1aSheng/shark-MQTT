@@ -21,6 +21,7 @@ autoscaling:
   maxReplicas: 20
 
 config:
+  allowAllAuth: false
   logLevel: "warn"
   logFormat: "json"
   maxConnections: 50000

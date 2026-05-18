@@ -29,7 +29,9 @@ docker run -d \
     --name "$CONTAINER" \
     -p "$MQTT_PORT:18983" \
     -p "$HEALTH_PORT:18999" \
-    "$IMAGE"
+    "$IMAGE" \
+    -addr=:18983 \
+    -allow-all
 
 # Wait for healthy
 echo "    Waiting for health check..."

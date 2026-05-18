@@ -29,6 +29,7 @@ autoscaling:
 
 config:
   listenAddr: ":18983"
+  allowAllAuth: true
   maxConnections: 10000
   keepAlive: 60
   maxPacketSize: 262144

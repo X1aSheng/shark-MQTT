@@ -134,14 +134,14 @@ func main() {
 
 ```bash
 # Build and run
-docker build -t shark-mqtt .
-docker run -d -p 18983:18983 -p 18999:18999 shark-mqtt
+docker build -f deploy/docker/Dockerfile -t shark-mqtt .
+docker run -d -p 18983:18983 -p 18999:18999 shark-mqtt -addr=:18983 -allow-all
 
 # Verify
 curl http://localhost:18999/healthz
 ```
 
-See `docker-compose.yml` for Redis and multi-service setups.
+See `deploy/docker/docker-compose.yml` for Redis and multi-service setups.
 
 ### Kubernetes
 
@@ -322,12 +322,12 @@ Full results: `make bench` or see `docs/performance.md`.
 | Type | Count | Status |
 |------|-------|--------|
 | Unit Tests | 406 passed runs / 13 Redis skips | All pass |
-| Integration Tests | 83 passed runs | All pass |
+| Integration Tests | 84 passed runs | All pass |
 | Benchmarks | 64 executed / 3 Windows skips | All pass |
-| **Latest scripted run** | `logs/20260517_123532_*` | **0 failures** |
+| **Latest scripted run** | `logs/20260518_233302_*` | **0 failures** |
 
 > 13 Redis tests skipped when `MQTT_REDIS_ADDR` is not set.
-> Latest full run: `logs/20260517_123532_*`; unit log reports 406 passed and 13 Redis tests skipped when Redis is not configured. Race detector passed after adding `D:\Programs\w64devkit\bin` to `PATH`.
+> Latest full run: `logs/20260518_233302_*`; unit log reports 407 passed and 13 Redis tests skipped when Redis is not configured. Race detector passed after adding `D:\Programs\w64devkit\bin` to `PATH`.
 
 ### Integration Test Coverage
 
@@ -343,7 +343,7 @@ Full results: `make bench` or see `docs/performance.md`.
 | Edge Cases | 6 | Auth failure, duplicate clientID, invalid filter, empty clientID, max connections, system-topic isolation |
 | Deploy Verification | 30 | Dockerfile, docker-compose, k8s manifests, Helm chart structure, security context, probes |
 
-All MQTT integration tests (53 of 83) verify **end-to-end data delivery**: publish a message after subscribe and confirm the subscriber receives the correct topic and payload. The remaining 30 tests validate deployment artifacts (Dockerfile, docker-compose, k8s manifests, Helm chart).
+All MQTT integration tests (54 of 84) verify **end-to-end data delivery** or security handshake behavior: publish a message after subscribe and confirm the subscriber receives the correct topic and payload, or confirm the expected CONNACK rejection. The remaining 30 tests validate deployment artifacts (Dockerfile, docker-compose, k8s manifests, Helm chart).
 
 ### Running Tests
 
@@ -433,11 +433,11 @@ go run ./examples/custom_auth
 
 GitHub Actions CI runs on every push/PR:
 
-- **Unit Tests**: Go 1.23 / 1.24 / 1.25 x Ubuntu / macOS / Windows
+- **Unit Tests**: Go 1.26 / stable x Ubuntu / macOS / Windows
 - **Plugin Tests**: Dedicated plugin manager test job
 - **Lint**: `go vet` + `gofmt` formatting check
 - **Build**: Cross-platform build verification
-- **Coverage**: 50% minimum threshold with Codecov upload
+- **Coverage**: 30% minimum threshold with Codecov upload
 
 See `.github/workflows/ci.yml` for details.
 
@@ -486,7 +486,7 @@ All critical and high-severity issues resolved. Latest service-side review compl
 | L-007 | Low | Use named timeout constants in tests |
 | L-008 | Low | Add protocol fuzz tests |
 
-See `docs/PROJECT-REVIEW-260515-133700.md` for the latest project review report.
+See `docs/PROJECT-REVIEW-260518-233900.md` for the latest project review report.
 
 ## Documentation
 
@@ -500,7 +500,7 @@ See `docs/PROJECT-REVIEW-260515-133700.md` for the latest project review report.
 | [Security](docs/SECURITY.md) | Security considerations |
 | [Testing](docs/testing.md) | Testing guide |
 | [Development](docs/development.md) | Development workflow |
-| [Review Report](docs/PROJECT-REVIEW-260515-133700.md) | Latest project review |
+| [Review Report](docs/PROJECT-REVIEW-260518-233900.md) | Latest project review |
 
 ## License
 

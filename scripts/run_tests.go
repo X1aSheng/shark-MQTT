@@ -48,7 +48,8 @@ func main() {
 	case "unit":
 		if !runTest(projectDir, logsDir, ts, "unit", "Unit Tests",
 			"./broker/...", "./protocol/...", "./store/...", "./client/...",
-			"./config/...", "./errs/...", "./pkg/...", "./plugin/...", "./api/...") {
+			"./config/...", "./errs/...", "./pkg/...", "./plugin/...", "./api/...",
+			"./tests/defects/...") {
 			os.Exit(1)
 		}
 	case "integration":
@@ -71,7 +72,8 @@ func main() {
 		ok := true
 		ok = runTest(projectDir, logsDir, ts, "unit", "Unit Tests",
 			"./broker/...", "./protocol/...", "./store/...", "./client/...",
-			"./config/...", "./errs/...", "./pkg/...", "./plugin/...", "./api/...") && ok
+			"./config/...", "./errs/...", "./pkg/...", "./plugin/...", "./api/...",
+			"./tests/defects/...") && ok
 		ok = runTest(projectDir, logsDir, ts, "integration", "Integration Tests",
 			"./tests/integration/...") && ok
 		ok = runBenchmark(projectDir, logsDir, ts) && ok

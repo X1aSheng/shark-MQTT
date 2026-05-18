@@ -1,6 +1,6 @@
 # Testing Guide
 
-Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。最新完整脚本运行为 `logs/20260517_123532_*`：406 个单元测试运行通过、13 个 Redis 测试跳过、83 个集成测试运行通过、64 个基准测试执行通过、3 个 Windows 连接 churn 基准跳过。
+Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。最新完整脚本运行为 `logs/20260518_233302_*`：406 个单元测试运行通过、13 个 Redis 测试跳过、84 个集成测试运行通过、64 个基准测试执行通过、3 个 Windows 连接 churn 基准跳过。本轮修复后，脚本 `unit` 模式也会纳入 `tests/defects/...` 缺陷回归套件。
 
 ---
 
@@ -43,9 +43,13 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 │  ├── retained_test.go        — 保留消息                   │
 │  └── edge_case_test.go       — 边界与异常                 │
 ├────────────────────────────────────────────────────────────┤
-│  Defect Regression Tests                                   │
+│  Defect Regression Tests (6 tests)                         │
 │  tests/defects/                                            │
-│  └── protocol_defects_test.go — MQTT 标准兼容回归          │
+│  ├── api_default_auth_test.go — 默认认证拒绝回归           │
+│  ├── broker_lifecycle_test.go — 服务生命周期回归          │
+│  ├── properties_defect_test.go — MQTT 5.0 属性边界         │
+│  ├── topic_filter_defect_test.go — topic filter 边界       │
+│  └── windows_benchmark_test.go — Windows benchmark 隔离    │
 ├────────────────────────────────────────────────────────────┤
 │  Unit Tests (210 top-level / 307 passed runs)              │
 │  各包内 *_test.go 文件                                     │
@@ -62,9 +66,9 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 |------|------|------|
 | 单元测试 | 210 top-level / 307 passed runs | 各包 `*_test.go` |
 | 集成测试 | 83 | `tests/integration/` |
-| 缺陷回归测试 | 2 | `tests/defects/` |
+| 缺陷回归测试 | 6 | `tests/defects/` |
 | 基准测试 | 64 executed / 3 skipped | `tests/bench/`, `store/redis/`, `plugin/` |
-| **最新脚本运行** | **406 unit passed, 83 integration passed, 64 benchmarks passed** | `logs/20260517_123532_*` |
+| **最新脚本运行** | **406 unit passed, 84 integration passed, 64 benchmarks passed** | `logs/20260518_233302_*` |
 
 ### 各包测试明细
 
@@ -454,6 +458,9 @@ make test-integration  # 集成测试
 make test-race         # race 检测
 make bench-quick       # 快速基准（1s）
 make bench             # 完整基准（5s x 3 轮）
+make bench-cpu         # CPU profile
+make bench-mem         # memory profile
+make bench-profile     # CPU + memory profile
 make test-coverage     # 覆盖率报告
 make ci                # CI 完整流水线
 ```

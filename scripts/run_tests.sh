@@ -104,7 +104,8 @@ case "$MODE" in
     --unit)
         run_test unit "Unit Tests" \
             ./broker/... ./protocol/... ./store/... ./client/... \
-            ./config/... ./errs/... ./pkg/... ./plugin/... ./api/...
+            ./config/... ./errs/... ./pkg/... ./plugin/... ./api/... \
+            ./tests/defects/...
         ;;
     --integration)
         run_test integration "Integration Tests" ./tests/integration/...
@@ -128,7 +129,8 @@ case "$MODE" in
 
         run_test unit "Unit Tests" \
             ./broker/... ./protocol/... ./store/... ./client/... \
-            ./config/... ./errs/... ./pkg/... ./plugin/... ./api/... || status=$?
+            ./config/... ./errs/... ./pkg/... ./plugin/... ./api/... \
+            ./tests/defects/... || status=$?
         run_test integration "Integration Tests" ./tests/integration/... || status=$?
         run_test benchmark "Benchmarks" \
             -bench=. -benchmem -benchtime=500ms -run=^$ \

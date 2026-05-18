@@ -38,7 +38,7 @@ goto :usage
 
 REM ============================================================
 :do_unit
-call :run_test unit "Unit Tests" ./broker/... ./protocol/... ./store/... ./client/... ./config/... ./errs/... ./pkg/... ./plugin/... ./api/...
+call :run_test unit "Unit Tests" ./broker/... ./protocol/... ./store/... ./client/... ./config/... ./errs/... ./pkg/... ./plugin/... ./api/... ./tests/defects/...
 set "STATUS=%ERRORLEVEL%"
 goto :end
 
@@ -78,7 +78,7 @@ echo [33m  shark-mqtt full test suite[0m
 echo [33m  %DATE% %TIME%[0m
 echo [33m========================================[0m
 
-call :run_test unit "Unit Tests" ./broker/... ./protocol/... ./store/... ./client/... ./config/... ./errs/... ./pkg/... ./plugin/... ./api/...
+call :run_test unit "Unit Tests" ./broker/... ./protocol/... ./store/... ./client/... ./config/... ./errs/... ./pkg/... ./plugin/... ./api/... ./tests/defects/...
 if errorlevel 1 set "STATUS=1"
 call :run_test integration "Integration Tests" ./tests/integration/...
 if errorlevel 1 set "STATUS=1"
