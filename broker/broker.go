@@ -183,6 +183,11 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 		}
 	}
 
+	if connectPkt.Flags.WillFlag && !protocol.ValidatePublishTopic(connectPkt.WillTopic) {
+		b.sendConnAckRaw(conn, c, protocol.ConnAckUnspecifiedError, false)
+		return fmt.Errorf("broker: will topic %q contains wildcards", connectPkt.WillTopic)
+	}
+
 	// Create or resume session. Check in-memory first, then persistent store.
 	isResuming := b.sessions.SessionExists(connectPkt.ClientID)
 	if !isResuming && !connectPkt.Flags.CleanSession && b.sessionStore != nil {
@@ -243,10 +248,6 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 
 	// Register will message
 	if connectPkt.Flags.WillFlag {
-		if !protocol.ValidatePublishTopic(connectPkt.WillTopic) {
-			b.sendConnAckRaw(conn, c, protocol.ConnAckUnspecifiedError, false)
-			return fmt.Errorf("broker: will topic %q contains wildcards", connectPkt.WillTopic)
-		}
 		var willDelay time.Duration
 		if connectPkt.WillProperties != nil && connectPkt.WillProperties.WillDelayInterval != nil {
 			willDelay = time.Duration(*connectPkt.WillProperties.WillDelayInterval) * time.Second
