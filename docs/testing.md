@@ -475,6 +475,7 @@ make ci                # CI 完整流水线
 |----------|----------|
 | `TestDefectTopicFiltersMayContainEmptyLevels` | MQTT topic filter 中合法的零长度 topic level |
 | `TestDefectLongMQTT5PropertyStringReturnsEncodeError` | MQTT 5.0 UTF-8 属性字符串长度上限 |
+| `TestDefectInvalidWillTopicDoesNotConsumeBrokerConnectionSlot` | 非法 Will Topic CONNECT 被拒绝后不能残留 session/connection 槽 |
 
 运行方式：
 
@@ -525,6 +526,8 @@ go run scripts/run_tests.go -mode cover
 
 ### 覆盖率阈值
 
+当前 CI 硬性门槛为总覆盖率 30%。下表是项目质量目标，不是当前 CI 硬性门槛；2026-05-20 复审实测总覆盖率为 49.2%，后续应优先补齐 `client`、`pkg/metrics` 和 Redis store 覆盖。
+
 | 模块 | 最低覆盖率 |
 |------|-----------|
 | protocol/ | 80% |
@@ -542,3 +545,4 @@ go run scripts/run_tests.go -mode cover
 - [配置指南](configuration.md)
 - [性能指南](performance.md)
 - [架构文档](shark-mqtt%20architecture.md)
+- [最新审查报告](PROJECT-REVIEW-260520-233509.md)

@@ -435,6 +435,7 @@ GitHub Actions CI runs on every push/PR:
 
 - **Unit Tests**: Go 1.26 / stable x Ubuntu / macOS / Windows
 - **Plugin Tests**: Dedicated plugin manager test job
+- **Scripted Tests**: `scripts/run_tests.go` unit and integration entrypoints
 - **Lint**: `go vet` + `gofmt` formatting check
 - **Build**: Cross-platform build verification
 - **Coverage**: 30% minimum threshold with Codecov upload
@@ -445,7 +446,7 @@ See `.github/workflows/ci.yml` for details.
 
 **Overall: Production-ready core**
 
-All critical and high-severity issues resolved. Latest service-side review completed on 2026-05-07.
+All critical and high-severity issues resolved. Latest service-side review completed on 2026-05-20.
 
 ### Completed
 
@@ -474,6 +475,7 @@ All critical and high-severity issues resolved. Latest service-side review compl
 - Configurable QoS inflight limit enforcement with MQTT 5.0 ReceiveMaximum advertising
 - Client-side QoS 2 PUBLISH duplicate detection
 - Thread-safe packet ID generation
+- Invalid Will Topic CONNECT packets are rejected before session/connection registration, so rejected clients cannot consume broker connection slots
 
 ### Remaining Work
 
@@ -482,11 +484,13 @@ All critical and high-severity issues resolved. Latest service-side review compl
 | M-002 | Medium | Implement offline message queueing |
 | M-005 | Medium | Document StaticAuth ACL behavior |
 | M-006 | Medium | TopicTree match caching |
+| M-007 | Medium | Run actual Kubernetes rollout on a larger node or managed cluster |
+| M-008 | Medium | Raise total coverage toward the documented 60% target |
 | L-005 | Low | Fix client Connect TOCTOU |
 | L-007 | Low | Use named timeout constants in tests |
 | L-008 | Low | Add protocol fuzz tests |
 
-See `docs/PROJECT-REVIEW-260518-233900.md` for the latest project review report.
+See `docs/PROJECT-REVIEW-260520-233509.md` for the latest project review report.
 
 ## Documentation
 
@@ -500,7 +504,7 @@ See `docs/PROJECT-REVIEW-260518-233900.md` for the latest project review report.
 | [Security](docs/SECURITY.md) | Security considerations |
 | [Testing](docs/testing.md) | Testing guide |
 | [Development](docs/development.md) | Development workflow |
-| [Review Report](docs/PROJECT-REVIEW-260518-233900.md) | Latest project review |
+| [Review Report](docs/PROJECT-REVIEW-260520-233509.md) | Latest project review |
 
 ## License
 
