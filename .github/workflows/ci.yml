@@ -80,7 +80,29 @@ jobs:
         run: go test -race -v ./plugin/...
 
   # ─────────────────────────────────────────────────────────────
-  # Job 3: Code Quality
+  # Job 3: Scripted Test Runner
+  # ─────────────────────────────────────────────────────────────
+  test-scripts:
+    name: Scripted Test Runner
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: Run scripted unit tests
+        run: go run scripts/run_tests.go -mode unit -timeout=300s
+
+      - name: Run scripted integration tests
+        run: go run scripts/run_tests.go -mode integration -timeout=300s
+
+  # ─────────────────────────────────────────────────────────────
+  # Job 4: Code Quality
   # ─────────────────────────────────────────────────────────────
   lint:
     name: Lint & Vet
@@ -107,7 +129,7 @@ jobs:
           fi
 
   # ─────────────────────────────────────────────────────────────
-  # Job 4: Build Verification
+  # Job 5: Build Verification
   # ─────────────────────────────────────────────────────────────
   build:
     name: Build Verification
@@ -137,7 +159,7 @@ jobs:
         run: go mod verify
 
   # ─────────────────────────────────────────────────────────────
-  # Job 5: Docker Build & Smoke Test
+  # Job 6: Docker Build & Smoke Test
   # ─────────────────────────────────────────────────────────────
   docker:
     name: Docker Build & Smoke Test
