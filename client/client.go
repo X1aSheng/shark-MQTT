@@ -381,9 +381,25 @@ func (c *MQTTClient) Disconnect(ctx context.Context) error {
 	}
 
 	c.cancel()
-	c.wg.Wait()
+	closeErr := conn.Close()
 
-	return conn.Close()
+	done := make(chan struct{})
+	go func() {
+		c.wg.Wait()
+		close(done)
+	}()
+
+	if ctx == nil {
+		<-done
+		return closeErr
+	}
+
+	select {
+	case <-done:
+		return closeErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // SetOnMessage sets the callback for incoming PUBLISH packets.

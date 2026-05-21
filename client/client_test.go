@@ -1,6 +1,9 @@
 package client
 
 import (
+	"context"
+	"net"
+	"sync"
 	"testing"
 	"time"
 )
@@ -222,4 +225,81 @@ func TestDisconnectWhenNotConnected(t *testing.T) {
 	if err != nil {
 		t.Errorf("expected no error when disconnecting while not connected, got %v", err)
 	}
+}
+
+func TestDisconnectClosesConnectionBeforeWaitingForReadLoop(t *testing.T) {
+	conn := newBlockingReadConn()
+
+	c := New()
+	c.mu.Lock()
+	c.conn = conn
+	c.connected = true
+	c.mu.Unlock()
+
+	c.wg.Add(1)
+	go c.readLoop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- c.Disconnect(ctx)
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Disconnect returned error: %v", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("Disconnect blocked while readLoop was waiting in Decode")
+	}
+
+	if got := conn.writtenBytes(); got == 0 {
+		t.Fatal("expected DISCONNECT packet bytes to be written")
+	}
+}
+
+type blockingReadConn struct {
+	mu      sync.Mutex
+	closed  chan struct{}
+	written int
+}
+
+func newBlockingReadConn() *blockingReadConn {
+	return &blockingReadConn{closed: make(chan struct{})}
+}
+
+func (c *blockingReadConn) Read(_ []byte) (int, error) {
+	<-c.closed
+	return 0, net.ErrClosed
+}
+
+func (c *blockingReadConn) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.written += len(p)
+	return len(p), nil
+}
+
+func (c *blockingReadConn) Close() error {
+	select {
+	case <-c.closed:
+	default:
+		close(c.closed)
+	}
+	return nil
+}
+
+func (c *blockingReadConn) LocalAddr() net.Addr                { return nil }
+func (c *blockingReadConn) RemoteAddr() net.Addr               { return nil }
+func (c *blockingReadConn) SetDeadline(_ time.Time) error      { return nil }
+func (c *blockingReadConn) SetReadDeadline(_ time.Time) error  { return nil }
+func (c *blockingReadConn) SetWriteDeadline(_ time.Time) error { return nil }
+
+func (c *blockingReadConn) writtenBytes() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.written
 }
