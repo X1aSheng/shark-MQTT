@@ -1,6 +1,6 @@
 # Testing Guide
 
-Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。最新完整脚本运行为 `logs/20260518_234147_*`：416 个单元测试运行通过、13 个 Redis 测试跳过、89 个集成测试运行通过、64 个基准测试执行通过、3 个 Windows 连接 churn 基准跳过。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
+Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。最新完整脚本运行为 `logs/20260521_215054_*`：419 个单元测试运行通过、13 个 Redis 测试跳过、90 个集成测试运行通过、64 个基准测试执行通过、3 个 Windows 连接 churn 基准跳过。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
 
 ---
 
@@ -30,7 +30,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 │  ├── data_delivery_bench_test.go — E2E 数据验证基准       │
 │  └── micro_bench_test.go     — 组件级微基准               │
 ├────────────────────────────────────────────────────────────┤
-│  Integration Tests (83 total, 53 MQTT + 30 deploy)         │
+│  Integration Tests (90 latest passed runs)                 │
 │  tests/integration/                                        │
 │  ├── connect_test.go         — 连接与会话                 │
 │  ├── pubsub_test.go          — 发布订阅                   │
@@ -43,7 +43,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 │  ├── retained_test.go        — 保留消息                   │
 │  └── edge_case_test.go       — 边界与异常                 │
 ├────────────────────────────────────────────────────────────┤
-│  Defect Regression Tests (6 tests)                         │
+│  Defect Regression Tests (tests/defects + package tests)   │
 │  tests/defects/                                            │
 │  ├── api_default_auth_test.go — 默认认证拒绝回归           │
 │  ├── broker_lifecycle_test.go — 服务生命周期回归          │
@@ -65,10 +65,10 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 | 类型 | 数量 | 位置 |
 |------|------|------|
 | 单元测试 | 210 top-level / 307 passed runs | 各包 `*_test.go` |
-| 集成测试 | 83 | `tests/integration/` |
-| 缺陷回归测试 | 6 | `tests/defects/` |
+| 集成测试 | 90 latest passed runs | `tests/integration/` |
+| 缺陷回归测试 | `tests/defects` + package-level regressions | `tests/defects/`, `broker/`, `client/` |
 | 基准测试 | 64 executed / 3 skipped | `tests/bench/`, `store/redis/`, `plugin/` |
-| **最新脚本运行** | **416 unit passed, 89 integration passed, 64 benchmarks passed** | `logs/20260518_234147_*` |
+| **最新脚本运行** | **419 unit passed, 90 integration passed, 64 benchmarks passed** | `logs/20260521_215054_*` |
 
 ### 各包测试明细
 
@@ -79,7 +79,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 | store/redis/ | 13 | 9 | Redis 存储：消息、保留、会话 |
 | store/badger/ | 9 | 0 | BadgerDB 持久化存储 |
 | protocol/ | 12 | 0 | MQTT 3.1.1 & 5.0 编解码与协议 flags 校验（15种报文） |
-| client/ | 8 | 0 | MQTT 客户端连接、发布、订阅 |
+| client/ | 9 | 0 | MQTT 客户端连接、发布、订阅、断开清理 |
 | plugin/ | 14 | 3 | 插件系统：注册、分发 |
 | config/ | 7 | 0 | 配置解析与校验 |
 | pkg/logger/ | 7 | 0 | slog 日志适配 |
@@ -87,7 +87,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 | pkg/metrics/ | 3 | 0 | Prometheus 指标 |
 | api/ | 4 | 0 | 公共 API 与健康端点 |
 | errs/ | 4 | 0 | 错误定义 |
-| tests/integration/ | 83 | 0 | 端到端集成测试（含 30 项部署验证） |
+| tests/integration/ | 90 latest passed runs | 0 | 端到端集成测试（含部署验证） |
 | tests/defects/ | 2 | 0 | 审查发现缺陷的最小复现和回归测试 |
 | tests/bench/ | 0 | 57 | 全栈 TCP、E2E 数据验证、微基准 |
 
@@ -476,6 +476,8 @@ make ci                # CI 完整流水线
 | `TestDefectTopicFiltersMayContainEmptyLevels` | MQTT topic filter 中合法的零长度 topic level |
 | `TestDefectLongMQTT5PropertyStringReturnsEncodeError` | MQTT 5.0 UTF-8 属性字符串长度上限 |
 | `TestDefectInvalidWillTopicDoesNotConsumeBrokerConnectionSlot` | 非法 Will Topic CONNECT 被拒绝后不能残留 session/connection 槽 |
+| `client.TestDisconnectClosesConnectionBeforeWaitingForReadLoop` | 客户端主动断开时必须先唤醒阻塞读循环，避免 `Disconnect` 卡住 |
+| `broker.TestQoSEngine_Retry_MaxRetriesExceededReportsError` | QoS inflight 消息达到最大重试次数被丢弃时必须发出错误回调 |
 
 运行方式：
 
@@ -545,4 +547,4 @@ go run scripts/run_tests.go -mode cover
 - [配置指南](configuration.md)
 - [性能指南](performance.md)
 - [架构文档](shark-mqtt%20architecture.md)
-- [最新审查报告](PROJECT-REVIEW-260520-233509.md)
+- [最新审查报告](PROJECT-REVIEW-260521-215317.md)

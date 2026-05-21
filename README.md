@@ -79,7 +79,7 @@ A high-performance MQTT Broker written in Go, supporting both **MQTT 3.1.1** and
 | `plugin/` | Plugin system with hook-based architecture |
 | `client/` | MQTT client implementation |
 | `errs/` | Centralized error definitions |
-| `tests/integration/` | 83 end-to-end integration tests (53 MQTT + 30 deploy verification) |
+| `tests/integration/` | 90 end-to-end integration tests including MQTT workflows and deploy verification |
 | `tests/bench/` | 64 executed benchmarks on Windows (broker + E2E data verify + micro + store; 3 churn benchmarks skipped) |
 | `examples/` | Runnable example programs (standalone, TLS, custom auth) |
 | `deploy/` | Docker, docker-compose, k8s, Helm chart deployment assets |
@@ -321,13 +321,13 @@ Full results: `make bench` or see `docs/performance.md`.
 
 | Type | Count | Status |
 |------|-------|--------|
-| Unit Tests | 416 passed runs / 13 Redis skips | All pass |
-| Integration Tests | 89 passed runs | All pass |
+| Unit Tests | 419 passed runs / 13 Redis skips | All pass |
+| Integration Tests | 90 passed runs | All pass |
 | Benchmarks | 64 executed / 3 Windows skips | All pass |
-| **Latest scripted run** | `logs/20260518_234147_*` | **0 failures** |
+| **Latest scripted run** | `logs/20260521_215054_*` | **0 failures** |
 
 > 13 Redis tests skipped when `MQTT_REDIS_ADDR` is not set.
-> Latest full run: `logs/20260518_234147_*`; unit log reports 416 passed and 13 Redis tests skipped when Redis is not configured. Race detector passed after adding `D:\Programs\w64devkit\bin` to `PATH`.
+> Latest full run: `logs/20260521_215054_*`; unit log reports 419 passed and 13 Redis tests skipped when Redis is not configured. Race detector passed after adding `D:\Programs\w64devkit\bin` to `PATH`.
 
 ### Integration Test Coverage
 
