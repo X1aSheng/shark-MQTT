@@ -24,9 +24,10 @@ var (
 	ErrNotAuthorized = errors.New("not authorized")
 
 	// QoS 错误
-	ErrInflightFull      = errors.New("inflight queue full")
-	ErrDuplicatePacketID = errors.New("duplicate packet id")
-	ErrInvalidQoS        = errors.New("invalid qos level")
+	ErrInflightFull       = errors.New("inflight queue full")
+	ErrDuplicatePacketID  = errors.New("duplicate packet id")
+	ErrInvalidQoS         = errors.New("invalid qos level")
+	ErrMaxRetriesExceeded = errors.New("max retries exceeded")
 
 	// 存储错误
 	ErrStoreUnavailable = errors.New("store unavailable")

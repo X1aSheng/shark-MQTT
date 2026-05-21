@@ -333,7 +333,13 @@ func (q *QoSEngine) doRetry() {
 		clientID string
 		msg      InflightMessage
 	}
+	type retryError struct {
+		clientID string
+		packetID uint16
+		err      error
+	}
 	var toRetry []retryMsg
+	var toReport []retryError
 
 	q.mu.Lock()
 	for clientID, clientInflight := range q.inflight {
@@ -343,6 +349,11 @@ func (q *QoSEngine) doRetry() {
 			}
 			if msg.Retries >= msg.MaxRetries {
 				delete(clientInflight, packetID)
+				toReport = append(toReport, retryError{
+					clientID: clientID,
+					packetID: packetID,
+					err:      errs.ErrMaxRetriesExceeded,
+				})
 				continue
 			}
 
@@ -357,6 +368,12 @@ func (q *QoSEngine) doRetry() {
 	republish := q.republish
 	onError := q.onError
 	q.mu.Unlock()
+
+	for _, item := range toReport {
+		if onError != nil {
+			onError(item.clientID, item.packetID, item.err)
+		}
+	}
 
 	for _, item := range toRetry {
 		if republish != nil {

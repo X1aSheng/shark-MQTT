@@ -1,9 +1,12 @@
 package broker
 
 import (
+	"errors"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/X1aSheng/shark-mqtt/errs"
 )
 
 // --- TrackQoS1 tests ---
@@ -413,6 +416,41 @@ func TestQoSEngine_Retry_MaxRetriesExceeded(t *testing.T) {
 	q.mu.RUnlock()
 	if count != 0 {
 		t.Errorf("expected 0 inflight after max retries, got %d", count)
+	}
+}
+
+func TestQoSEngine_Retry_MaxRetriesExceededReportsError(t *testing.T) {
+	q := NewQoSEngine(
+		WithRetryInterval(0),
+		WithMaxRetries(0),
+	)
+
+	var gotClientID string
+	var gotPacketID uint16
+	var gotErr error
+	q.SetErrorCallback(func(clientID string, packetID uint16, err error) {
+		gotClientID = clientID
+		gotPacketID = packetID
+		gotErr = err
+	})
+
+	if err := q.TrackQoS1("client1", 7, "home/temp", []byte("data"), false); err != nil {
+		t.Fatalf("TrackQoS1 failed: %v", err)
+	}
+
+	q.doRetry()
+
+	if gotClientID != "client1" {
+		t.Fatalf("expected error callback for client1, got %q", gotClientID)
+	}
+	if gotPacketID != 7 {
+		t.Fatalf("expected packet ID 7, got %d", gotPacketID)
+	}
+	if !errors.Is(gotErr, errs.ErrMaxRetriesExceeded) {
+		t.Fatalf("expected ErrMaxRetriesExceeded, got %v", gotErr)
+	}
+	if count := q.InflightCount("client1"); count != 0 {
+		t.Fatalf("expected inflight message to be removed, got %d", count)
 	}
 }
 
