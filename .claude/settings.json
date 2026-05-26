@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(*)",
+      "Read(//tmp/**)",
+      "Read(//g/shark-socket/.github/**)",
+      "WebFetch(domain:github.com)",
+      "WebSearch"
+    ]
+  }
+}
