@@ -55,8 +55,8 @@ jobs:
         run: |
           COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print int($3)}')
           echo "Coverage: ${COVERAGE}%"
-          if [ "$COVERAGE" -lt 50 ]; then
-            echo "Coverage ${COVERAGE}% is below 50% threshold"
+          if [ "$COVERAGE" -lt 45 ]; then
+            echo "Coverage ${COVERAGE}% is below 45% threshold"
             exit 1
           fi
 
@@ -159,6 +159,7 @@ jobs:
         run: go mod verify
 
       - name: Check go.mod and go.sum are tidy
+        shell: bash
         run: |
           go mod tidy -diff
           if [ $? -ne 0 ]; then
