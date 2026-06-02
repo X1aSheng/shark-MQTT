@@ -184,6 +184,7 @@ func TestPropertiesValidateMQTT5ScalarConstraints(t *testing.T) {
 	}{
 		{name: "payload format", props: &Properties{PayloadFormat: &invalidByte}},
 		{name: "request problem info", props: &Properties{RequestProblemInfo: &invalidByte}},
+		{name: "request response info", props: &Properties{RequestResponseInfo: &invalidByte}},
 		{name: "receive maximum", props: &Properties{ReceiveMaximum: &zeroUint16}},
 		{name: "topic alias", props: &Properties{TopicAlias: &zeroUint16}},
 		{name: "maximum qos", props: &Properties{MaximumQoS: &invalidByte}},
@@ -211,6 +212,64 @@ func TestPropertiesValidateMQTT5ScalarConstraints(t *testing.T) {
 	_, err = codec.decodeProperties(bytes.NewReader([]byte{0xFF, 0xFF, 0xFF, 0xFF, 0x7F}))
 	if err == nil {
 		t.Fatal("expected overlong property length varint to fail")
+	}
+}
+
+func TestMQTT5RequestResponsePropertiesRoundTrip(t *testing.T) {
+	codec := mqtt5Codec()
+
+	requestInfo := byte(1)
+	responseInfo := "response/aBc123"
+
+	// Test RequestResponseInfo in CONNECT properties
+	connPkt := &ConnectPacket{
+		FixedHeader:     FixedHeader{PacketType: PacketTypeConnect},
+		ProtocolName:    ProtocolNameMQTT,
+		ProtocolVersion: Version50,
+		Flags:           ConnectFlags{CleanSession: true},
+		KeepAlive:       60,
+		ClientID:        "test-req-resp",
+		Properties: &Properties{
+			RequestResponseInfo: &requestInfo,
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := codec.Encode(&buf, connPkt); err != nil {
+		t.Fatalf("Encode CONNECT with RequestResponseInfo: %v", err)
+	}
+
+	decoded, err := codec.Decode(&buf)
+	if err != nil {
+		t.Fatalf("Decode CONNECT: %v", err)
+	}
+	cp := decoded.(*ConnectPacket)
+	if cp.Properties == nil || cp.Properties.RequestResponseInfo == nil || *cp.Properties.RequestResponseInfo != 1 {
+		t.Fatalf("RequestResponseInfo not decoded correctly: %+v", cp.Properties)
+	}
+
+	// Test ResponseInfo in CONNACK encoding
+	connAckPkt := &ConnAckPacket{
+		FixedHeader:    FixedHeader{PacketType: PacketTypeConnAck},
+		ReasonCode:     ConnAckAccepted,
+		SessionPresent: false,
+		Properties: &Properties{
+			ResponseInfo: responseInfo,
+		},
+	}
+
+	buf.Reset()
+	if err := codec.Encode(&buf, connAckPkt); err != nil {
+		t.Fatalf("Encode CONNACK with ResponseInfo: %v", err)
+	}
+
+	decoded2, err := codec.Decode(&buf)
+	if err != nil {
+		t.Fatalf("Decode CONNACK: %v", err)
+	}
+	ca := decoded2.(*ConnAckPacket)
+	if ca.Properties == nil || ca.Properties.ResponseInfo != responseInfo {
+		t.Fatalf("ResponseInfo not decoded correctly: %+v", ca.Properties)
 	}
 }
 

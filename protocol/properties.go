@@ -22,6 +22,8 @@ type Properties struct {
 	AuthenticationData     []byte
 	RequestProblemInfo     *byte
 	WillDelayInterval      *uint32
+	RequestResponseInfo    *byte   // MQTT 5.0: 0=don't send ResponseInfo, 1=request ResponseInfo
+	ResponseInfo           string  // MQTT 5.0: used as basis for creating response topic
 	ReceiveMaximum         *uint16
 	TopicAliasMaximum      *uint16
 	TopicAlias             *uint16
@@ -54,9 +56,11 @@ const (
 	PropServerKeepAlive        byte = 0x13
 	PropAuthMethod             byte = 0x15
 	PropAuthData               byte = 0x16
-	PropRequestProblemInfo     byte = 0x17
-	PropWillDelayInterval      byte = 0x18
-	PropReceiveMaximum         byte = 0x21
+	PropRequestProblemInfo      byte = 0x17
+	PropWillDelayInterval       byte = 0x18
+	PropRequestResponseInfo     byte = 0x19 // MQTT 5.0 §3.1.2.11.6
+	PropResponseInfo            byte = 0x1A // MQTT 5.0 §3.2.2.3.3
+	PropReceiveMaximum          byte = 0x21
 	PropTopicAliasMax          byte = 0x22
 	PropTopicAlias             byte = 0x23
 	PropMaximumQoS             byte = 0x24
@@ -95,9 +99,11 @@ var propTypeMap = map[byte]propType{
 	PropServerKeepAlive:        propTypeUInt16,
 	PropAuthMethod:             propTypeUTF8String,
 	PropAuthData:               propTypeBinaryData,
-	PropRequestProblemInfo:     propTypeByte,
-	PropWillDelayInterval:      propTypeUInt32,
-	PropReceiveMaximum:         propTypeUInt16,
+	PropRequestProblemInfo:      propTypeByte,
+	PropWillDelayInterval:       propTypeUInt32,
+	PropRequestResponseInfo:     propTypeByte,
+	PropResponseInfo:            propTypeUTF8String,
+	PropReceiveMaximum:          propTypeUInt16,
 	PropTopicAliasMax:          propTypeUInt16,
 	PropTopicAlias:             propTypeUInt16,
 	PropMaximumQoS:             propTypeByte,
@@ -219,6 +225,21 @@ func (c *Codec) decodeProperties(r io.Reader) (*Properties, error) {
 				return nil, err
 			}
 			props.WillDelayInterval = &v
+		case PropRequestResponseInfo:
+			v, err := reader.ReadByte()
+			if err != nil {
+				return nil, err
+			}
+			if v > 1 {
+				return nil, ErrMalformedPacket
+			}
+			props.RequestResponseInfo = &v
+		case PropResponseInfo:
+			v, err := readStringFromReader(reader)
+			if err != nil {
+				return nil, err
+			}
+			props.ResponseInfo = v
 		case PropReceiveMaximum:
 			v, err := readUint16FromReader(reader)
 			if err != nil {
@@ -467,6 +488,22 @@ func (c *Codec) encodeProperties(w io.Writer, props *Properties) error {
 			return err
 		}
 	}
+	if props.RequestResponseInfo != nil {
+		if err := buf.WriteByte(PropRequestResponseInfo); err != nil {
+			return err
+		}
+		if err := buf.WriteByte(*props.RequestResponseInfo); err != nil {
+			return err
+		}
+	}
+	if props.ResponseInfo != "" {
+		if err := buf.WriteByte(PropResponseInfo); err != nil {
+			return err
+		}
+		if err := writeString(&buf, props.ResponseInfo); err != nil {
+			return err
+		}
+	}
 	if props.ReceiveMaximum != nil {
 		if err := buf.WriteByte(PropReceiveMaximum); err != nil {
 			return err
@@ -581,6 +618,9 @@ func validateProperties(props *Properties) error {
 		return ErrMalformedPacket
 	}
 	if props.RequestProblemInfo != nil && *props.RequestProblemInfo > 1 {
+		return ErrMalformedPacket
+	}
+	if props.RequestResponseInfo != nil && *props.RequestResponseInfo > 1 {
 		return ErrMalformedPacket
 	}
 	if props.ReceiveMaximum != nil && *props.ReceiveMaximum == 0 {
