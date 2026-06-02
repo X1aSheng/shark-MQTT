@@ -55,8 +55,8 @@ jobs:
         run: |
           COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print int($3)}')
           echo "Coverage: ${COVERAGE}%"
-          if [ "$COVERAGE" -lt 30 ]; then
-            echo "Coverage ${COVERAGE}% is below 30% threshold"
+          if [ "$COVERAGE" -lt 50 ]; then
+            echo "Coverage ${COVERAGE}% is below 50% threshold"
             exit 1
           fi
 
@@ -157,6 +157,14 @@ jobs:
 
       - name: Verify module
         run: go mod verify
+
+      - name: Check go.mod and go.sum are tidy
+        run: |
+          go mod tidy -diff
+          if [ $? -ne 0 ]; then
+            echo "go.mod or go.sum is not tidy. Run 'go mod tidy' locally."
+            exit 1
+          fi
 
   # ─────────────────────────────────────────────────────────────
   # Job 6: Docker Build & Smoke Test
