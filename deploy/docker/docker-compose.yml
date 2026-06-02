@@ -5,6 +5,8 @@ services:
       dockerfile: deploy/docker/Dockerfile
     image: shark-mqtt:latest
     container_name: shark-mqtt
+    # SECURITY: -allow-all disables authentication — DEVELOPMENT ONLY.
+    # For production, remove this flag and configure an authenticator.
     command: ["-addr=:18983", "-allow-all"]
     ports:
       - "18983:18983"
