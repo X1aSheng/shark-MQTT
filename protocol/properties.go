@@ -22,8 +22,8 @@ type Properties struct {
 	AuthenticationData     []byte
 	RequestProblemInfo     *byte
 	WillDelayInterval      *uint32
-	RequestResponseInfo    *byte   // MQTT 5.0: 0=don't send ResponseInfo, 1=request ResponseInfo
-	ResponseInfo           string  // MQTT 5.0: used as basis for creating response topic
+	RequestResponseInfo    *byte  // MQTT 5.0: 0=don't send ResponseInfo, 1=request ResponseInfo
+	ResponseInfo           string // MQTT 5.0: used as basis for creating response topic
 	ReceiveMaximum         *uint16
 	TopicAliasMaximum      *uint16
 	TopicAlias             *uint16
@@ -56,11 +56,11 @@ const (
 	PropServerKeepAlive        byte = 0x13
 	PropAuthMethod             byte = 0x15
 	PropAuthData               byte = 0x16
-	PropRequestProblemInfo      byte = 0x17
-	PropWillDelayInterval       byte = 0x18
-	PropRequestResponseInfo     byte = 0x19 // MQTT 5.0 §3.1.2.11.6
-	PropResponseInfo            byte = 0x1A // MQTT 5.0 §3.2.2.3.3
-	PropReceiveMaximum          byte = 0x21
+	PropRequestProblemInfo     byte = 0x17
+	PropWillDelayInterval      byte = 0x18
+	PropRequestResponseInfo    byte = 0x19 // MQTT 5.0 §3.1.2.11.6
+	PropResponseInfo           byte = 0x1A // MQTT 5.0 §3.2.2.3.3
+	PropReceiveMaximum         byte = 0x21
 	PropTopicAliasMax          byte = 0x22
 	PropTopicAlias             byte = 0x23
 	PropMaximumQoS             byte = 0x24
@@ -99,11 +99,11 @@ var propTypeMap = map[byte]propType{
 	PropServerKeepAlive:        propTypeUInt16,
 	PropAuthMethod:             propTypeUTF8String,
 	PropAuthData:               propTypeBinaryData,
-	PropRequestProblemInfo:      propTypeByte,
-	PropWillDelayInterval:       propTypeUInt32,
-	PropRequestResponseInfo:     propTypeByte,
-	PropResponseInfo:            propTypeUTF8String,
-	PropReceiveMaximum:          propTypeUInt16,
+	PropRequestProblemInfo:     propTypeByte,
+	PropWillDelayInterval:      propTypeUInt32,
+	PropRequestResponseInfo:    propTypeByte,
+	PropResponseInfo:           propTypeUTF8String,
+	PropReceiveMaximum:         propTypeUInt16,
 	PropTopicAliasMax:          propTypeUInt16,
 	PropTopicAlias:             propTypeUInt16,
 	PropMaximumQoS:             propTypeByte,
