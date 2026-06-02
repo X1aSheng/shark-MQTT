@@ -3,6 +3,7 @@ package broker
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -30,6 +31,18 @@ type Session struct {
 	// ExpiryInterval is the session expiry interval in seconds (MQTT 5.0 §3.1.2.11.2).
 	// Server caps this at its configured max. 0 = session expires immediately on disconnect.
 	ExpiryInterval uint32
+
+	// AssignedClientID is set when the server generates a client ID for a client
+	// that connected with an empty ClientID (MQTT 5.0 §3.1.3.6).
+	AssignedClientID string
+
+	// ServerKeepAlive is set when the server enforces a shorter keep-alive than
+	// the client requested (MQTT 5.0 §3.1.2.11.4).
+	ServerKeepAlive *uint16
+
+	// topicAliases stores the client→server topic alias mappings for this session
+	// (MQTT 5.0 §3.3.2.3.4). Key is the alias value, value is the resolved topic.
+	topicAliases map[uint16]string
 
 	// State management
 	state       State
@@ -137,6 +150,7 @@ func (m *Manager) CreateSession(clientID string, connectPkt *protocol.ConnectPac
 		Inflight:      make(map[uint16]*InflightMsg),
 		packetIDSeq:   1,
 		ReceiveMax:    65535,
+		topicAliases:  make(map[uint16]string),
 		state:         StateConnected,
 	}
 
@@ -423,6 +437,7 @@ func (m *Manager) Restore(ctx context.Context, clientID string) (*Session, error
 		Inflight:       make(map[uint16]*InflightMsg),
 		packetIDSeq:    1,
 		ReceiveMax:     65535,
+		topicAliases:   make(map[uint16]string),
 	}
 
 	for _, sub := range data.Subscriptions {
@@ -510,6 +525,27 @@ func (s *Session) TrackReceived(msgSize int) {
 	defer s.mu.Unlock()
 	s.stats.MessagesReceived++
 	s.stats.BytesReceived += uint64(msgSize)
+}
+
+// RegisterTopicAlias registers a new topic alias mapping for this session.
+// Returns an error if the alias value exceeds the negotiated maximum.
+func (s *Session) RegisterTopicAlias(alias uint16, topic string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.TopicAliasMax == 0 || alias > s.TopicAliasMax {
+		return fmt.Errorf("topic alias %d exceeds negotiated max %d", alias, s.TopicAliasMax)
+	}
+	s.topicAliases[alias] = topic
+	return nil
+}
+
+// ResolveTopicAlias resolves a topic alias to the mapped topic name.
+// Returns false if the alias is not registered.
+func (s *Session) ResolveTopicAlias(alias uint16) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	topic, ok := s.topicAliases[alias]
+	return topic, ok
 }
 
 // TrackSent increments the sent message and byte counters.

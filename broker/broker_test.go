@@ -425,3 +425,126 @@ func TestBroker_MaxConnections(t *testing.T) {
 		t.Error("expected error when max connections exceeded")
 	}
 }
+
+// ─── MQTT 5.0 Topic Alias ────────────────────────────────
+
+func TestSessionTopicAliasRegisterResolve(t *testing.T) {
+	mgr := NewManager(nil)
+	connectPkt := &protocol.ConnectPacket{
+		ProtocolName:    protocol.ProtocolNameMQTT,
+		ProtocolVersion: protocol.Version50,
+		Flags:           protocol.ConnectFlags{CleanSession: true},
+		KeepAlive:       60,
+		ClientID:        "alias-client",
+	}
+	sess := mgr.CreateSession("alias-client", connectPkt, false)
+	sess.TopicAliasMax = 10
+
+	// Register alias
+	err := sess.RegisterTopicAlias(1, "sensors/temperature/room1")
+	if err != nil {
+		t.Fatalf("RegisterTopicAlias: %v", err)
+	}
+
+	// Resolve alias
+	resolved, ok := sess.ResolveTopicAlias(1)
+	if !ok {
+		t.Fatal("expected alias 1 to be registered")
+	}
+	if resolved != "sensors/temperature/room1" {
+		t.Errorf("resolved topic = %q, want sensors/temperature/room1", resolved)
+	}
+
+	// Resolve unknown alias
+	_, ok = sess.ResolveTopicAlias(999)
+	if ok {
+		t.Error("expected unknown alias to return false")
+	}
+
+	// Register alias exceeding max
+	err = sess.RegisterTopicAlias(11, "test")
+	if err == nil {
+		t.Error("expected error for alias exceeding TopicAliasMax")
+	}
+}
+
+func TestSessionTopicAliasMaxZero(t *testing.T) {
+	mgr := NewManager(nil)
+	connectPkt := &protocol.ConnectPacket{
+		ProtocolName:    protocol.ProtocolNameMQTT,
+		ProtocolVersion: protocol.Version50,
+		Flags:           protocol.ConnectFlags{CleanSession: true},
+		KeepAlive:       60,
+		ClientID:        "noalias",
+	}
+	sess := mgr.CreateSession("noalias", connectPkt, false)
+	sess.TopicAliasMax = 0
+
+	err := sess.RegisterTopicAlias(1, "test")
+	if err == nil {
+		t.Error("expected error when TopicAliasMax is 0")
+	}
+}
+
+// ─── MQTT 5.0 Receive Maximum ────────────────────────────
+
+func TestReceiveMaxSessionDefault(t *testing.T) {
+	// Session created without explicit ReceiveMaximum should default to 65535.
+	mgr := NewManager(nil)
+	connectPkt := &protocol.ConnectPacket{
+		ProtocolName:    protocol.ProtocolNameMQTT,
+		ProtocolVersion: protocol.Version50,
+		Flags:           protocol.ConnectFlags{CleanSession: true},
+		KeepAlive:       60,
+		ClientID:        "rm-default",
+	}
+	sess := mgr.CreateSession("rm-default", connectPkt, false)
+	if sess.ReceiveMax != 65535 {
+		t.Errorf("default ReceiveMax = %d, want 65535", sess.ReceiveMax)
+	}
+}
+
+func TestAssignedClientID(t *testing.T) {
+	// Session's AssignedClientID field is writable and readable.
+	mgr := NewManager(nil)
+	connectPkt := &protocol.ConnectPacket{
+		ProtocolName:    protocol.ProtocolNameMQTT,
+		ProtocolVersion: protocol.Version50,
+		Flags:           protocol.ConnectFlags{CleanSession: true},
+		KeepAlive:       60,
+		ClientID:        "orig",
+	}
+	sess := mgr.CreateSession("orig", connectPkt, false)
+
+	if sess.AssignedClientID != "" {
+		t.Errorf("AssignedClientID should be empty by default, got %q", sess.AssignedClientID)
+	}
+
+	sess.AssignedClientID = "shark-abc123"
+	if sess.AssignedClientID != "shark-abc123" {
+		t.Errorf("AssignedClientID = %q", sess.AssignedClientID)
+	}
+}
+
+func TestServerKeepAlive(t *testing.T) {
+	// Session's ServerKeepAlive field is writable and readable.
+	mgr := NewManager(nil)
+	connectPkt := &protocol.ConnectPacket{
+		ProtocolName:    protocol.ProtocolNameMQTT,
+		ProtocolVersion: protocol.Version50,
+		Flags:           protocol.ConnectFlags{CleanSession: true},
+		KeepAlive:       120,
+		ClientID:        "ka-client",
+	}
+	sess := mgr.CreateSession("ka-client", connectPkt, false)
+
+	if sess.ServerKeepAlive != nil {
+		t.Error("ServerKeepAlive should be nil by default")
+	}
+
+	ka := uint16(60)
+	sess.ServerKeepAlive = &ka
+	if sess.ServerKeepAlive == nil || *sess.ServerKeepAlive != 60 {
+		t.Error("ServerKeepAlive not set correctly")
+	}
+}

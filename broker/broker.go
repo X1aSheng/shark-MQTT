@@ -188,6 +188,14 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 		return fmt.Errorf("broker: will topic %q contains wildcards", connectPkt.WillTopic)
 	}
 
+	// Allocate assigned client ID if empty (MQTT 5.0 §3.1.3.6).
+	// Must happen before session creation so the session uses the assigned ID.
+	var assignedClientID string
+	if len(connectPkt.ClientID) == 0 {
+		assignedClientID = fmt.Sprintf("shark-%x", time.Now().UnixNano())
+		connectPkt.ClientID = assignedClientID
+	}
+
 	// Create or resume session. Check in-memory first, then persistent store.
 	isResuming := b.sessions.SessionExists(connectPkt.ClientID)
 	if !isResuming && !connectPkt.Flags.CleanSession && b.sessionStore != nil {
@@ -213,6 +221,10 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 	sess := b.sessions.CreateSession(connectPkt.ClientID, connectPkt, isResuming)
 	clientID := connectPkt.ClientID
 
+	if assignedClientID != "" {
+		sess.AssignedClientID = assignedClientID
+	}
+
 	// Set session expiry interval (MQTT 5.0 §3.1.2.11.2).
 	// Use the smaller of client-requested and server-configured values.
 	if connectPkt.Flags.CleanSession {
@@ -228,6 +240,43 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 		} else {
 			sess.ExpiryInterval = serverMax
 		}
+	}
+
+	// Negotiate Receive Maximum (MQTT 5.0 §3.1.2.11.6).
+	// Use the smaller of client-requested and server-configured values.
+	serverReceiveMax := uint16(b.opts.maxInflight)
+	if serverReceiveMax == 0 {
+		serverReceiveMax = 65535
+	}
+	clientReceiveMax := uint16(65535)
+	if connectPkt.Properties != nil && connectPkt.Properties.ReceiveMaximum != nil {
+		clientReceiveMax = *connectPkt.Properties.ReceiveMaximum
+	}
+	if clientReceiveMax < serverReceiveMax {
+		sess.ReceiveMax = clientReceiveMax
+	} else {
+		sess.ReceiveMax = serverReceiveMax
+	}
+
+	// Negotiate Topic Alias Maximum (MQTT 5.0 §3.1.2.11.7).
+	// Server supports up to 64 topic aliases per connection.
+	const serverTopicAliasMax uint16 = 64
+	clientAliasMax := uint16(0)
+	if connectPkt.Properties != nil && connectPkt.Properties.TopicAliasMaximum != nil {
+		clientAliasMax = *connectPkt.Properties.TopicAliasMaximum
+	}
+	if clientAliasMax > 0 {
+		sess.TopicAliasMax = min(clientAliasMax, serverTopicAliasMax)
+	} else {
+		sess.TopicAliasMax = 0
+	}
+
+	// Negotiate Server Keep Alive (MQTT 5.0 §3.1.2.11.4).
+	// If server-configured keepalive is shorter, override client's.
+	if b.opts.keepAlive > 0 && b.opts.keepAlive < connectPkt.KeepAlive {
+		ka := b.opts.keepAlive
+		sess.ServerKeepAlive = &ka
+		sess.KeepAlive = ka
 	}
 
 	// Register client connection — kick previous connection if one exists.
@@ -498,6 +547,46 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 	defer func() {
 		b.metrics.ObserveMessageLatency(time.Since(start).Seconds(), pkt.FixedHeader.QoS)
 	}()
+
+	// Resolve Topic Alias (MQTT 5.0 §3.3.2.3.4).
+	// If TopicAlias is set and TopicName is empty, resolve from alias map.
+	// If both are set, register/replace the alias mapping.
+	if pkt.Properties != nil && pkt.Properties.TopicAlias != nil {
+		alias := *pkt.Properties.TopicAlias
+		if alias == 0 {
+			// Alias 0 is reserved (MQTT 5.0 §3.3.2.3.4).
+			b.writePacket(clientID, &protocol.PubAckPacket{
+				FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePubAck},
+				PacketID:    pkt.PacketID,
+				ReasonCode:  protocol.ReasonCodeTopicAliasInvalid,
+			})
+			b.metrics.IncMessagesDropped("invalid_topic_alias")
+			return
+		}
+		if pkt.Topic == "" {
+			// Resolve alias to topic.
+			resolved, ok := sess.ResolveTopicAlias(alias)
+			if !ok {
+				b.metrics.IncMessagesDropped("unknown_topic_alias")
+				return
+			}
+			pkt.Topic = resolved
+		} else {
+			// Register alias mapping.
+			if err := sess.RegisterTopicAlias(alias, pkt.Topic); err != nil {
+				b.logger.Debug("failed to register topic alias", "clientID", clientID, "alias", alias, "error", err)
+			}
+		}
+	}
+
+	// Check Message Expiry Interval (MQTT 5.0 §3.3.2.3.2).
+	// Drop messages that have already expired.
+	if pkt.Properties != nil && pkt.Properties.MessageExpiryInterval != nil {
+		if *pkt.Properties.MessageExpiryInterval == 0 {
+			b.metrics.IncMessagesDropped("message_expired")
+			return
+		}
+	}
 
 	// Reject wildcard topics per MQTT spec §3.3.2
 	if !protocol.ValidatePublishTopic(pkt.Topic) {
@@ -861,29 +950,48 @@ func (b *Broker) sendConnAck(clientID string, reasonCode byte, sessionPresent bo
 
 // buildConnAckProperties builds MQTT 5.0 CONNACK capability properties.
 func (b *Broker) buildConnAckProperties(sess *Session) *protocol.Properties {
-	retainAvailable := byte(0)
+	xretainAvailable := byte(0)
 	if b.retainedStore != nil {
-		retainAvailable = 1
+		xretainAvailable = 1
 	}
 	wildcardAvailable := byte(1)
 	subIDAvailable := byte(0)
 	sharedSubAvailable := byte(0)
 
-	receiveMax := uint16(b.opts.maxInflight)
+	receiveMax := sess.ReceiveMax
 	if receiveMax == 0 {
 		receiveMax = 65535
 	}
 	maxPktSize := uint32(b.opts.maxPacketSize)
+	requestResponseInfo := byte(0) // don't send ResponseInfo by default
 
 	props := &protocol.Properties{
 		SessionExpiryInterval: &sess.ExpiryInterval,
 		ReceiveMaximum:        &receiveMax,
-		RetainAvailable:       &retainAvailable,
+		RetainAvailable:       &xretainAvailable,
 		MaximumPacketSize:     &maxPktSize,
 		WildcardSubAvailable:  &wildcardAvailable,
 		SubIDAvailable:        &subIDAvailable,
 		SharedSubAvailable:    &sharedSubAvailable,
+		RequestResponseInfo:   &requestResponseInfo,
 	}
+
+	// Advertise Topic Alias Maximum if the session negotiated a non-zero value.
+	if sess.TopicAliasMax > 0 {
+		tam := sess.TopicAliasMax
+		props.TopicAliasMaximum = &tam
+	}
+
+	// Server Keep Alive: if server enforces a shorter keep-alive than client requests.
+	if sess.ServerKeepAlive != nil {
+		props.ServerKeepAlive = sess.ServerKeepAlive
+	}
+
+	// Assigned Client ID: if server generated the client ID.
+	if sess.AssignedClientID != "" {
+		props.AssignedClientID = sess.AssignedClientID
+	}
+
 	return props
 }
 

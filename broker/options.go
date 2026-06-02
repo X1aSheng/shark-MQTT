@@ -29,6 +29,7 @@ type brokerOptions struct {
 	maxPacketSize          int
 	sessionExpiry          time.Duration
 	sessionCleanupInterval time.Duration
+	keepAlive              uint16
 }
 
 func defaultBrokerOptions() brokerOptions {
@@ -138,5 +139,14 @@ func WithSessionExpiry(d time.Duration) Option {
 func WithSessionCleanupInterval(d time.Duration) Option {
 	return func(o *brokerOptions) {
 		o.sessionCleanupInterval = d
+	}
+}
+
+// WithBrokerKeepAlive sets the server-enforced keep-alive interval.
+// When set and shorter than the client's requested value, the server
+// will override the client's keep-alive via MQTT 5.0 ServerKeepAlive property.
+func WithBrokerKeepAlive(seconds uint16) Option {
+	return func(o *brokerOptions) {
+		o.keepAlive = seconds
 	}
 }
