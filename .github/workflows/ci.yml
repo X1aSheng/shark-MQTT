@@ -159,7 +159,7 @@ jobs:
         run: go mod verify
 
       - name: Check go.mod and go.sum are tidy
-        shell: bash
+        if: matrix.os != 'windows-latest'
         run: |
           go mod tidy -diff
           if [ $? -ne 0 ]; then
