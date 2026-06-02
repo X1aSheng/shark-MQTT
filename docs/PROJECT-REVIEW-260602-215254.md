@@ -180,4 +180,50 @@ efa3730 fix: add missing transitive dependency to go.sum
 ---
 
 *Review performed by: Claude Code automated review*  
-*Test environment: Windows 11, Go 1.26.1, AMD Ryzen 7 8845HS*
+*Test environment: Windows 11 (local), Ubuntu 26.04 (cloud: 120.76.44.233, 2 CPU/2GB RAM)*
+
+---
+
+## 8. Cloud Deployment Verification
+
+### Environment
+- **Server:** Alibaba Cloud ECS, Ubuntu 26.04 LTS, 2 vCPU / 2GB RAM
+- **IP:** 120.76.44.233
+- **Go:** 1.26.3 (snap)
+- **Docker:** 29.5.0
+- **Kubectl/Helm:** installed
+
+### Verification Results
+
+| Step | Description | Result |
+|------|-------------|--------|
+| 1 | Project synced to cloud | ✅ tar+ssh transfer successful |
+| 2 | Go binary compiled (CGO_ENABLED=0, static) | ✅ 15.9MB ELF x86-64 statically linked |
+| 3 | Binary runs on cloud | ✅ Broker starts, health endpoint responds "ok" |
+| 4 | Local client → Cloud broker (binary) | ✅ Connect, subscribe, publish, disconnect all PASS |
+| 5 | Docker image built (Alpine 3.21) | ✅ shark-mqtt:cloud |
+| 6 | Docker container runs | ✅ HEALTHCHECK passes (healthy), broker responds |
+| 7 | Local client → Dockerized cloud broker | ✅ Connect, subscribe, publish, disconnect all PASS |
+| 8 | Helm chart lint | ✅ 0 errors, 1 info (icon recommended) |
+| 9 | K8s manifest validation | ⚠️ No active cluster (2GB server cannot support K8s + broker simultaneously) |
+
+### Docker Deployment Commands (Verified)
+```bash
+# Build binary
+CGO_ENABLED=0 go build -ldflags='-s -w' -o bin/shark-mqtt ./cmd/
+
+# Build Docker image
+docker build -f deploy/docker/Dockerfile -t shark-mqtt:latest .
+
+# Run
+docker run -d --name shark-mqtt -p 18983:18983 -p 18999:18999 \
+  shark-mqtt:latest -addr=:18983 -allow-all
+
+# Verify
+curl -s http://localhost:18999/healthz  # returns "ok"
+```
+
+### Notes
+- The 2GB server cannot simultaneously run a Kind/K8s cluster and the broker — the K8s manifests and Helm chart are validated statically and are ready for deployment on a larger node or managed cluster.
+- Use `CGO_ENABLED=0` for static linking when targeting Alpine-based Docker images.
+- The `.dockerignore` excludes `bin/` — pass the binary via Dockerfile COPY from a build context directory, or use the multi-stage build from `deploy/docker/Dockerfile`.
