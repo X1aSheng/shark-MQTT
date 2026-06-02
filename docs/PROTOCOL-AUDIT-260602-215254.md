@@ -196,7 +196,7 @@
 | MQTT 3.1.1 报文完整性 | 100% | 14 种报文全部实现并测试 |
 | MQTT 5.0 报文完整性 | 100% | 15 种报文 (含 AUTH) 全部实现 |
 | MQTT 5.0 Properties (结构) | 92% | 24/26 属性；缺 0x19, 0x1A |
-| MQTT 5.0 Properties (语义) | 65% | 编解码完整，但 TopicAlias/MessageExpiry/ReceiveMax 未强制执行 |
+| MQTT 5.0 Properties (语义) | 80% | 编解码完整；TopicAlias/ReceiveMax/ServerKeepAlive 已实现语义 |
 | 主题系统 | 100% | $SYS 保护、空层、通配符验证 |
 | QoS 状态机 | 100% | 0/1/2 完整，含 DUP 检测和重试 |
 | 会话持久化 | 100% | Session Expiry、恢复、Takeover |
@@ -206,10 +206,12 @@
 
 ### 待改进项 (按优先级)
 
-| # | 问题 | 优先级 | 工作量 |
-|---|------|--------|--------|
-| 1 | 添加缺失属性 RequestResponseInformation (0x19)/ResponseInformation (0x1A) | 中 | 20 min |
-| 2 | 实现按客户端 ReceiveMaximum 流量控制 | 低 | 1 hr |
-| 3 | 发出 ServerKeepAlive (比客户端值更大的建议值) | 低 | 15 min |
-| 4 | 保留消息添加 TTL/过期机制 | 低 | 1 hr |
-| 5 | 发送 AssignedClientID (客户端空 ClientID 时) | 低 | 30 min |
+| # | 问题 | 优先级 | 工作量 | 状态 |
+|---|------|--------|--------|------|
+| 1 | 添加缺失属性 RequestResponseInformation (0x19)/ResponseInformation (0x1A) | 中 | 20 min | ✅ 已完成 (4b877e3) |
+| 2 | 实现按客户端 ReceiveMaximum 流量控制 | 低 | 1 hr | ✅ 已完成 (beb9820) |
+| 3 | 发出 ServerKeepAlive (比客户端值更短的覆盖值) | 低 | 15 min | ✅ 已完成 (beb9820) |
+| 4 | Topic Alias 别名解析 | 低 | 1 hr | ✅ 已完成 (beb9820) |
+| 5 | 发送 AssignedClientID (客户端空 ClientID 时) | 低 | 30 min | ✅ 已完成 (beb9820) |
+| 6 | Message Expiry Interval 检查 | 低 | 30 min | ✅ 已完成 (beb9820) |
+| 7 | 保留消息添加 TTL/过期机制 | 低 | 1 hr | 未实现 |
