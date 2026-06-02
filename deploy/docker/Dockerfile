@@ -23,7 +23,7 @@ HEALTHCHECK --interval=15s --timeout=3s --retries=3 \
   CMD wget -qO- http://localhost:18999/healthz || exit 1
 
 LABEL org.opencontainers.image.title="shark-mqtt"
-LABEL org.opencontainers.image.description="High-performance MQTT 3.1.1 broker with cluster support"
+LABEL org.opencontainers.image.description="High-performance MQTT 3.1.1/5.0 broker"
 LABEL org.opencontainers.image.source="https://github.com/X1aSheng/shark-mqtt"
 LABEL org.opencontainers.image.licenses="MIT"
 
