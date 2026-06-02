@@ -68,7 +68,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 | 集成测试 | 90 latest passed runs | `tests/integration/` |
 | 缺陷回归测试 | `tests/defects` + package-level regressions | `tests/defects/`, `broker/`, `client/` |
 | 基准测试 | 64 executed / 3 skipped | `tests/bench/`, `store/redis/`, `plugin/` |
-| **最新脚本运行** | **419 unit passed, 90 integration passed, 64 benchmarks passed** | `logs/20260521_215054_*` |
+| **最新脚本运行** | **419 unit passed, 90 integration passed, 64 benchmarks passed, 50.1% coverage** | `logs/20260602_*` (review bb361c1) |
 
 ### 各包测试明细
 
