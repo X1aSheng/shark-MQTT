@@ -158,6 +158,23 @@ func NewBroker(opts ...Option) *Broker {
 	if o.cfg.SessionExpiryInterval > 0 {
 		bopts = append(bopts, broker.WithSessionExpiry(o.cfg.SessionExpiryInterval))
 	}
+	if o.cfg.QoSMaxInflight > 0 || o.cfg.QoSRetryInterval > 0 || o.cfg.QoSMaxRetries > 0 {
+		var qosOpts []broker.QoSOption
+		if o.cfg.QoSMaxInflight > 0 {
+			qosOpts = append(qosOpts, broker.WithMaxInflight(o.cfg.QoSMaxInflight))
+		}
+		if o.cfg.QoSRetryInterval > 0 {
+			qosOpts = append(qosOpts, broker.WithRetryInterval(o.cfg.QoSRetryInterval))
+		}
+		if o.cfg.QoSMaxRetries >= 0 {
+			qosOpts = append(qosOpts, broker.WithMaxRetries(o.cfg.QoSMaxRetries))
+		}
+		bopts = append(bopts, broker.WithQoSOptions(qosOpts...))
+	}
+	// Propagate max connections from config when not explicitly set
+	if o.maxConnections == 0 && o.cfg.MaxConnections > 0 {
+		bopts = append(bopts, broker.WithMaxConnections(o.cfg.MaxConnections))
+	}
 
 	if o.sessionStore != nil {
 		bopts = append(bopts, broker.WithSessionStore(o.sessionStore))
