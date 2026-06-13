@@ -126,3 +126,31 @@ func TestPoolConcurrentAccess(t *testing.T) {
 		<-done
 	}
 }
+
+func TestBufSize(t *testing.T) {
+	p := New(2048)
+	if size := p.BufSize(); size != 2048 {
+		t.Errorf("BufSize() = %d, want 2048", size)
+	}
+
+	p2 := New(0)
+	if size := p2.BufSize(); size != 4096 {
+		t.Errorf("BufSize() for default = %d, want 4096", size)
+	}
+}
+
+func TestGetDefaultPath(t *testing.T) {
+	// Create a pool and put a non-slice value to force the default path in Get.
+	// The sync.Pool.New creates *[]byte, so the default path only triggers
+	// when something unexpected is in the pool. We simulate this by putting
+	// a non-slice value directly into the underlying pool.
+	p := New(128)
+	// Get once to initialize the pool
+	_ = p.Get()
+	// Put a non-*[]byte value to force the default path on next Get
+	p.pool.Put("not a buffer")
+	buf := p.Get()
+	if len(buf) != 128 {
+		t.Errorf("expected length 128 from default path, got %d", len(buf))
+	}
+}

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"strings"
@@ -192,5 +193,91 @@ func TestBrokerNoMetricsEndpointWithoutPrometheus(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("expected 404 for noop metrics, got %d", resp.StatusCode)
+	}
+}
+
+func TestWithAuthorizer(t *testing.T) {
+	b := NewBroker(WithAuthorizer(broker.AllowAllAuth{}))
+	if b == nil {
+		t.Fatal("NewBroker returned nil")
+	}
+}
+
+func TestWithSessionStore(t *testing.T) {
+	b := NewBroker(WithSessionStore(nil))
+	if b == nil {
+		t.Fatal("NewBroker returned nil")
+	}
+}
+
+func TestWithMessageStore(t *testing.T) {
+	b := NewBroker(WithMessageStore(nil))
+	if b == nil {
+		t.Fatal("NewBroker returned nil")
+	}
+}
+
+func TestWithRetainedStore(t *testing.T) {
+	b := NewBroker(WithRetainedStore(nil))
+	if b == nil {
+		t.Fatal("NewBroker returned nil")
+	}
+}
+
+func TestWithLogger(t *testing.T) {
+	b := NewBroker(WithLogger(nil))
+	if b == nil {
+		t.Fatal("NewBroker returned nil")
+	}
+}
+
+func TestWithPluginManager(t *testing.T) {
+	b := NewBroker(WithPluginManager(nil))
+	if b == nil {
+		t.Fatal("NewBroker returned nil")
+	}
+}
+
+func TestWithMaxConnections(t *testing.T) {
+	b := NewBroker(WithMaxConnections(50))
+	if b == nil {
+		t.Fatal("NewBroker returned nil")
+	}
+}
+
+func TestBrokerMethod(t *testing.T) {
+	b := NewBroker()
+	brk := b.Broker()
+	if brk == nil {
+		t.Error("Broker() returned nil")
+	}
+}
+
+func TestRunCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // immediately cancel
+
+	err := Run(ctx, WithConfig(func() *config.Config {
+		cfg := config.DefaultConfig()
+		cfg.ListenAddr = ":0"
+		return cfg
+	}()))
+	if err != nil {
+		t.Errorf("Run with cancelled context should return nil, got %v", err)
+	}
+}
+
+func TestConfigValidationError(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.MaxPacketSize = 0 // invalid
+
+	b := NewBroker(WithConfig(cfg))
+	if b.initErr == nil {
+		t.Fatal("expected config validation error")
+	}
+
+	err := b.Start()
+	if err == nil {
+		t.Fatal("expected Start() to fail with invalid config")
 	}
 }
