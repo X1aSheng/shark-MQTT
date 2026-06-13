@@ -2,11 +2,20 @@ package client
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/X1aSheng/shark-mqtt/api"
+	"github.com/X1aSheng/shark-mqtt/broker"
+	"github.com/X1aSheng/shark-mqtt/config"
+	"github.com/X1aSheng/shark-mqtt/pkg/metrics"
+	"github.com/X1aSheng/shark-mqtt/protocol"
 )
+
+// ─── Option tests ──────────────────────────────────────────────
 
 func TestOptions(t *testing.T) {
 	t.Run("defaults", func(t *testing.T) {
@@ -130,6 +139,8 @@ func TestOptions(t *testing.T) {
 	})
 }
 
+// ─── Simple state tests ───────────────────────────────────────
+
 func TestIsConnected(t *testing.T) {
 	c := New()
 	if c.IsConnected() {
@@ -152,7 +163,6 @@ func TestSetOnMessage(t *testing.T) {
 			t.Errorf("expected payload hello, got %s", payload)
 		}
 	})
-	// Simulate calling the callback
 	c.msgMu.RLock()
 	fn := c.onMessage
 	c.msgMu.RUnlock()
@@ -164,10 +174,36 @@ func TestSetOnMessage(t *testing.T) {
 	}
 }
 
+func TestSetOnError(t *testing.T) {
+	c := New()
+	var capturedArgs []interface{}
+	c.SetOnError(func(format string, args ...interface{}) {
+		capturedArgs = args
+	})
+
+	// Trigger logError
+	c.logError("test error: %d", 42)
+
+	c.msgMu.RLock()
+	fn := c.onError
+	c.msgMu.RUnlock()
+	if fn == nil {
+		t.Fatal("onError should be set")
+	}
+	if len(capturedArgs) != 1 || capturedArgs[0] != 42 {
+		t.Errorf("expected captured args [42], got %v", capturedArgs)
+	}
+}
+
+func TestLogErrorWithoutCallback(t *testing.T) {
+	c := New()
+	// Should not panic when onError is nil
+	c.logError("something happened: %v", "test")
+}
+
 func TestNextPacketID(t *testing.T) {
 	c := New()
 
-	// Verify packet IDs increment and wrap correctly
 	first := c.nextPacketID()
 	if first != 1 {
 		t.Errorf("expected first packet ID 1, got %d", first)
@@ -192,10 +228,10 @@ func TestNextPacketID(t *testing.T) {
 	}
 }
 
+// ─── Not-connected guard tests ────────────────────────────────
+
 func TestConnectNotConnected(t *testing.T) {
-	// Test that Publish returns error when not connected
 	c := New(WithHostPort("127.0.0.1", 18983))
-	c.ctx.Done() // ensure context is available
 
 	err := c.Publish(c.ctx, "test", 0, false, []byte("data"))
 	if err == nil {
@@ -226,6 +262,474 @@ func TestDisconnectWhenNotConnected(t *testing.T) {
 		t.Errorf("expected no error when disconnecting while not connected, got %v", err)
 	}
 }
+
+// ─── handlePublish / deliverResponse internal tests ────────────
+
+func TestHandlePublish_QoS0(t *testing.T) {
+	c := New()
+
+	msgChan := make(chan struct {
+		topic   string
+		qos     byte
+		payload []byte
+	}, 1)
+
+	c.SetOnMessage(func(topic string, qos byte, payload []byte) {
+		msgChan <- struct {
+			topic   string
+			qos     byte
+			payload []byte
+		}{topic, qos, payload}
+	})
+
+	pkt := &protocol.PublishPacket{}
+	pkt.FixedHeader.PacketType = protocol.PacketTypePublish
+	pkt.FixedHeader.QoS = 0
+	pkt.Topic = "test/qos0"
+	pkt.Payload = []byte("hello-qos0")
+
+	c.handlePublish(pkt)
+
+	select {
+	case msg := <-msgChan:
+		if msg.topic != "test/qos0" {
+			t.Errorf("topic = %q, want %q", msg.topic, "test/qos0")
+		}
+		if string(msg.payload) != "hello-qos0" {
+			t.Errorf("payload = %q, want %q", msg.payload, "hello-qos0")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("onMessage was not called")
+	}
+}
+
+func TestHandlePublish_QoS1(t *testing.T) {
+	conn := &mockConn{}
+	c := New()
+	c.mu.Lock()
+	c.conn = conn
+	c.mu.Unlock()
+
+	msgChan := make(chan string, 1)
+	c.SetOnMessage(func(topic string, qos byte, payload []byte) {
+		msgChan <- string(payload)
+	})
+
+	pkt := &protocol.PublishPacket{}
+	pkt.FixedHeader.PacketType = protocol.PacketTypePublish
+	pkt.FixedHeader.QoS = 1
+	pkt.PacketID = 42
+	pkt.Topic = "test/qos1"
+	pkt.Payload = []byte("hello-qos1")
+
+	c.handlePublish(pkt)
+
+	// Verify onMessage was called
+	select {
+	case payload := <-msgChan:
+		if payload != "hello-qos1" {
+			t.Errorf("payload = %q, want %q", payload, "hello-qos1")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("onMessage was not called")
+	}
+
+	// Should also have written a PUBACK
+	if !conn.wrotePubAck {
+		t.Error("expected PUBACK to be written for QoS 1")
+	}
+}
+
+func TestHandlePublish_QoS2_Dedup(t *testing.T) {
+	conn := &mockConn{}
+	c := New()
+	c.mu.Lock()
+	c.conn = conn
+	c.mu.Unlock()
+
+	callCount := 0
+	c.SetOnMessage(func(topic string, qos byte, payload []byte) {
+		callCount++
+	})
+
+	pkt := &protocol.PublishPacket{}
+	pkt.FixedHeader.PacketType = protocol.PacketTypePublish
+	pkt.FixedHeader.QoS = 2
+	pkt.PacketID = 7
+	pkt.Topic = "test/qos2"
+	pkt.Payload = []byte("dup-test")
+
+	// First call: should deliver message
+	c.handlePublish(pkt)
+	if callCount != 1 {
+		t.Errorf("expected onMessage called once, got %d", callCount)
+	}
+	// should have written a PUBREC
+	pubrecCount := conn.pubrecCount
+
+	// Second call with same PacketID: duplicate, should NOT deliver
+	c.handlePublish(pkt)
+	if callCount != 1 {
+		t.Errorf("expected onMessage still called once (dup), got %d", callCount)
+	}
+	// Should still write second PUBREC for duplicate
+	expectedPubRec := pubrecCount + 1
+	if conn.pubrecCount != expectedPubRec {
+		t.Errorf("expected %d PUBRECs (dup still acknowledged), got %d", expectedPubRec, conn.pubrecCount)
+	}
+}
+
+func TestDeliverResponse(t *testing.T) {
+	c := New()
+
+	ch := make(chan protocol.Packet, 1)
+	c.pendingMu.Lock()
+	c.pending[100] = ch
+	c.pendingMu.Unlock()
+
+	ack := &protocol.PubAckPacket{PacketID: 100}
+	ack.FixedHeader.PacketType = protocol.PacketTypePubAck
+	c.deliverResponse(100, ack)
+
+	select {
+	case received := <-ch:
+		if _, ok := received.(*protocol.PubAckPacket); !ok {
+			t.Errorf("expected PubAckPacket, got %T", received)
+		}
+	default:
+		t.Fatal("deliverResponse did not deliver to channel")
+	}
+}
+
+func TestDeliverResponse_NoPending(t *testing.T) {
+	c := New()
+	// Should not panic when there's no pending channel for the packet ID
+	c.deliverResponse(999, &protocol.PubAckPacket{})
+}
+
+// ─── Integration tests with real broker ───────────────────────
+
+func startTestBroker(t *testing.T) (*api.Broker, string) {
+	t.Helper()
+
+	cfg := config.DefaultConfig()
+	cfg.ListenAddr = ":0"       // dynamic port
+	cfg.MetricsAddr = ":0"      // avoid port conflict with health server
+	cfg.MaxConnections = 100
+
+	b := api.NewBroker(
+		api.WithConfig(cfg),
+		api.WithAuth(broker.AllowAllAuth{}),
+		api.WithMetrics(metrics.Default()),
+	)
+
+	if err := b.Start(); err != nil {
+		t.Fatalf("failed to start test broker: %v", err)
+	}
+
+	addr := b.Addr()
+	if addr == "" {
+		b.Stop()
+		t.Fatal("broker returned empty address")
+	}
+
+	t.Cleanup(func() {
+		b.Stop()
+	})
+
+	return b, addr
+}
+
+func TestConnectToBroker(t *testing.T) {
+	_, addr := startTestBroker(t)
+	host, port := splitAddr(addr)
+
+	c := New(
+		WithHostPort(host, port),
+		WithClientID("test-connect-client"),
+		WithConnectTimeout(5*time.Second),
+	)
+
+	ctx := context.Background()
+	if err := c.Connect(ctx); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+
+	if !c.IsConnected() {
+		t.Error("expected IsConnected() to return true after Connect")
+	}
+
+	// Test duplicate connect returns error
+	err := c.Connect(ctx)
+	if err == nil {
+		t.Error("expected error on duplicate Connect")
+	}
+
+	if err := c.Disconnect(ctx); err != nil {
+		t.Errorf("Disconnect failed: %v", err)
+	}
+
+	if c.IsConnected() {
+		t.Error("expected IsConnected() to return false after Disconnect")
+	}
+}
+
+func TestPublishQoS0(t *testing.T) {
+	_, addr := startTestBroker(t)
+	host, port := splitAddr(addr)
+
+	c := New(
+		WithHostPort(host, port),
+		WithClientID("test-pub-qos0"),
+		WithConnectTimeout(5*time.Second),
+	)
+
+	ctx := context.Background()
+	if err := c.Connect(ctx); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+	defer c.Disconnect(ctx)
+
+	// QoS 0: no acknowledgment, should return immediately
+	err := c.Publish(ctx, "test/qos0", 0, false, []byte("hello"))
+	if err != nil {
+		t.Errorf("Publish QoS 0 failed: %v", err)
+	}
+}
+
+func TestPublishQoS1(t *testing.T) {
+	_, addr := startTestBroker(t)
+	host, port := splitAddr(addr)
+
+	c := New(
+		WithHostPort(host, port),
+		WithClientID("test-pub-qos1"),
+		WithConnectTimeout(5*time.Second),
+	)
+
+	ctx := context.Background()
+	if err := c.Connect(ctx); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+	defer c.Disconnect(ctx)
+
+	// QoS 1: should receive PUBACK
+	err := c.Publish(ctx, "test/qos1", 1, false, []byte("hello-qos1"))
+	if err != nil {
+		t.Errorf("Publish QoS 1 failed: %v", err)
+	}
+}
+
+func TestPublishQoS2(t *testing.T) {
+	_, addr := startTestBroker(t)
+	host, port := splitAddr(addr)
+
+	c := New(
+		WithHostPort(host, port),
+		WithClientID("test-pub-qos2"),
+		WithConnectTimeout(5*time.Second),
+	)
+
+	ctx := context.Background()
+	if err := c.Connect(ctx); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+	defer c.Disconnect(ctx)
+
+	// QoS 2: full flow (PUB->PUBREC->PUBREL->PUBCOMP)
+	err := c.Publish(ctx, "test/qos2", 2, false, []byte("hello-qos2"))
+	if err != nil {
+		t.Errorf("Publish QoS 2 failed: %v", err)
+	}
+}
+
+func TestSubscribe(t *testing.T) {
+	_, addr := startTestBroker(t)
+	host, port := splitAddr(addr)
+
+	c := New(
+		WithHostPort(host, port),
+		WithClientID("test-subscribe-client"),
+		WithConnectTimeout(5*time.Second),
+	)
+
+	ctx := context.Background()
+	if err := c.Connect(ctx); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+	defer c.Disconnect(ctx)
+
+	reasonCodes, err := c.Subscribe(ctx, []TopicSubscription{
+		{Topic: "test/subscribe", QoS: 1},
+	})
+	if err != nil {
+		t.Fatalf("Subscribe failed: %v", err)
+	}
+	if len(reasonCodes) != 1 {
+		t.Errorf("expected 1 reason code, got %d", len(reasonCodes))
+	}
+}
+
+func TestUnsubscribe(t *testing.T) {
+	_, addr := startTestBroker(t)
+	host, port := splitAddr(addr)
+
+	c := New(
+		WithHostPort(host, port),
+		WithClientID("test-unsub-client"),
+		WithConnectTimeout(5*time.Second),
+	)
+
+	ctx := context.Background()
+	if err := c.Connect(ctx); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+	defer c.Disconnect(ctx)
+
+	// Subscribe first
+	_, err := c.Subscribe(ctx, []TopicSubscription{
+		{Topic: "test/unsub", QoS: 1},
+	})
+	if err != nil {
+		t.Fatalf("Subscribe failed: %v", err)
+	}
+
+	// Then unsubscribe
+	err = c.Unsubscribe(ctx, []string{"test/unsub"})
+	if err != nil {
+		t.Errorf("Unsubscribe failed: %v", err)
+	}
+}
+
+func TestOnMessageDelivery(t *testing.T) {
+	_, addr := startTestBroker(t)
+	host, port := splitAddr(addr)
+
+	// Publisher client
+	pub := New(
+		WithHostPort(host, port),
+		WithClientID("test-publisher"),
+		WithConnectTimeout(5*time.Second),
+	)
+
+	// Subscriber client
+	sub := New(
+		WithHostPort(host, port),
+		WithClientID("test-subscriber"),
+		WithConnectTimeout(5*time.Second),
+	)
+
+	ctx := context.Background()
+
+	if err := pub.Connect(ctx); err != nil {
+		t.Fatalf("publisher Connect failed: %v", err)
+	}
+	defer pub.Disconnect(ctx)
+
+	if err := sub.Connect(ctx); err != nil {
+		t.Fatalf("subscriber Connect failed: %v", err)
+	}
+	defer sub.Disconnect(ctx)
+
+	// Subscribe
+	_, err := sub.Subscribe(ctx, []TopicSubscription{
+		{Topic: "test/delivery", QoS: 1},
+	})
+	if err != nil {
+		t.Fatalf("Subscribe failed: %v", err)
+	}
+
+	// Set up message receiver
+	msgChan := make(chan string, 1)
+	sub.SetOnMessage(func(topic string, qos byte, payload []byte) {
+		msgChan <- string(payload)
+	})
+
+	// Publish
+	err = pub.Publish(ctx, "test/delivery", 1, false, []byte("delivery-test"))
+	if err != nil {
+		t.Fatalf("Publish failed: %v", err)
+	}
+
+	// Verify delivery with timeout
+	select {
+	case payload := <-msgChan:
+		if payload != "delivery-test" {
+			t.Errorf("received payload = %q, want %q", payload, "delivery-test")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for message delivery")
+	}
+}
+
+func TestConnectWithAutoClientID(t *testing.T) {
+	_, addr := startTestBroker(t)
+	host, port := splitAddr(addr)
+
+	// No explicit ClientID — should auto-generate
+	c := New(
+		WithHostPort(host, port),
+		WithConnectTimeout(5*time.Second),
+	)
+
+	ctx := context.Background()
+	if err := c.Connect(ctx); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+	defer c.Disconnect(ctx)
+
+	if c.clientID == "" {
+		t.Error("expected auto-generated client ID")
+	}
+}
+
+func TestConnectInvalidAddr(t *testing.T) {
+	c := New(
+		WithHostPort("127.0.0.1", 1), // port 1 is unlikely to be listening
+		WithConnectTimeout(time.Second),
+	)
+
+	ctx := context.Background()
+	err := c.Connect(ctx)
+	if err == nil {
+		t.Fatal("expected error connecting to invalid address")
+	}
+}
+
+// ─── ReadLoop error handling test ──────────────────────────────
+
+func TestReadLoopDecodeErrorDisconnects(t *testing.T) {
+	conn := newBlockingReadConn()
+
+	c := New()
+	c.mu.Lock()
+	c.conn = conn
+	c.connected = true
+	c.mu.Unlock()
+
+	c.wg.Add(1)
+	go c.readLoop()
+
+	// Close the conn to trigger Decode error
+	conn.Close()
+
+	// Wait for readLoop to finish
+	c.wg.Wait()
+
+	if c.IsConnected() {
+		t.Error("expected IsConnected() to be false after readLoop error")
+	}
+
+	// Canceled context means pending channels were drained
+	c.pendingMu.RLock()
+	pendingLen := len(c.pending)
+	c.pendingMu.RUnlock()
+	if pendingLen != 0 {
+		t.Errorf("expected pending map to be drained, got %d items", pendingLen)
+	}
+}
+
+// ─── Disconnect with blocking readLoop ─────────────────────────
 
 func TestDisconnectClosesConnectionBeforeWaitingForReadLoop(t *testing.T) {
 	conn := newBlockingReadConn()
@@ -260,6 +764,49 @@ func TestDisconnectClosesConnectionBeforeWaitingForReadLoop(t *testing.T) {
 		t.Fatal("expected DISCONNECT packet bytes to be written")
 	}
 }
+
+// ─── Mock helpers ──────────────────────────────────────────────
+
+type mockConn struct {
+	mu          sync.Mutex
+	closed      bool
+	wrotePubAck bool
+	pubrecCount int
+}
+
+func (m *mockConn) Read(p []byte) (int, error) {
+	<-time.After(time.Hour) // Block forever in tests
+	return 0, nil
+}
+
+func (m *mockConn) Write(p []byte) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Detect PUBACK (type 4) or PUBREC (type 5) packets
+	if len(p) > 1 {
+		packetType := p[0] >> 4
+		if packetType == 4 {
+			m.wrotePubAck = true
+		}
+		if packetType == 5 {
+			m.pubrecCount++
+		}
+	}
+	return len(p), nil
+}
+
+func (m *mockConn) Close() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.closed = true
+	return nil
+}
+
+func (m *mockConn) LocalAddr() net.Addr                { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0} }
+func (m *mockConn) RemoteAddr() net.Addr               { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0} }
+func (m *mockConn) SetDeadline(_ time.Time) error      { return nil }
+func (m *mockConn) SetReadDeadline(_ time.Time) error  { return nil }
+func (m *mockConn) SetWriteDeadline(_ time.Time) error { return nil }
 
 type blockingReadConn struct {
 	mu      sync.Mutex
@@ -302,4 +849,32 @@ func (c *blockingReadConn) writtenBytes() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.written
+}
+
+// splitAddr splits "host:port" into host string and int port.
+// Replaces unspecified IPv6 "::" with "::1" (loopback) for dialing.
+func splitAddr(addr string) (string, int) {
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "127.0.0.1", 18983
+	}
+	// Strip IPv6 brackets: "[::1]" -> "::1"
+	host = trimBrackets(host)
+	// Unspecified address "::" can't be dialed; use IPv6 loopback
+	if host == "" || host == "::" {
+		host = "127.0.0.1"
+	}
+	port := 0
+	_, err = fmt.Sscanf(portStr, "%d", &port)
+	if err != nil || port == 0 {
+		return host, 18983
+	}
+	return host, port
+}
+
+func trimBrackets(host string) string {
+	if len(host) > 2 && host[0] == '[' && host[len(host)-1] == ']' {
+		return host[1 : len(host)-1]
+	}
+	return host
 }
