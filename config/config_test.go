@@ -151,3 +151,107 @@ func TestInvalidDuration(t *testing.T) {
 		t.Fatal("expected error for invalid duration")
 	}
 }
+
+func TestValidate_Valid(t *testing.T) {
+	cfg := DefaultConfig()
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("expected no error for default config, got %v", err)
+	}
+}
+
+func TestValidate_InvalidMaxPacketSize(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxPacketSize = 0
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for MaxPacketSize=0")
+	}
+	cfg.MaxPacketSize = -1
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for MaxPacketSize=-1")
+	}
+}
+
+func TestValidate_InvalidMaxConnections(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxConnections = -1
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for MaxConnections=-1")
+	}
+}
+
+func TestValidate_InvalidQoSMaxRetries(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.QoSMaxRetries = -1
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for QoSMaxRetries=-1")
+	}
+}
+
+func TestValidate_InvalidQoSMaxInflight(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.QoSMaxInflight = 0
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for QoSMaxInflight=0")
+	}
+	cfg.QoSMaxInflight = -1
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for QoSMaxInflight=-1")
+	}
+}
+
+func TestValidate_InvalidQoSRetryInterval(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.QoSRetryInterval = 0
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for QoSRetryInterval=0")
+	}
+	cfg.QoSRetryInterval = -1
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for QoSRetryInterval=-1")
+	}
+}
+
+func TestValidate_TLSMissingCert(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.TLSEnabled = true
+	cfg.TLSCertFile = ""
+	cfg.TLSKeyFile = "key.pem"
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for missing TLS cert")
+	}
+}
+
+func TestValidate_TLSMissingKey(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.TLSEnabled = true
+	cfg.TLSCertFile = "cert.pem"
+	cfg.TLSKeyFile = ""
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for missing TLS key")
+	}
+}
+
+func TestValidate_UnknownStorageBackend(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.StorageBackend = "mongodb"
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for unknown storage backend")
+	}
+}
+
+func TestValidate_RedisWithoutAddr(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.StorageBackend = "redis"
+	cfg.RedisAddr = ""
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for redis backend without redis_addr")
+	}
+}
+
+func TestValidate_EmptyStorageBackend(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.StorageBackend = ""
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("empty storage_backend should be accepted (defaults to memory), got %v", err)
+	}
+}
