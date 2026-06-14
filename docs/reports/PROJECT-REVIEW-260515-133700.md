@@ -48,7 +48,7 @@ api (入口层)
 - P4: QoS 状态机封装
 - P5: 可观测性优先
 
-详见: [architecture_review.md](architecture_review.md)
+详见: [architecture_review.md](architecture/ARCHITECTURE)
 
 ## 3. 缺陷清单
 
@@ -87,7 +87,7 @@ api (入口层)
 - TLS MinVersion 未显式设置（见 SEC-002）
 - 未执行 `govulncheck`（网络限制），建议在 CI 中添加
 
-详见: [security_fixes.md](security_fixes.md)
+详见: [security_fixes.md](reports/security_fixes)
 
 ## 5. 可观测性差距
 
@@ -105,7 +105,7 @@ api (入口层)
 - 无消息延迟直方图
 - 无预配置 Grafana 面板
 
-详见: [observability_gap.md](observability_gap.md)
+详见: [observability_gap.md](architecture/OBSERVABILITY)
 
 ## 6. 性能基准
 
@@ -129,7 +129,7 @@ api (入口层)
 - 写操作在客户端级别隔离（per-connection write mutex），无全局锁竞争
 - retryLoop 在锁外收集重试消息，避免锁顺序死锁
 
-详见: [performance_advice.md](performance_advice.md)
+详见: [performance_advice.md](guides/PERFORMANCE)
 
 ## 7. 文档问题
 
@@ -139,7 +139,7 @@ api (入口层)
 
 3 个问题（见 DOC-001, DOC-002, DOC-003），均为 README 中的链接错误或不存在文件引用。
 
-详见: [doc_inconsistencies.md](doc_inconsistencies.md)
+详见: [doc_inconsistencies.md](README)
 
 ## 8. 改进计划（按优先级排序）
 

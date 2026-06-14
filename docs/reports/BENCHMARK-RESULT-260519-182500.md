@@ -2,7 +2,7 @@
 
 ## Summary
 
-按照 [BENCHMARK-RESOURCE-LIMITED-TEST-FLOW-260519.md](BENCHMARK-RESOURCE-LIMITED-TEST-FLOW-260519.md) 执行分层 benchmark。本机完成 smoke、light、medium；云服务器完成 smoke/light，并因可用内存不足 1GB 按门控停止升级 medium/heavy。
+按照 [BENCHMARK-RESOURCE-LIMITED-TEST-FLOW-260519.md](reports/BENCHMARK-RESOURCE-LIMITED-TEST-FLOW-260519.md) 执行分层 benchmark。本机完成 smoke、light、medium；云服务器完成 smoke/light，并因可用内存不足 1GB 按门控停止升级 medium/heavy。
 
 ## Environment
 

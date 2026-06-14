@@ -543,8 +543,8 @@ go run scripts/run_tests.go -mode cover
 
 ## 另见
 
-- [开发指南](development.md)
-- [配置指南](configuration.md)
-- [性能指南](performance.md)
-- [架构文档](shark-mqtt%20architecture.md)
-- [最新审查报告](PROJECT-REVIEW-260521-215317.md)
+- [开发指南](guides/DEVELOPMENT)
+- [配置指南](guides/CONFIGURATION)
+- [性能指南](guides/PERFORMANCE)
+- [架构文档](architecture/ARCHITECTURE)
+- [最新审查报告](reports/PROJECT-REVIEW-260521-215317.md)

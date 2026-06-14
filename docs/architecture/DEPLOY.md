@@ -363,7 +363,7 @@ Recommended metrics to monitor:
 
 ## See Also
 
-- [Configuration Guide](configuration.md)
-- [API Reference](API.md)
+- [Configuration Guide](guides/CONFIGURATION)
+- [API Reference](guides/API)
 - [Examples](../examples/)
-- [Latest Review](PROJECT-REVIEW-260520-233509.md)
+- [Latest Review](reports/PROJECT-REVIEW-260520-233509.md)

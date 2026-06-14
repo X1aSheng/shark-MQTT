@@ -267,6 +267,6 @@ Add to your CI pipeline:
 
 ## See Also
 
-- [Testing Guide](testing.md)
-- [Development Guide](development.md)
-- [Configuration Guide](configuration.md)
+- [Testing Guide](guides/TESTING)
+- [Development Guide](guides/DEVELOPMENT)
+- [Configuration Guide](guides/CONFIGURATION)

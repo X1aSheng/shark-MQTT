@@ -408,7 +408,7 @@ Shark-MQTT validates configuration on startup:
 
 ## See Also
 
-- [Development Guide](development.md)
-- [Testing Guide](testing.md)
-- [API Reference](API.md)
-- [SECURITY.md](../SECURITY.md)
+- [Development Guide](guides/DEVELOPMENT)
+- [Testing Guide](guides/TESTING)
+- [API Reference](guides/API)
+- [SECURITY.md](../architecture/SECURITY.md)
