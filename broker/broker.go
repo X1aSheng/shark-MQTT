@@ -796,6 +796,8 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 	for _, sub := range subscribers {
 		b.deliverToClient(sub.ClientID, clientID, pkt)
 	}
+	// Route to shared subscribers (round-robin, one per share group)
+	b.routeSharedPublish(clientID, pkt)
 
 	// Send PUBACK for QoS 1
 	if pkt.QoS == 1 {
@@ -908,6 +910,20 @@ func (b *Broker) handleSubscribe(clientID string, sess *Session, pkt *protocol.S
 			continue
 		}
 
+		// Handle shared subscriptions ($share/{ShareName}/{filter})
+		if IsSharedSubscription(topic.Topic) {
+			shareName, realFilter, ok := ParseSharedFilter(topic.Topic)
+			if !ok || !protocol.ValidateTopicFilter(realFilter) {
+				reasonCodes[i] = protocol.SubAckFailure
+				continue
+			}
+			b.topics.SubscribeShared(shareName, realFilter, clientID, topic.QoS)
+			sess.AddSubscriptionFilter(topic)
+			reasonCodes[i] = topic.QoS
+			deliverRetained[i] = shouldDeliverRetained(topic.RetainHandling, false)
+			continue
+		}
+
 		existed := sess.HasSubscription(topic.Topic)
 		if !b.topics.Subscribe(topic.Topic, clientID, topic.QoS) {
 			reasonCodes[i] = protocol.SubAckFailure
@@ -933,6 +949,14 @@ func (b *Broker) handleSubscribe(clientID string, sess *Session, pkt *protocol.S
 		if !deliverRetained[i] {
 			continue
 		}
+		// For shared subscriptions, use the real topic filter for retained delivery
+		if IsSharedSubscription(topic.Topic) {
+			_, realFilter, ok := ParseSharedFilter(topic.Topic)
+			if ok && protocol.ValidateTopicFilter(realFilter) {
+				b.deliverRetainedMessages(clientID, sess, realFilter)
+			}
+			continue
+		}
 		b.deliverRetainedMessages(clientID, sess, topic.Topic)
 	}
 }
@@ -955,6 +979,23 @@ func (b *Broker) handleUnsubscribe(clientID string, sess *Session, pkt *protocol
 	}
 
 	for _, topic := range pkt.Topics {
+		// Handle shared subscription unsubscribe
+		if IsSharedSubscription(topic) {
+			shareName, realFilter, ok := ParseSharedFilter(topic)
+			if !ok || !protocol.ValidateTopicFilter(realFilter) {
+				if reasonCodes != nil {
+					reasonCodes = append(reasonCodes, protocol.ReasonCodeTopicFilterInvalid)
+				}
+				continue
+			}
+			b.topics.UnsubscribeShared(shareName, realFilter, clientID)
+			sess.RemoveSubscription(topic)
+			if reasonCodes != nil {
+				reasonCodes = append(reasonCodes, protocol.ReasonCodeSuccess)
+			}
+			continue
+		}
+
 		if !protocol.ValidateTopicFilter(topic) {
 			if reasonCodes != nil {
 				reasonCodes = append(reasonCodes, protocol.ReasonCodeTopicFilterInvalid)
@@ -979,6 +1020,8 @@ func (b *Broker) handleUnsubscribe(clientID string, sess *Session, pkt *protocol
 	b.metrics.SetSubscriptions(int(b.topics.SubscriberCount()))
 }
 
+// deliverToClient sends a PUBLISH packet to a specific client.
+// It checks subscription matches and applies QoS downgrade.
 func (b *Broker) deliverToClient(clientID, sourceClientID string, pkt *protocol.PublishPacket) {
 	sess, ok := b.sessions.GetSession(clientID)
 	if !ok {
@@ -988,8 +1031,9 @@ func (b *Broker) deliverToClient(clientID, sourceClientID string, pkt *protocol.
 		return
 	}
 
-	// Use the lower of published and subscribed QoS
-	matches, subQoS := sess.MatchesSubscription(pkt.Topic)
+	// Look up subscription options for the matching subscription to get
+	// the SubscriptionIdentifier (MQTT 5.0) for the delivered PUBLISH.
+	matches, subQoS, subOpts := sess.MatchesSubscription(pkt.Topic)
 	if !matches {
 		return
 	}
@@ -997,10 +1041,36 @@ func (b *Broker) deliverToClient(clientID, sourceClientID string, pkt *protocol.
 	if subQoS < deliverQoS {
 		deliverQoS = subQoS
 	}
+	b.doDeliver(clientID, pkt, deliverQoS, subOpts)
+}
 
-	// MQTT 5.0 flow control (ReceiveMaximum): before sending a QoS 1/2 message
-	// to this client, check that the number of outstanding unacknowledged messages
-	// has not reached the negotiated ReceiveMaximum (§4.9.0).
+// deliverToSharedClient delivers a PUBLISH to a shared subscription member.
+// MatchesSubscription is skipped — the match was already done by MatchShared.
+func (b *Broker) deliverToSharedClient(clientID, sourceClientID string, pkt *protocol.PublishPacket, subQoS uint8) {
+	sess, ok := b.sessions.GetSession(clientID)
+	if !ok {
+		return
+	}
+	if sourceClientID != "" && clientID == sourceClientID && !sess.AllowsLocalPublish(pkt.Topic) {
+		return
+	}
+	deliverQoS := pkt.FixedHeader.QoS
+	if subQoS < deliverQoS {
+		deliverQoS = subQoS
+	}
+	b.doDeliver(clientID, pkt, deliverQoS, SubscriptionOptions{QoS: subQoS})
+}
+
+// doDeliver performs the actual PUBLISH write after QoS negotiation.
+// If subscription options include a SubscriptionIdentifier, it is added to
+// the outgoing PUBLISH properties (MQTT 5.0 3.3.2.3.7).
+func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliverQoS uint8, subOpts ...SubscriptionOptions) {
+	sess, ok := b.sessions.GetSession(clientID)
+	if !ok {
+		return
+	}
+
+	// MQTT 5.0 flow control (ReceiveMaximum)
 	if deliverQoS > 0 && !sess.CanSendOutbound() {
 		b.metrics.IncMessagesDropped("receive_max_exceeded")
 		b.metrics.IncErrors("flow_control")
@@ -1018,21 +1088,34 @@ func (b *Broker) deliverToClient(clientID, sourceClientID string, pkt *protocol.
 		Payload: pkt.Payload,
 	}
 
-	// Assign packet ID for QoS 1 and 2
+	// Include SubscriptionIdentifier from the matching subscription (MQTT 5.0).
+	if len(subOpts) > 0 && subOpts[0].SubscriptionIdentifier != nil {
+		pubPkt.Properties = &protocol.Properties{
+			SubscriptionIdentifier: subOpts[0].SubscriptionIdentifier,
+		}
+	}
+
 	if deliverQoS > 0 {
 		pubPkt.PacketID = sess.NextPacketID()
 	}
 
-	// Track sent messages for statistics
 	sess.TrackSent(len(pkt.Topic) + len(pkt.Payload))
 
-	// Track outbound unacknowledged count for ReceiveMaximum flow control
 	if deliverQoS > 0 {
 		sess.IncOutboundUnacked()
 	}
 
 	b.writePacket(clientID, pubPkt)
 	b.metrics.IncMessagesDelivered(deliverQoS)
+}
+
+// routeSharedPublish delivers a PUBLISH to shared subscribers via MatchShared,
+// which selects one subscriber per share group using round-robin.
+func (b *Broker) routeSharedPublish(sourceClientID string, pkt *protocol.PublishPacket) {
+	shared := b.topics.MatchShared(pkt.Topic)
+	for _, sub := range shared {
+		b.deliverToSharedClient(sub.ClientID, sourceClientID, pkt, sub.QoS)
+	}
 }
 
 func (b *Broker) deliverRetainedMessages(clientID string, sess *Session, topicFilter string) {
@@ -1051,8 +1134,10 @@ func (b *Broker) deliverRetainedMessages(clientID string, sess *Session, topicFi
 
 	for _, msg := range retained {
 		deliverQoS := msg.QoS
-		// Downgrade QoS to the lower of stored and subscribed QoS
-		_, subQoS := sess.MatchesSubscription(msg.Topic)
+		matches, subQoS, subOpts := sess.MatchesSubscription(msg.Topic)
+		if !matches {
+			continue
+		}
 		if subQoS < deliverQoS {
 			deliverQoS = subQoS
 		}
@@ -1068,6 +1153,13 @@ func (b *Broker) deliverRetainedMessages(clientID string, sess *Session, topicFi
 
 		if deliverQoS > 0 {
 			pubPkt.PacketID = sess.NextPacketID()
+		}
+
+		// Include SubscriptionIdentifier from matching subscription
+		if subOpts.SubscriptionIdentifier != nil {
+			pubPkt.Properties = &protocol.Properties{
+				SubscriptionIdentifier: subOpts.SubscriptionIdentifier,
+			}
 		}
 
 		// Track sent messages for statistics
@@ -1129,7 +1221,7 @@ func (b *Broker) buildConnAckProperties(sess *Session) *protocol.Properties {
 	}
 	wildcardAvailable := byte(1)
 	subIDAvailable := byte(0)
-	sharedSubAvailable := byte(0)
+	sharedSubAvailable := byte(1)
 
 	receiveMax := sess.ReceiveMax
 	if receiveMax == 0 {
@@ -1210,6 +1302,7 @@ func (b *Broker) handlePubRel(clientID string, packetID uint16) {
 		for _, sub := range subscribers {
 			b.deliverToClient(sub.ClientID, clientID, pubPkt)
 		}
+		b.routeSharedPublish(clientID, pubPkt)
 	}
 	b.qos.AckPubRel(clientID, packetID)
 }
@@ -1277,6 +1370,7 @@ func (b *Broker) republish(clientID string, packetID uint16, topic string, paylo
 	for _, sub := range subscribers {
 		b.deliverToClient(sub.ClientID, clientID, pubPkt)
 	}
+	b.routeSharedPublish(clientID, pubPkt)
 	return nil
 }
 
@@ -1299,6 +1393,7 @@ func (b *Broker) publishWill(topic string, payload []byte, qos uint8, retain boo
 	for _, sub := range subscribers {
 		b.deliverToClient(sub.ClientID, "", pubPkt)
 	}
+	b.routeSharedPublish("", pubPkt)
 	return nil
 }
 

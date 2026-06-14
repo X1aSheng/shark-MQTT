@@ -20,6 +20,12 @@ type TopicTree struct {
 	root      *TopicNode
 	mu        sync.RWMutex
 	totalSubs atomic.Int64
+
+	// sharedSubs tracks shared subscriptions keyed as:
+	// shareName -> topicFilter -> clientID -> QoS
+	sharedSubs     map[string]map[string]map[string]uint8
+	sharedCounters map[string]*atomic.Uint64 // shareName -> round-robin counter
+	sharedSubsMu   sync.RWMutex
 }
 
 // NewTopicTree creates a new TopicTree.
@@ -29,6 +35,8 @@ func NewTopicTree() *TopicTree {
 			children:    make(map[string]*TopicNode),
 			subscribers: make(map[string]uint8),
 		},
+		sharedSubs:     make(map[string]map[string]map[string]uint8),
+		sharedCounters: make(map[string]*atomic.Uint64),
 	}
 }
 
@@ -173,6 +181,143 @@ func (tt *TopicTree) matchNodeWithSys(node *TopicNode, parts []string, depth int
 // SubscriberCount returns the total number of subscription entries.
 func (tt *TopicTree) SubscriberCount() int64 {
 	return tt.totalSubs.Load()
+}
+
+// sharedSubPrefix is the prefix for MQTT 5.0 shared subscriptions.
+const sharedSubPrefix = "$share/"
+
+// IsSharedSubscription reports whether a topic filter is a shared subscription.
+func IsSharedSubscription(filter string) bool {
+	return len(filter) > len(sharedSubPrefix) && filter[:len(sharedSubPrefix)] == sharedSubPrefix
+}
+
+// ParseSharedFilter parses a shared subscription filter of the form
+// "$share/{ShareName}/{filter}" and returns the share name and actual filter.
+func ParseSharedFilter(filter string) (shareName, topicFilter string, ok bool) {
+	if !IsSharedSubscription(filter) {
+		return "", "", false
+	}
+	rest := filter[len(sharedSubPrefix):]
+	slashIdx := -1
+	for i, c := range rest {
+		if c == '/' {
+			slashIdx = i
+			break
+		}
+	}
+	if slashIdx <= 0 || slashIdx >= len(rest)-1 {
+		return "", "", false
+	}
+	return rest[:slashIdx], rest[slashIdx+1:], true
+}
+
+// SubscribeShared adds a client to a shared subscription group.
+func (tt *TopicTree) SubscribeShared(shareName, topicFilter, clientID string, qos uint8) {
+	tt.sharedSubsMu.Lock()
+	defer tt.sharedSubsMu.Unlock()
+
+	if tt.sharedSubs[shareName] == nil {
+		tt.sharedSubs[shareName] = make(map[string]map[string]uint8)
+	}
+	if tt.sharedSubs[shareName][topicFilter] == nil {
+		tt.sharedSubs[shareName][topicFilter] = make(map[string]uint8)
+	}
+	if _, exists := tt.sharedSubs[shareName][topicFilter][clientID]; !exists {
+		tt.totalSubs.Add(1)
+	}
+	tt.sharedSubs[shareName][topicFilter][clientID] = qos
+
+	// Ensure round-robin counter exists
+	if tt.sharedCounters[shareName] == nil {
+		tt.sharedCounters[shareName] = new(atomic.Uint64)
+	}
+}
+
+// UnsubscribeShared removes a client from a shared subscription group.
+func (tt *TopicTree) UnsubscribeShared(shareName, topicFilter, clientID string) {
+	tt.sharedSubsMu.Lock()
+	defer tt.sharedSubsMu.Unlock()
+
+	if tt.sharedSubs[shareName] == nil {
+		return
+	}
+	if tt.sharedSubs[shareName][topicFilter] == nil {
+		return
+	}
+	if _, exists := tt.sharedSubs[shareName][topicFilter][clientID]; exists {
+		tt.totalSubs.Add(-1)
+	}
+	delete(tt.sharedSubs[shareName][topicFilter], clientID)
+
+	// Clean up empty maps
+	if len(tt.sharedSubs[shareName][topicFilter]) == 0 {
+		delete(tt.sharedSubs[shareName], topicFilter)
+	}
+	if len(tt.sharedSubs[shareName]) == 0 {
+		delete(tt.sharedSubs, shareName)
+		delete(tt.sharedCounters, shareName)
+	}
+}
+
+// SharedSubscriber represents a shared subscription match result.
+type SharedSubscriber struct {
+	ClientID  string
+	QoS       uint8
+	ShareName string
+}
+
+// MatchShared returns shared subscribers for a given topic, selecting exactly
+// one subscriber per share group in round-robin fashion.
+func (tt *TopicTree) MatchShared(topic string) []SharedSubscriber {
+	tt.sharedSubsMu.RLock()
+	defer tt.sharedSubsMu.RUnlock()
+
+	if len(tt.sharedSubs) == 0 {
+		return nil
+	}
+
+	var results []SharedSubscriber
+	for shareName, filters := range tt.sharedSubs {
+		matchingFilters := make([]string, 0)
+		for filter := range filters {
+			if protocol.MatchTopic(filter, topic) {
+				matchingFilters = append(matchingFilters, filter)
+			}
+		}
+		if len(matchingFilters) == 0 {
+			continue
+		}
+
+		// Collect all clients from matching filters, dedup by clientID
+		type member struct {
+			clientID string
+			qos      uint8
+		}
+		seen := make(map[string]struct{})
+		var members []member
+		for _, filter := range matchingFilters {
+			for cid, qos := range tt.sharedSubs[shareName][filter] {
+				if _, dup := seen[cid]; !dup {
+					seen[cid] = struct{}{}
+					members = append(members, member{clientID: cid, qos: qos})
+				}
+			}
+		}
+
+		if len(members) == 0 {
+			continue
+		}
+
+		// Round-robin select one member
+		counter := tt.sharedCounters[shareName]
+		idx := int(counter.Add(1)-1) % len(members)
+		results = append(results, SharedSubscriber{
+			ClientID:  members[idx].clientID,
+			QoS:       members[idx].qos,
+			ShareName: shareName,
+		})
+	}
+	return results
 }
 
 func (tt *TopicTree) collectAllSubscribers(node *TopicNode, results *[]Subscriber, visited map[string]struct{}) {

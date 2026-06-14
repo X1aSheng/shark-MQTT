@@ -64,10 +64,11 @@ type Session struct {
 
 // SubscriptionOptions captures MQTT subscription options that affect delivery.
 type SubscriptionOptions struct {
-	QoS               uint8
-	NoLocal           bool
-	RetainAsPublished bool
-	RetainHandling    uint8
+	QoS                    uint8
+	NoLocal                bool
+	RetainAsPublished      bool
+	RetainHandling         uint8
+	SubscriptionIdentifier *uint32 // MQTT 5.0: included in delivered PUBLISH
 }
 
 // InflightMsg tracks an in-flight QoS message.
@@ -253,10 +254,11 @@ func (s *Session) AddSubscriptionFilter(filter protocol.TopicFilter) {
 	}
 	s.Subscriptions[filter.Topic] = filter.QoS
 	s.SubOptions[filter.Topic] = SubscriptionOptions{
-		QoS:               filter.QoS,
-		NoLocal:           filter.NoLocal,
-		RetainAsPublished: filter.RetainAsPublished,
-		RetainHandling:    filter.RetainHandling,
+		QoS:                    filter.QoS,
+		NoLocal:                filter.NoLocal,
+		RetainAsPublished:      filter.RetainAsPublished,
+		RetainHandling:         filter.RetainHandling,
+		SubscriptionIdentifier: filter.SubscriptionIdentifier,
 	}
 }
 
@@ -277,15 +279,18 @@ func (s *Session) HasSubscription(topic string) bool {
 }
 
 // MatchesSubscription checks if a topic matches any of the session's subscriptions.
-func (s *Session) MatchesSubscription(topic string) (bool, uint8) {
+// Returns matched status, QoS, and full subscription options (including MQTT 5.0
+// SubscriptionIdentifier which must be forwarded in delivered PUBLISH packets).
+func (s *Session) MatchesSubscription(topic string) (bool, uint8, SubscriptionOptions) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for pattern, qos := range s.Subscriptions {
 		if protocol.MatchTopic(pattern, topic) {
-			return true, qos
+			opts := s.SubOptions[pattern]
+			return true, qos, opts
 		}
 	}
-	return false, 0
+	return false, 0, SubscriptionOptions{}
 }
 
 // AllowsLocalPublish reports whether a matching subscription accepts messages

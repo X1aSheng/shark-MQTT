@@ -124,7 +124,7 @@ func TestSessionSubscriptions(t *testing.T) {
 	sess.AddSubscription("sensor/+/temp", 1)
 
 	// Test matches subscription
-	matches, qos := sess.MatchesSubscription("test/device/data")
+	matches, qos, _ := sess.MatchesSubscription("test/device/data")
 	if !matches {
 		t.Error("expected match for test/#")
 	}
@@ -132,7 +132,7 @@ func TestSessionSubscriptions(t *testing.T) {
 		t.Errorf("expected QoS 0, got %d", qos)
 	}
 
-	matches, qos = sess.MatchesSubscription("sensor/room1/temp")
+	matches, qos, _ = sess.MatchesSubscription("sensor/room1/temp")
 	if !matches {
 		t.Error("expected match for sensor/+/temp")
 	}
@@ -141,14 +141,14 @@ func TestSessionSubscriptions(t *testing.T) {
 	}
 
 	// Test no match
-	matches, _ = sess.MatchesSubscription("other/topic")
+	matches, _, _ = sess.MatchesSubscription("other/topic")
 	if matches {
 		t.Error("expected no match for other/topic")
 	}
 
 	// Test remove subscription
 	sess.RemoveSubscription("test/#")
-	matches, _ = sess.MatchesSubscription("test/device/data")
+	matches, _, _ = sess.MatchesSubscription("test/device/data")
 	if matches {
 		t.Error("expected no match after removing subscription")
 	}

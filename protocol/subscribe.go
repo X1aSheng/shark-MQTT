@@ -33,6 +33,13 @@ func (c *Codec) decodeSubscribe(r io.Reader, fh *FixedHeader) (*SubscribePacket,
 		}
 	}
 
+	// Extract SubscriptionIdentifier from packet-level properties (MQTT 5.0 3.8.2.1.2).
+	// When present, it applies to ALL topic filters in this SUBSCRIBE.
+	var subID *uint32
+	if props != nil && props.SubscriptionIdentifier != nil {
+		subID = props.SubscriptionIdentifier
+	}
+
 	var topics []TopicFilter
 	for reader.Len() > 0 {
 		topic, err := readStringFromReader(reader)
@@ -47,11 +54,12 @@ func (c *Codec) decodeSubscribe(r io.Reader, fh *FixedHeader) (*SubscribePacket,
 			return nil, ErrMalformedPacket
 		}
 		topics = append(topics, TopicFilter{
-			Topic:             topic,
-			QoS:               optsByte & 0x03,
-			NoLocal:           (optsByte & 0x04) != 0,
-			RetainAsPublished: (optsByte & 0x08) != 0,
-			RetainHandling:    (optsByte >> 4) & 0x03,
+			Topic:                  topic,
+			QoS:                    optsByte & 0x03,
+			NoLocal:                (optsByte & 0x04) != 0,
+			RetainAsPublished:      (optsByte & 0x08) != 0,
+			RetainHandling:         (optsByte >> 4) & 0x03,
+			SubscriptionIdentifier: subID,
 		})
 	}
 	if len(topics) == 0 {
