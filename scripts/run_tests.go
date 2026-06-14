@@ -9,9 +9,10 @@
 //	go run scripts/run_tests.go -mode integration      # integration tests only
 //	go run scripts/run_tests.go -mode benchmark        # benchmarks only
 //	go run scripts/run_tests.go -mode cover            # coverage report
+//	go run scripts/run_tests.go -save-json             # also save raw JSON files
 //
-// Logs saved to ./logs/ as <timestamp>_<type>.{json,log}
-// Example: logs/20260428_190627_unit.json
+// By default, tests run with -v and save readable text logs to ./logs/.
+// With -save-json, raw go test -json output is also saved (larger files).
 
 package main
 
@@ -30,13 +31,20 @@ const jsonModulePrefix = "github.com/X1aSheng/shark-mqtt/"
 
 var reJSONTime = regexp.MustCompile(`("Time":"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3})\d*[^"]*"`)
 
+// saveJSON controls whether raw go test -json output files are written.
+// Set via -save-json flag. Default false — only readable .log files are saved.
+var saveJSON bool
+
 func main() {
 	var (
-		mode    = flag.String("mode", "all", "test mode: unit, integration, benchmark, cover, all")
-		logDir  = flag.String("logdir", "logs", "directory for log output")
-		timeout = flag.Duration("timeout", 5*time.Minute, "overall test timeout")
+		mode       = flag.String("mode", "all", "test mode: unit, integration, benchmark, cover, all")
+		logDir     = flag.String("logdir", "logs", "directory for log output")
+		timeout    = flag.Duration("timeout", 5*time.Minute, "overall test timeout")
+		saveJSONFlag = flag.Bool("save-json", false, "also save raw JSON output from go test -json")
 	)
 	flag.Parse()
+
+	saveJSON = *saveJSONFlag
 
 	projectDir := findProjectDir()
 	logsDir := filepath.Join(projectDir, *logDir)
@@ -93,27 +101,42 @@ func main() {
 }
 
 // -------------------------------------------------------------------
-// runTest runs go test with -json, saves .json + parsed .log
+// runTest runs go test. By default saves text .log; with -save-json
+// also saves raw .json from go test -json.
 // -------------------------------------------------------------------
 func runTest(projectDir, logsDir, ts, name, label string, packages ...string) bool {
-	jsonFile := filepath.Join(logsDir, ts+"_"+name+".json")
 	logFile := filepath.Join(logsDir, ts+"_"+name+".log")
 
 	fmt.Println()
 	printCyan(fmt.Sprintf(">>> [%s] Running...", label))
-	printCyan(fmt.Sprintf("    JSON  => %s", jsonFile))
+	if saveJSON {
+		printCyan(fmt.Sprintf("    JSON  => %s", filepath.Join(logsDir, ts+"_"+name+".json")))
+	}
 	printCyan(fmt.Sprintf("    Report=> %s", logFile))
 	fmt.Println()
 
-	args := []string{"test", "-json", "-v", "-count=1", "-timeout=300s"}
-	args = append(args, packages...)
-	testErr := goCapture(projectDir, args, jsonFile)
+	var testErr error
+	if saveJSON {
+		jsonFile := filepath.Join(logsDir, ts+"_"+name+".json")
+		args := []string{"test", "-json", "-v", "-count=1", "-timeout=300s"}
+		args = append(args, packages...)
+		testErr = goCapture(projectDir, args, jsonFile)
 
-	// Parse JSON to readable report
-	out, _ := goOutput(projectDir, []string{"run", "scripts/parse_test_log.go", jsonFile})
-	os.WriteFile(logFile, out, 0o644)
-	if len(out) > 0 {
-		fmt.Print(string(out))
+		// Parse JSON to readable report
+		out, _ := goOutput(projectDir, []string{"run", "scripts/parse_test_log.go", jsonFile})
+		os.WriteFile(logFile, out, 0o644)
+		if len(out) > 0 {
+			fmt.Print(string(out))
+		}
+	} else {
+		args := []string{"test", "-v", "-count=1", "-timeout=300s"}
+		args = append(args, packages...)
+		out, err := goOutput(projectDir, args)
+		if len(out) > 0 {
+			fmt.Print(string(out))
+		}
+		os.WriteFile(logFile, out, 0o644)
+		testErr = err
 	}
 
 	fmt.Println()
@@ -126,7 +149,7 @@ func runTest(projectDir, logsDir, ts, name, label string, packages ...string) bo
 }
 
 // -------------------------------------------------------------------
-// runBenchmark runs go test -bench, saves .json + parsed .log
+// runBenchmark runs go test -bench, saves text .log (or raw .json with -save-json).
 // -------------------------------------------------------------------
 func runBenchmark(projectDir, logsDir, ts string) bool {
 	packages := []string{
@@ -137,23 +160,37 @@ func runBenchmark(projectDir, logsDir, ts string) bool {
 		"./pkg/...",
 	}
 
-	jsonFile := filepath.Join(logsDir, ts+"_benchmark.json")
 	logFile := filepath.Join(logsDir, ts+"_benchmark.log")
 
 	fmt.Println()
 	printCyan(">>> [Benchmarks] Running...")
-	printCyan(fmt.Sprintf("    JSON  => %s", jsonFile))
+	if saveJSON {
+		printCyan(fmt.Sprintf("    JSON  => %s", filepath.Join(logsDir, ts+"_benchmark.json")))
+	}
 	printCyan(fmt.Sprintf("    Report=> %s", logFile))
 	fmt.Println()
 
-	args := []string{"test", "-bench=.", "-benchmem", "-benchtime=500ms", "-run=^$", "-count=1", "-timeout=300s", "-json"}
-	args = append(args, packages...)
-	testErr := goCapture(projectDir, args, jsonFile)
+	var testErr error
+	if saveJSON {
+		jsonFile := filepath.Join(logsDir, ts+"_benchmark.json")
+		args := []string{"test", "-bench=.", "-benchmem", "-benchtime=500ms", "-run=^$", "-count=1", "-timeout=300s", "-json"}
+		args = append(args, packages...)
+		testErr = goCapture(projectDir, args, jsonFile)
 
-	out, _ := goOutput(projectDir, []string{"run", "scripts/parse_test_log.go", jsonFile})
-	os.WriteFile(logFile, out, 0o644)
-	if len(out) > 0 {
-		fmt.Print(string(out))
+		out, _ := goOutput(projectDir, []string{"run", "scripts/parse_test_log.go", jsonFile})
+		os.WriteFile(logFile, out, 0o644)
+		if len(out) > 0 {
+			fmt.Print(string(out))
+		}
+	} else {
+		args := []string{"test", "-bench=.", "-benchmem", "-benchtime=500ms", "-run=^$", "-count=1", "-timeout=300s"}
+		args = append(args, packages...)
+		out, err := goOutput(projectDir, args)
+		if len(out) > 0 {
+			fmt.Print(string(out))
+		}
+		os.WriteFile(logFile, out, 0o644)
+		testErr = err
 	}
 
 	fmt.Println()
