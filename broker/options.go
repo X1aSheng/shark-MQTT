@@ -26,10 +26,18 @@ type brokerOptions struct {
 	retryInterval          time.Duration
 	maxRetries             int
 	maxConnections         int
+	maxConnRate            float64 // connections per second (0 = unlimited)
+	maxPublishRate         int     // publishes per second per client (0 = unlimited)
 	maxPacketSize          int
 	sessionExpiry          time.Duration
 	sessionCleanupInterval time.Duration
 	keepAlive              uint16
+
+	// Resource limits
+	maxClientIDLength     int // max bytes for MQTT client ID (0 = unlimited)
+	maxTopicFiltersPerSub int // max topic filters per SUBSCRIBE packet
+	maxRetainedTopics     int // max retained messages (0 = unlimited)
+	connectionRateWindow  time.Duration
 }
 
 func defaultBrokerOptions() brokerOptions {
@@ -44,9 +52,15 @@ func defaultBrokerOptions() brokerOptions {
 		retryInterval:          10 * time.Second,
 		maxRetries:             3,
 		maxConnections:         10000,
+		maxConnRate:            0,
+		maxPublishRate:         0,
 		maxPacketSize:          256 * 1024,
 		sessionExpiry:          24 * time.Hour,
 		sessionCleanupInterval: 60 * time.Second,
+		maxClientIDLength:      128,
+		maxTopicFiltersPerSub:  100,
+		maxRetainedTopics:      10000,
+		connectionRateWindow:   time.Second,
 	}
 }
 
@@ -148,5 +162,47 @@ func WithSessionCleanupInterval(d time.Duration) Option {
 func WithBrokerKeepAlive(seconds uint16) Option {
 	return func(o *brokerOptions) {
 		o.keepAlive = seconds
+	}
+}
+
+// WithMaxConnectRate sets the maximum rate of new connections per second
+// (0 = unlimited). When exceeded, new connections are rejected with a
+// server-busy response.
+func WithMaxConnectRate(rate float64) Option {
+	return func(o *brokerOptions) {
+		o.maxConnRate = rate
+	}
+}
+
+// WithMaxPublishRate sets the maximum number of PUBLISH packets per second
+// per client (0 = unlimited). When exceeded, messages are silently dropped.
+func WithMaxPublishRate(rate int) Option {
+	return func(o *brokerOptions) {
+		o.maxPublishRate = rate
+	}
+}
+
+// WithMaxClientIDLength sets the maximum allowed length for a client ID
+// in bytes. The MQTT spec allows up to 65535, but shorter limits help
+// prevent resource exhaustion. Default is 128.
+func WithMaxClientIDLength(n int) Option {
+	return func(o *brokerOptions) {
+		o.maxClientIDLength = n
+	}
+}
+
+// WithMaxTopicFiltersPerSubscribe sets the maximum number of topic filters
+// allowed in a single SUBSCRIBE packet. Default is 100.
+func WithMaxTopicFiltersPerSubscribe(n int) Option {
+	return func(o *brokerOptions) {
+		o.maxTopicFiltersPerSub = n
+	}
+}
+
+// WithMaxRetainedTopics sets the maximum number of retained messages the
+// broker will store. Default is 10000, 0 means unlimited.
+func WithMaxRetainedTopics(n int) Option {
+	return func(o *brokerOptions) {
+		o.maxRetainedTopics = n
 	}
 }

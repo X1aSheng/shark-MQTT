@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/yaml.v3"
 )
 
@@ -94,7 +95,14 @@ func (f *FileAuth) Authenticate(ctx context.Context, clientID, username, passwor
 
 	user := f.users[idx]
 
-	if subtle.ConstantTimeCompare([]byte(password), []byte(user.Password)) == 0 {
+	// Support both bcrypt-hashed and plaintext passwords for backward
+	// compatibility. If the stored password starts with $2a, $2b, or
+	// $2y, use bcrypt comparison; otherwise use constant-time compare.
+	if IsBcryptHash(user.Password) {
+		if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
+			return ErrAuthFailed
+		}
+	} else if subtle.ConstantTimeCompare([]byte(password), []byte(user.Password)) == 0 {
 		return ErrAuthFailed
 	}
 

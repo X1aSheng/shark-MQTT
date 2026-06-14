@@ -5,10 +5,12 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"strings"
 	"sync"
 
 	"github.com/X1aSheng/shark-mqtt/errs"
 	"github.com/X1aSheng/shark-mqtt/protocol"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // Re-export errs sentinels for backward compatibility.
@@ -59,11 +61,44 @@ func NewStaticAuth() *StaticAuth {
 	}
 }
 
-// AddCredentials adds username/password pair.
+// AddCredentials adds username/password pair. Passwords are stored as-is
+// for backward compatibility. Use SetHashedPassword to store bcrypt hashes.
 func (s *StaticAuth) AddCredentials(username, password string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.credentials[username] = password
+}
+
+// SetHashedPassword adds a username/password pair where the password is
+// automatically bcrypt-hashed before storage. This is the recommended method
+// for production use to avoid storing plaintext passwords in memory.
+func (s *StaticAuth) SetHashedPassword(username, password string) error {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.credentials[username] = string(hash)
+	return nil
+}
+
+// IsBcryptHash reports whether a stored password string appears to be a
+// bcrypt hash (starts with $2a$, $2b$, or $2y$).
+func IsBcryptHash(stored string) bool {
+	return strings.HasPrefix(stored, "$2a$") ||
+		strings.HasPrefix(stored, "$2b$") ||
+		strings.HasPrefix(stored, "$2y$")
+}
+
+// HashPassword generates a bcrypt hash of the given plaintext password.
+// This can be used to pre-hash passwords for file-based auth configurations.
+func HashPassword(password string) (string, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hash), nil
 }
 
 // AddACL adds access control for a user.
@@ -82,7 +117,13 @@ func (s *StaticAuth) Authenticate(ctx context.Context, clientID, username, passw
 		return ErrAuthFailed
 	}
 
-	if subtle.ConstantTimeCompare([]byte(password), []byte(expected)) == 0 {
+	// If the stored password is a bcrypt hash, use bcrypt comparison.
+	// Otherwise fall back to constant-time compare for plaintext compat.
+	if IsBcryptHash(expected) {
+		if err := bcrypt.CompareHashAndPassword([]byte(expected), []byte(password)); err != nil {
+			return ErrAuthFailed
+		}
+	} else if subtle.ConstantTimeCompare([]byte(password), []byte(expected)) == 0 {
 		return ErrAuthFailed
 	}
 	return nil

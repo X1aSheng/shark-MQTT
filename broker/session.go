@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/X1aSheng/shark-mqtt/protocol"
@@ -27,6 +28,15 @@ type Session struct {
 	ReceiveMax    uint16
 	TopicAliasMax uint16
 	mu            sync.RWMutex
+
+	// outboundUnacked tracks QoS 1/2 PUBLISH packets sent TO this client
+	// that have not yet been acknowledged (PUBACK for QoS 1, PUBCOMP for QoS 2).
+	// Combined with ReceiveMax, this enforces MQTT 5.0 flow control (§4.9).
+	outboundUnacked int32
+
+	// publishRate tracks the rate of PUBLISH packets from this client for
+	// server-enforced rate limiting.
+	publishRate *publishRateTracker
 
 	// ExpiryInterval is the session expiry interval in seconds (MQTT 5.0 §3.1.2.11.2).
 	// Server caps this at its configured max. 0 = session expires immediately on disconnect.
@@ -158,6 +168,9 @@ func (m *Manager) CreateSession(clientID string, connectPkt *protocol.ConnectPac
 	sess.stats.LastConnectedAt = sess.ConnectedAt
 	sess.stats.Subscriptions = 0
 	sess.stats.InflightCount = 0
+
+	// Initialize publish rate tracker with a 1-second window
+	sess.publishRate = newPublishRateTracker(time.Second)
 
 	m.sessions[clientID] = sess
 	return sess
@@ -554,4 +567,28 @@ func (s *Session) TrackSent(msgSize int) {
 	defer s.mu.Unlock()
 	s.stats.MessagesSent++
 	s.stats.BytesSent += uint64(msgSize)
+}
+
+// CanSendOutbound reports whether another QoS 1/2 message can be sent to this
+// client without exceeding the ReceiveMaximum limit (MQTT 5.0 §4.9).
+func (s *Session) CanSendOutbound() bool {
+	return int(atomic.LoadInt32(&s.outboundUnacked)) < int(s.ReceiveMax)
+}
+
+// IncOutboundUnacked increments the outbound unacknowledged counter.
+// Called when a QoS 1/2 PUBLISH is sent to this client.
+func (s *Session) IncOutboundUnacked() {
+	atomic.AddInt32(&s.outboundUnacked, 1)
+}
+
+// DecOutboundUnacked decrements the outbound unacknowledged counter.
+// Called when a PUBACK (QoS 1) or PUBCOMP (QoS 2) is received from this client.
+func (s *Session) DecOutboundUnacked() {
+	atomic.AddInt32(&s.outboundUnacked, -1)
+}
+
+// ResetOutboundUnacked resets the outbound unacknowledged counter to zero.
+// Called on disconnect.
+func (s *Session) ResetOutboundUnacked() {
+	atomic.StoreInt32(&s.outboundUnacked, 0)
 }

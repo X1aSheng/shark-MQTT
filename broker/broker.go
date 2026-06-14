@@ -54,6 +54,9 @@ type Broker struct {
 	retainedMu    sync.Mutex
 	retainedCount atomic.Int64 // count of retained messages maintained with retainedMu
 
+	// connRate limits the rate of new TCP connections accepted.
+	connRate *connRateLimiter
+
 	ctx    context.Context
 	cancel context.CancelFunc
 	opts   brokerOptions
@@ -81,6 +84,7 @@ func New(opts ...Option) *Broker {
 		pluginMgr:     o.pluginManager,
 		connections:   make(map[string]*clientState),
 		receivedQoS2:  make(map[string]map[uint16]struct{}),
+		connRate:      newConnRateLimiter(o.connectionRateWindow),
 		ctx:           ctx,
 		cancel:        cancel,
 		opts:          o,
@@ -130,6 +134,20 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 		}
 	}
 
+	// Check connection rate limit
+	if b.opts.maxConnRate > 0 {
+		b.connRate.SetRate(b.opts.maxConnRate)
+		if !b.connRate.Allow() {
+			b.metrics.IncRejections("rate_limited")
+			b.metrics.IncErrors("rate_limit")
+			b.logger.Debug("connection rate limit exceeded",
+				"remote", conn.RemoteAddr().String())
+			b.sendConnAckRaw(conn, c, protocol.ReasonCodeConnectionRateExceeded, false)
+			_ = conn.Close()
+			return fmt.Errorf("broker: connection rate limit exceeded")
+		}
+	}
+
 	// Plugin hook: OnAccept
 	b.dispatch(plugin.OnAccept, &plugin.Context{
 		RemoteAddr: conn.RemoteAddr().String(),
@@ -166,6 +184,21 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 		}
 		b.sendConnAckRaw(conn, c, byte(reasonCode), false)
 		return fmt.Errorf("broker: CONNECT validation failed: %w", err)
+	}
+
+	// Check client ID length limit to prevent resource exhaustion
+	if b.opts.maxClientIDLength > 0 && len(connectPkt.ClientID) > b.opts.maxClientIDLength {
+		b.metrics.IncRejections("client_id_too_long")
+		b.metrics.IncErrors("protocol")
+		var reasonCode byte = protocol.ReasonCodeTopicNameInvalid
+		if connectPkt.ProtocolVersion == protocol.Version50 {
+			reasonCode = protocol.ReasonCodeProtocolError
+		} else {
+			reasonCode = protocol.ConnAckIdentifierRejected
+		}
+		b.sendConnAckRaw(conn, c, reasonCode, false)
+		return fmt.Errorf("broker: client ID %d bytes exceeds max %d bytes",
+			len(connectPkt.ClientID), b.opts.maxClientIDLength)
 	}
 
 	// Clear read deadline
@@ -223,6 +256,11 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 
 	if assignedClientID != "" {
 		sess.AssignedClientID = assignedClientID
+	}
+
+	// Apply server-enforced publish rate limit if configured
+	if b.opts.maxPublishRate > 0 {
+		sess.publishRate.SetMaxRate(b.opts.maxPublishRate)
 	}
 
 	// Set session expiry interval (MQTT 5.0 §3.1.2.11.2).
@@ -463,6 +501,11 @@ func (b *Broker) disconnect(clientID string, conn net.Conn) {
 		}
 	}
 
+	// Reset flow control counter before removing session
+	if sess, ok := b.sessions.GetSession(clientID); ok {
+		sess.ResetOutboundUnacked()
+	}
+
 	b.sessions.RemoveSession(clientID)
 	b.qos.RemoveClient(clientID)
 
@@ -536,6 +579,20 @@ func (b *Broker) readLoop(clientID string, sess *Session, codec *protocol.Codec,
 			b.handlePubRel(clientID, p.PacketID)
 		case *protocol.PubCompPacket:
 			b.handlePubComp(clientID, p.PacketID)
+		case *protocol.AuthPacket:
+			// MQTT 5.0 enhanced authentication is not supported.
+			// Per spec §4.12, send DISCONNECT with ReasonCode 0x8C
+			// (Bad Authentication Method) when AUTH is received.
+			b.logger.Debug("AUTH packet received but enhanced auth not supported",
+				"clientID", clientID, "reasonCode", p.ReasonCode)
+			b.writePacket(clientID, &protocol.DisconnectPacket{
+				FixedHeader: protocol.FixedHeader{
+					PacketType: protocol.PacketTypeDisconnect,
+				},
+				ReasonCode: protocol.ReasonCodeBadAuthMethod,
+			})
+			b.gracefulDisconnect(clientID, conn)
+			return
 		default:
 			b.logger.Debug("unhandled packet type", "clientID", clientID, "type", fmt.Sprintf("%T", pkt))
 		}
@@ -547,6 +604,14 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 	defer func() {
 		b.metrics.ObserveMessageLatency(time.Since(start).Seconds(), pkt.FixedHeader.QoS)
 	}()
+
+	// Check client publish rate limit
+	if sess != nil && sess.publishRate != nil && !sess.publishRate.Allow() {
+		b.metrics.IncMessagesDropped("rate_limited")
+		b.metrics.IncErrors("rate_limit")
+		b.logger.Debug("publish rate limit exceeded", "clientID", clientID)
+		return
+	}
 
 	// Resolve Topic Alias (MQTT 5.0 §3.3.2.3.4).
 	// If TopicAlias is set and TopicName is empty, resolve from alias map.
@@ -699,6 +764,23 @@ func (b *Broker) handleRetainedMessage(pkt *protocol.PublishPacket) {
 		return
 	}
 
+	// Enforce retained message count limit before attempting to store
+	if len(pkt.Payload) > 0 && b.opts.maxRetainedTopics > 0 &&
+		int(b.retainedCount.Load()) >= b.opts.maxRetainedTopics {
+
+		// Check if this is an update to an existing retained message
+		b.retainedMu.Lock()
+		if _, err := b.retainedStore.GetRetained(b.ctx, pkt.Topic); err != nil {
+			// New retained topic would exceed the limit
+			b.retainedMu.Unlock()
+			b.logger.Debug("retained message limit reached, dropping",
+				"topic", pkt.Topic, "max", b.opts.maxRetainedTopics)
+			b.metrics.IncMessagesDropped("retained_limit")
+			return
+		}
+		b.retainedMu.Unlock()
+	}
+
 	b.retainedMu.Lock()
 	defer b.retainedMu.Unlock()
 
@@ -738,6 +820,22 @@ func (b *Broker) handleRetainedMessage(pkt *protocol.PublishPacket) {
 }
 
 func (b *Broker) handleSubscribe(clientID string, sess *Session, pkt *protocol.SubscribePacket) {
+	// Enforce topic filter count limit to prevent resource exhaustion
+	if b.opts.maxTopicFiltersPerSub > 0 && len(pkt.Topics) > b.opts.maxTopicFiltersPerSub {
+		b.logger.Debug("too many topic filters in SUBSCRIBE",
+			"clientID", clientID, "count", len(pkt.Topics),
+			"max", b.opts.maxTopicFiltersPerSub)
+		b.writePacket(clientID, &protocol.SubAckPacket{
+			FixedHeader: protocol.FixedHeader{
+				PacketType: protocol.PacketTypeSubAck,
+			},
+			PacketID:    pkt.PacketID,
+			ReasonCodes: make([]byte, len(pkt.Topics)),
+		})
+		b.metrics.IncErrors("protocol")
+		return
+	}
+
 	reasonCodes := make([]byte, len(pkt.Topics))
 	deliverRetained := make([]bool, len(pkt.Topics))
 	for i, topic := range pkt.Topics {
@@ -841,6 +939,17 @@ func (b *Broker) deliverToClient(clientID, sourceClientID string, pkt *protocol.
 		deliverQoS = subQoS
 	}
 
+	// MQTT 5.0 flow control (ReceiveMaximum): before sending a QoS 1/2 message
+	// to this client, check that the number of outstanding unacknowledged messages
+	// has not reached the negotiated ReceiveMaximum (§4.9.0).
+	if deliverQoS > 0 && !sess.CanSendOutbound() {
+		b.metrics.IncMessagesDropped("receive_max_exceeded")
+		b.metrics.IncErrors("flow_control")
+		b.logger.Debug("receive maximum exceeded, dropping message",
+			"clientID", clientID, "receiveMax", sess.ReceiveMax)
+		return
+	}
+
 	pubPkt := &protocol.PublishPacket{
 		FixedHeader: protocol.FixedHeader{
 			PacketType: protocol.PacketTypePublish,
@@ -857,6 +966,11 @@ func (b *Broker) deliverToClient(clientID, sourceClientID string, pkt *protocol.
 
 	// Track sent messages for statistics
 	sess.TrackSent(len(pkt.Topic) + len(pkt.Payload))
+
+	// Track outbound unacknowledged count for ReceiveMaximum flow control
+	if deliverQoS > 0 {
+		sess.IncOutboundUnacked()
+	}
 
 	b.writePacket(clientID, pubPkt)
 	b.metrics.IncMessagesDelivered(deliverQoS)
@@ -1010,6 +1124,9 @@ func (b *Broker) sendConnAckRaw(conn net.Conn, codec *protocol.Codec, reasonCode
 
 func (b *Broker) handlePubAck(clientID string, packetID uint16) {
 	b.qos.AckQoS1(clientID, packetID)
+	if sess, ok := b.sessions.GetSession(clientID); ok {
+		sess.DecOutboundUnacked()
+	}
 }
 
 func (b *Broker) handlePubRec(clientID string, packetID uint16) {
@@ -1040,6 +1157,9 @@ func (b *Broker) handlePubRel(clientID string, packetID uint16) {
 
 func (b *Broker) handlePubComp(clientID string, packetID uint16) {
 	b.qos.AckPubComp(clientID, packetID)
+	if sess, ok := b.sessions.GetSession(clientID); ok {
+		sess.DecOutboundUnacked()
+	}
 	b.receivedQoS2Mu.Lock()
 	if clientDups := b.receivedQoS2[clientID]; clientDups != nil {
 		delete(clientDups, packetID)
