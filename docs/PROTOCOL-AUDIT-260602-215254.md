@@ -38,25 +38,25 @@
 | 0x03 | ContentType | ✅ | UTF-8 String | - | N/A (透传) |
 | 0x08 | ResponseTopic | ✅ | UTF-8 String | - | N/A (透传) |
 | 0x09 | CorrelationData | ✅ | Binary | - | N/A (透传) |
-| 0x0B | SubscriptionIdentifier | ✅ | VarInt | ✅ ≠0 | ❌ 未在投递中使用 |
+| 0x0B | SubscriptionIdentifier | ✅ | VarInt | ✅ ≠0 | ✅ 已实现投递转发 |
 | 0x11 | SessionExpiryInterval | ✅ | UInt32 | - | ✅ 完整实现 |
-| 0x12 | AssignedClientID | ✅ | UTF-8 String | - | ❌ 未使用 |
-| 0x13 | ServerKeepAlive | ✅ | UInt16 | - | ❌ 未在 CONNACK 中发送 |
+| 0x12 | AssignedClientID | ✅ | UTF-8 String | - | ✅ CONNACK 发送 |
+| 0x13 | ServerKeepAlive | ✅ | UInt16 | - | ✅ CONNACK 发送 |
 | 0x15 | AuthenticationMethod | ✅ | UTF-8 String | - | N/A (预留) |
 | 0x16 | AuthenticationData | ✅ | Binary | - | N/A (预留) |
 | 0x17 | RequestProblemInfo | ✅ | Byte (0/1) | ✅ | N/A (预留) |
 | 0x18 | WillDelayInterval | ✅ | UInt32 | - | ✅ 完整实现 |
 | 0x1F | ReasonString | ✅ | UTF-8 String | - | ✅ 支持 |
-| 0x21 | ReceiveMaximum | ✅ | UInt16 | ✅ ≠0 | ❌ 仅 CONNACK 宣告 |
-| 0x22 | TopicAliasMaximum | ✅ | UInt16 | - | ❌ 仅 CONNACK 宣告 |
-| 0x23 | TopicAlias | ✅ | UInt16 | ✅ ≠0 | ❌ 未解析别名 |
+| 0x21 | ReceiveMaximum | ✅ | UInt16 | ✅ ≠0 | ✅ 流控已实现 (doDeliver限速) |
+| 0x22 | TopicAliasMaximum | ✅ | UInt16 | - | ✅ 双方协商，上限64 |
+| 0x23 | TopicAlias | ✅ | UInt16 | ✅ ≠0 | ✅ 别名注册与解析 |
 | 0x24 | MaximumQoS | ✅ | Byte (0/1) | ✅ | ❌ 仅 CONNACK 宣告 |
 | 0x25 | RetainAvailable | ✅ | Byte (0/1) | ✅ | ✅ 正确反映存储状态 |
 | 0x26 | UserProperty | ✅ | String Pair | - | ✅ 支持多个 |
 | 0x27 | MaximumPacketSize | ✅ | UInt32 | ✅ ≠0 | ✅ 编解码层拦截 |
 | 0x28 | WildcardSubAvailable | ✅ | Byte (0/1) | ✅ | ✅ CONNACK 宣告 |
-| 0x29 | SubIDAvailable | ✅ | Byte (0/1) | ✅ | ✅ CONNACK 宣告 (0) |
-| 0x2A | SharedSubAvailable | ✅ | Byte (0/1) | ✅ | ✅ CONNACK 宣告 (0) |
+| 0x29 | SubIDAvailable | ✅ | Byte (0/1) | ✅ | ✅ CONNACK 宣告 (1) |
+| 0x2A | SharedSubAvailable | ✅ | Byte (0/1) | ✅ | ✅ 完整实现，round-robin |
 
 ### 缺失的属性 (2)
 

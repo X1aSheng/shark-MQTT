@@ -22,6 +22,33 @@ If you discover a security vulnerability in Shark-MQTT, please report it respons
 
 Instead, please email security concerns to: [project-security@example.com](mailto:project-security@example.com)
 
+---
+
+## Password Security
+
+Shark-MQTT supports bcrypt-hashed passwords for production use.
+
+**Recommended (bcrypt):**
+```go
+auth := broker.NewStaticAuth()
+if err := auth.SetHashedPassword("admin", "secure-password"); err != nil {
+    log.Fatal(err)
+}
+```
+
+**FileAuth with bcrypt hashes in YAML:**
+```yaml
+users:
+  - username: admin
+    password: "$2a$10$..."  # pre-hashed with HashPassword()
+```
+
+Passwords are auto-detected as bcrypt when they start with `$2a$`, `$2b$`, or `$2y$`.
+Plaintext passwords via `AddCredentials()` still work for backward compatibility but
+are **not recommended** for production.
+
+See [API.md](API.md#authentication) for usage examples.
+
 Please include:
 - Description of the vulnerability
 - Steps to reproduce
@@ -32,6 +59,31 @@ You can expect:
 - Acknowledgment within 48 hours
 - Assessment within 7 days
 - Resolution timeline communicated
+
+---
+
+## Rate Limiting & Resource Protection
+
+Shark-MQTT provides configurable protections against resource exhaustion:
+
+| Protection | API Option | Default | Effect |
+|-----------|-----------|---------|--------|
+| Connection rate limit | `WithMaxConnectRate(n)` | unlimited | Rejects connections exceeding N/sec |
+| Publish rate limit | `WithMaxPublishRate(n)` | unlimited | Drops publishes exceeding N/sec/client |
+| Max client ID length | `WithMaxClientIDLength(n)` | 128 bytes | Rejects overlong client IDs |
+| Max topic filters | `WithMaxTopicFiltersPerSubscribe(n)` | 100 | Rejects SUBSCRIBE with too many filters |
+| Max retained topics | `WithMaxRetainedTopics(n)` | 10000 | Drops new retained when limit reached |
+| Max will delay | `WithMaxWillDelay(d)` | 24h | Caps will delay interval |
+
+**Example:**
+```go
+b := broker.New(
+    broker.WithAuth(AllowAllAuth{}),
+    broker.WithMaxConnectRate(100),       // 100 connections/second max
+    broker.WithMaxPublishRate(1000),      // 1000 publishes/second/client max
+    broker.WithMaxClientIDLength(64),     // Reject client IDs over 64 bytes
+)
+```
 
 ---
 
@@ -57,18 +109,34 @@ cfg.TLSKeyFile = "server.key"
 broker := api.NewBroker(api.WithConfig(cfg))
 ```
 
-### Recommended Cipher Suites
+### Enforced Cipher Suites
 
-For TLS 1.2:
-- TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
-- TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
-- TLS_RSA_WITH_AES_256_GCM_SHA384 (not recommended for new deployments)
+Shark-MQTT restricts TLS 1.2 cipher suites to AEAD+forward-secrecy only by default:
 
-**Disable**:
+- `TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256`
+- `TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256`
+- `TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384`
+- `TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384`
+- `TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305`
+- `TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305`
+
+**Disabled by default** (no configuration needed):
 - SSLv3, TLS 1.0, TLS 1.1 (deprecated and insecure)
 - CBC mode ciphers (vulnerable to padding oracle attacks)
-- RC4 (broken)
-- MD5/SHA1 signatures
+- RSA key exchange (no forward secrecy)
+- RC4, MD5, SHA1-based ciphers
+
+### mTLS (Mutual TLS)
+
+Shark-MQTT supports client certificate verification via mTLS:
+
+```go
+cfg.TLSMutual = true
+cfg.TLSCACertFile = "/path/to/ca.pem"
+```
+
+When enabled, clients must present a certificate signed by the configured CA.
+See [Configuration Guide](configuration.md) for YAML/env var usage.
 
 ### Certificate Rotation
 

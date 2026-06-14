@@ -38,6 +38,10 @@ Shark-MQTT supports configuration from multiple sources with the following prior
 | `tls_enabled` | bool | `false` | Enable TLS |
 | `tls_cert_file` | string | - | TLS certificate file path |
 | `tls_key_file` | string | - | TLS private key file path |
+| `tls_min_version` | uint16 | `0` | Min TLS version (0=default 1.2, 772=TLS 1.3) |
+| `tls_max_version` | uint16 | `0` | Max TLS version (0=no limit) |
+| `tls_mutual` | bool | `false` | Enable mTLS client cert verification |
+| `tls_ca_cert_file` | string | - | CA cert file for mTLS |
 | `connect_timeout` | duration | `10s` | Connection timeout |
 
 **Examples:**

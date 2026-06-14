@@ -77,6 +77,14 @@ Creates a new broker instance with optional configuration.
 | `WithLogger(l)` | `logger.Logger` | Set custom logger |
 | `WithMetrics(m)` | `metrics.Metrics` | Set metrics collector |
 | `WithPluginManager(m)` | `*plugin.Manager` | Set plugin manager |
+| `WithMaxConnectRate(rate)` | `float64` | Max connections/sec (0=unlimited) |
+| `WithMaxPublishRate(rate)` | `int` | Max publishes/sec/client (0=unlimited) |
+| `WithMaxClientIDLength(n)` | `int` | Max client ID bytes (default 128) |
+| `WithMaxTopicFiltersPerSubscribe(n)` | `int` | Max filters per SUBSCRIBE (default 100) |
+| `WithMaxRetainedTopics(n)` | `int` | Max retained messages (default 10000) |
+| `WithMaxWillDelay(d)` | `time.Duration` | Max will delay (default 24h) |
+| `WithRetainedExpiry(d)` | `time.Duration` | Retained message TTL (0=no expiry) |
+| `WithRetainedCleanupInterval(d)` | `time.Duration` | Retained cleanup interval |
 
 ### Methods
 
@@ -193,15 +201,33 @@ Shark-MQTT delivers a client's own matching publications by default, which match
 
 ```go
 type TopicFilter struct {
-    Topic             string
-    QoS               uint8
-    NoLocal           bool
-    RetainAsPublished bool
-    RetainHandling    uint8 // 0=send, 1=send if new, 2=do not send
+    Topic                  string
+    QoS                    uint8
+    NoLocal                bool
+    RetainAsPublished      bool
+    RetainHandling         uint8 // 0=send, 1=send if new, 2=do not send
+    SubscriptionIdentifier *uint32 // MQTT 5.0: forwarded in delivered PUBLISH
 }
 ```
 
 Retained message delivery follows `RetainHandling`: `0` sends matching retained messages, `1` sends them only for a new exact subscription, and `2` suppresses retained delivery.
+
+### Shared Subscriptions (MQTT 5.0)
+
+Shark-MQTT supports shared subscriptions using the `$share/{ShareName}/{filter}` format.
+Messages matching the filter are delivered to exactly one subscriber per share group
+using round-robin selection.
+
+```go
+// Subscribe with a shared subscription filter
+client.Subscribe(ctx, []protocol.TopicFilter{
+    {Topic: "$share/mygroup/sport/tennis/+"},
+}, nil)
+
+// Multiple subscribers in the same group share the load
+// Subscriber 1 receives: message A, message C, ...
+// Subscriber 2 receives: message B, message D, ...
+```
 
 ---
 
@@ -275,6 +301,11 @@ broker := api.NewBroker(
     api.WithAuth(fileAuth),
 )
 ```
+
+> **Security Note:** Both `StaticAuth` and `FileAuth` support bcrypt-hashed passwords.
+> Use `SetHashedPassword(username, plaintextPassword)` instead of `AddCredentials`
+> to store bcrypt hashes. The authenticator auto-detects bcrypt hashes (```$2a$```/```$2b$```/```$2y$``` prefix)
+> and uses constant-time comparison for plaintext fallback.
 
 ### Custom Authenticator
 
