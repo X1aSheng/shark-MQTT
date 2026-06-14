@@ -413,8 +413,8 @@ func startTestBroker(t *testing.T) (*api.Broker, string) {
 	t.Helper()
 
 	cfg := config.DefaultConfig()
-	cfg.ListenAddr = ":0"       // dynamic port
-	cfg.MetricsAddr = ":0"      // avoid port conflict with health server
+	cfg.ListenAddr = ":0"  // dynamic port
+	cfg.MetricsAddr = ":0" // avoid port conflict with health server
 	cfg.MaxConnections = 100
 
 	b := api.NewBroker(

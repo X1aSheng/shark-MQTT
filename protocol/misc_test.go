@@ -81,7 +81,7 @@ func TestMatchTopic(t *testing.T) {
 		{"a/b/+", "a/b/c", true},
 		{"a/b/+", "a/b/c/d", false},
 		{"+", "anything", true},
-		{"+", "", true},     // empty string is a valid topic level
+		{"+", "", true}, // empty string is a valid topic level
 		{"+/+", "a/b", true},
 		{"+/+", "a", false},
 
