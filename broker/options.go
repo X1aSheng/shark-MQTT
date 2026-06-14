@@ -34,33 +34,39 @@ type brokerOptions struct {
 	keepAlive              uint16
 
 	// Resource limits
-	maxClientIDLength     int // max bytes for MQTT client ID (0 = unlimited)
-	maxTopicFiltersPerSub int // max topic filters per SUBSCRIBE packet
-	maxRetainedTopics     int // max retained messages (0 = unlimited)
-	connectionRateWindow  time.Duration
+	maxClientIDLength       int // max bytes for MQTT client ID (0 = unlimited)
+	maxTopicFiltersPerSub   int // max topic filters per SUBSCRIBE packet
+	maxRetainedTopics       int // max retained messages (0 = unlimited)
+	maxWillDelay            time.Duration
+	retainedExpiry          time.Duration
+	retainedCleanupInterval time.Duration
+	connectionRateWindow    time.Duration
 }
 
 func defaultBrokerOptions() brokerOptions {
 	return brokerOptions{
-		authenticator:          DenyAllAuth{},
-		authorizer:             AllowAllAuth{},
-		pluginManager:          plugin.NewManager(),
-		logger:                 logger.Noop(),
-		metrics:                metrics.Default(),
-		qosOpts:                []QoSOption{},
-		maxInflight:            100,
-		retryInterval:          10 * time.Second,
-		maxRetries:             3,
-		maxConnections:         10000,
-		maxConnRate:            0,
-		maxPublishRate:         0,
-		maxPacketSize:          256 * 1024,
-		sessionExpiry:          24 * time.Hour,
-		sessionCleanupInterval: 60 * time.Second,
-		maxClientIDLength:      128,
-		maxTopicFiltersPerSub:  100,
-		maxRetainedTopics:      10000,
-		connectionRateWindow:   time.Second,
+		authenticator:           DenyAllAuth{},
+		authorizer:              AllowAllAuth{},
+		pluginManager:           plugin.NewManager(),
+		logger:                  logger.Noop(),
+		metrics:                 metrics.Default(),
+		qosOpts:                 []QoSOption{},
+		maxInflight:             100,
+		retryInterval:           10 * time.Second,
+		maxRetries:              3,
+		maxConnections:          10000,
+		maxConnRate:             0,
+		maxPublishRate:          0,
+		maxPacketSize:           256 * 1024,
+		sessionExpiry:           24 * time.Hour,
+		sessionCleanupInterval:  60 * time.Second,
+		maxClientIDLength:       128,
+		maxTopicFiltersPerSub:   100,
+		maxRetainedTopics:       10000,
+		maxWillDelay:            24 * time.Hour,
+		retainedExpiry:          0,
+		retainedCleanupInterval: 10 * time.Minute,
+		connectionRateWindow:    time.Second,
 	}
 }
 
@@ -204,5 +210,33 @@ func WithMaxTopicFiltersPerSubscribe(n int) Option {
 func WithMaxRetainedTopics(n int) Option {
 	return func(o *brokerOptions) {
 		o.maxRetainedTopics = n
+	}
+}
+
+// WithMaxWillDelay sets the maximum Will Delay Interval the server will
+// accept from clients (MQTT 5.0 §3.1.2.11.8). Default is 24 hours, and 0
+// disables will delay entirely. When a client requests a delay longer than
+// the maximum, the server caps the value at the maximum.
+func WithMaxWillDelay(d time.Duration) Option {
+	return func(o *brokerOptions) {
+		o.maxWillDelay = d
+	}
+}
+
+// WithRetainedExpiry sets the TTL for retained messages. When set to a
+// positive duration, retained messages that have been stored longer than
+// this duration are automatically removed by a periodic cleanup loop.
+// Default is 0 (no expiry).
+func WithRetainedExpiry(d time.Duration) Option {
+	return func(o *brokerOptions) {
+		o.retainedExpiry = d
+	}
+}
+
+// WithRetainedCleanupInterval sets how often the retained message cleanup
+// loop checks for expired messages. Default is 10 minutes.
+func WithRetainedCleanupInterval(d time.Duration) Option {
+	return func(o *brokerOptions) {
+		o.retainedCleanupInterval = d
 	}
 }

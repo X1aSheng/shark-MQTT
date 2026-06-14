@@ -53,6 +53,9 @@ type Broker struct {
 
 	retainedMu    sync.Mutex
 	retainedCount atomic.Int64 // count of retained messages maintained with retainedMu
+	// retainedExpirations tracks expiry times for retained messages when
+	// retainedExpiry is configured (> 0). Keyed by topic name.
+	retainedExpirations map[string]time.Time
 
 	// connRate limits the rate of new TCP connections accepted.
 	connRate *connRateLimiter
@@ -71,23 +74,26 @@ func New(opts ...Option) *Broker {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	retainedExpirations := make(map[string]time.Time)
+
 	b := &Broker{
-		topics:        NewTopicTree(),
-		qos:           NewQoSEngine(o.qosOpts...),
-		will:          NewWillHandler(),
-		sessions:      NewManager(o.sessionStore),
-		sessionStore:  o.sessionStore,
-		messageStore:  o.messageStore,
-		retainedStore: o.retainedStore,
-		logger:        o.logger,
-		metrics:       o.metrics,
-		pluginMgr:     o.pluginManager,
-		connections:   make(map[string]*clientState),
-		receivedQoS2:  make(map[string]map[uint16]struct{}),
-		connRate:      newConnRateLimiter(o.connectionRateWindow),
-		ctx:           ctx,
-		cancel:        cancel,
-		opts:          o,
+		topics:              NewTopicTree(),
+		qos:                 NewQoSEngine(o.qosOpts...),
+		will:                NewWillHandler(),
+		sessions:            NewManager(o.sessionStore),
+		sessionStore:        o.sessionStore,
+		messageStore:        o.messageStore,
+		retainedStore:       o.retainedStore,
+		logger:              o.logger,
+		metrics:             o.metrics,
+		pluginMgr:           o.pluginManager,
+		connections:         make(map[string]*clientState),
+		receivedQoS2:        make(map[string]map[uint16]struct{}),
+		connRate:            newConnRateLimiter(o.connectionRateWindow),
+		retainedExpirations: retainedExpirations,
+		ctx:                 ctx,
+		cancel:              cancel,
+		opts:                o,
 	}
 
 	// Setup QoS callbacks
@@ -339,6 +345,12 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 		if connectPkt.WillProperties != nil && connectPkt.WillProperties.WillDelayInterval != nil {
 			willDelay = time.Duration(*connectPkt.WillProperties.WillDelayInterval) * time.Second
 		}
+		// Cap will delay to the configured maximum to prevent abuse
+		if b.opts.maxWillDelay > 0 && willDelay > b.opts.maxWillDelay {
+			b.logger.Debug("capping will delay", "clientID", clientID,
+				"requested", willDelay, "max", b.opts.maxWillDelay)
+			willDelay = b.opts.maxWillDelay
+		}
 		if err := b.will.RegisterWill(clientID, connectPkt.WillTopic, connectPkt.WillMessage, connectPkt.Flags.WillQoS, connectPkt.Flags.WillRetain, willDelay); err != nil {
 			b.metrics.IncErrors("will")
 			return fmt.Errorf("broker: register will failed: %w", err)
@@ -375,6 +387,9 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 func (b *Broker) Start() error {
 	b.qos.Start()
 	go b.sessionCleanupLoop()
+	if b.opts.retainedExpiry > 0 {
+		go b.retainedCleanupLoop()
+	}
 	return nil
 }
 
@@ -433,6 +448,45 @@ func (b *Broker) cleanupExpiredSessions() {
 			}
 		}
 	}
+}
+
+// retainedCleanupLoop periodically removes expired retained messages.
+func (b *Broker) retainedCleanupLoop() {
+	ticker := time.NewTicker(b.opts.retainedCleanupInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-b.ctx.Done():
+			return
+		case <-ticker.C:
+			b.cleanupExpiredRetained()
+		}
+	}
+}
+
+func (b *Broker) cleanupExpiredRetained() {
+	if b.retainedStore == nil || b.opts.retainedExpiry <= 0 {
+		return
+	}
+
+	b.retainedMu.Lock()
+	defer b.retainedMu.Unlock()
+
+	now := time.Now()
+	for topic, expiry := range b.retainedExpirations {
+		if now.After(expiry) {
+			if err := b.retainedStore.DeleteRetained(b.ctx, topic); err != nil {
+				b.logger.Debug("failed to delete expired retained message", "topic", topic, "error", err)
+				b.metrics.IncErrors("retained_store")
+				continue
+			}
+			b.retainedCount.Add(-1)
+			delete(b.retainedExpirations, topic)
+			b.logger.Debug("expired retained message cleaned up", "topic", topic)
+		}
+	}
+	b.metrics.SetRetainedMessages(int(b.retainedCount.Load()))
 }
 
 // Stop stops the broker's internal subsystems and closes all sessions.
@@ -804,6 +858,7 @@ func (b *Broker) handleRetainedMessage(pkt *protocol.PublishPacket) {
 		if existed {
 			b.retainedCount.Add(-1)
 		}
+		delete(b.retainedExpirations, pkt.Topic)
 		b.metrics.SetRetainedMessages(int(b.retainedCount.Load()))
 		return
 	}
@@ -815,6 +870,10 @@ func (b *Broker) handleRetainedMessage(pkt *protocol.PublishPacket) {
 	}
 	if !existed {
 		b.retainedCount.Add(1)
+	}
+	// Record expiry for retained TTL cleanup if configured
+	if b.opts.retainedExpiry > 0 {
+		b.retainedExpirations[pkt.Topic] = time.Now().Add(b.opts.retainedExpiry)
 	}
 	b.metrics.SetRetainedMessages(int(b.retainedCount.Load()))
 }

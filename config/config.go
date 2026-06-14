@@ -3,7 +3,9 @@ package config
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"os"
 	"time"
 )
 
@@ -16,10 +18,15 @@ const (
 // Config holds all configuration for the MQTT broker.
 type Config struct {
 	// Server settings
-	ListenAddr     string        `yaml:"listen_addr" toml:"listen_addr" env:"MQTT_LISTEN_ADDR"`
-	TLSEnabled     bool          `yaml:"tls_enabled" toml:"tls_enabled" env:"MQTT_TLS_ENABLED"`
-	TLSCertFile    string        `yaml:"tls_cert_file" toml:"tls_cert_file" env:"MQTT_TLS_CERT_FILE"`
-	TLSKeyFile     string        `yaml:"tls_key_file" toml:"tls_key_file" env:"MQTT_TLS_KEY_FILE"`
+	ListenAddr    string `yaml:"listen_addr" toml:"listen_addr" env:"MQTT_LISTEN_ADDR"`
+	TLSEnabled    bool   `yaml:"tls_enabled" toml:"tls_enabled" env:"MQTT_TLS_ENABLED"`
+	TLSCertFile   string `yaml:"tls_cert_file" toml:"tls_cert_file" env:"MQTT_TLS_CERT_FILE"`
+	TLSKeyFile    string `yaml:"tls_key_file" toml:"tls_key_file" env:"MQTT_TLS_KEY_FILE"`
+	TLSMinVersion uint16 `yaml:"tls_min_version" toml:"tls_min_version" env:"MQTT_TLS_MIN_VERSION"`
+	TLSMaxVersion uint16 `yaml:"tls_max_version" toml:"tls_max_version" env:"MQTT_TLS_MAX_VERSION"`
+	// mTLS settings
+	TLSMutual      bool          `yaml:"tls_mutual" toml:"tls_mutual" env:"MQTT_TLS_MUTUAL"`
+	TLSCACertFile  string        `yaml:"tls_ca_cert_file" toml:"tls_ca_cert_file" env:"MQTT_TLS_CA_CERT_FILE"`
 	ConnectTimeout time.Duration `yaml:"connect_timeout" toml:"connect_timeout" env:"MQTT_CONNECT_TIMEOUT"`
 	KeepAlive      uint16        `yaml:"keep_alive" toml:"keep_alive" env:"MQTT_KEEP_ALIVE"`
 	MaxPacketSize  int           `yaml:"max_packet_size" toml:"max_packet_size" env:"MQTT_MAX_PACKET_SIZE"`
@@ -100,6 +107,9 @@ func (c *Config) Validate() error {
 		if c.TLSKeyFile == "" {
 			return fmt.Errorf("tls_key_file is required when TLS is enabled")
 		}
+		if c.TLSMutual && c.TLSCACertFile == "" {
+			return fmt.Errorf("tls_ca_cert_file is required when tls_mutual is enabled")
+		}
 	}
 	switch c.StorageBackend {
 	case "memory", "redis", "badger", "":
@@ -112,6 +122,18 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+// secureCipherSuites lists recommended TLS 1.2+ cipher suites that provide
+// forward secrecy and authenticated encryption. Used when no explicit
+// cipher suite list is configured.
+var secureCipherSuites = []uint16{
+	tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+	tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+	tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+	tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+	tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
+	tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
+}
+
 // TLSConfig builds a *tls.Config from the configuration.
 func (c *Config) TLSConfig() (*tls.Config, error) {
 	if !c.TLSEnabled {
@@ -121,8 +143,33 @@ func (c *Config) TLSConfig() (*tls.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &tls.Config{
+
+	tlsCfg := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		MinVersion:   tls.VersionTLS12,
-	}, nil
+		CipherSuites: secureCipherSuites,
+	}
+
+	if c.TLSMinVersion > 0 {
+		tlsCfg.MinVersion = c.TLSMinVersion
+	}
+	if c.TLSMaxVersion > 0 {
+		tlsCfg.MaxVersion = c.TLSMaxVersion
+	}
+
+	// Configure mTLS (mutual TLS) if a CA certificate file is provided
+	if c.TLSMutual && c.TLSCACertFile != "" {
+		caCert, err := os.ReadFile(c.TLSCACertFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CA cert file: %w", err)
+		}
+		caPool := x509.NewCertPool()
+		if !caPool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("failed to parse CA certificate from %s", c.TLSCACertFile)
+		}
+		tlsCfg.ClientCAs = caPool
+		tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+
+	return tlsCfg, nil
 }
