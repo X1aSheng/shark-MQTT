@@ -37,9 +37,9 @@ var saveJSON bool
 
 func main() {
 	var (
-		mode       = flag.String("mode", "all", "test mode: unit, integration, benchmark, cover, all")
-		logDir     = flag.String("logdir", "logs", "directory for log output")
-		timeout    = flag.Duration("timeout", 5*time.Minute, "overall test timeout")
+		mode         = flag.String("mode", "all", "test mode: unit, integration, benchmark, cover, all")
+		logDir       = flag.String("logdir", "logs", "directory for log output")
+		timeout      = flag.Duration("timeout", 5*time.Minute, "overall test timeout")
 		saveJSONFlag = flag.Bool("save-json", false, "also save raw JSON output from go test -json")
 	)
 	flag.Parse()

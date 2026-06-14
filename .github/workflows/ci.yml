@@ -186,8 +186,7 @@ jobs:
       - name: Check go.mod and go.sum are tidy
         if: matrix.os != 'windows-latest'
         run: |
-          go mod tidy -diff
-          if [ $? -ne 0 ]; then
+          if ! go mod tidy -diff; then
             echo "go.mod or go.sum is not tidy. Run 'go mod tidy' locally."
             exit 1
           fi
