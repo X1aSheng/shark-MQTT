@@ -357,12 +357,18 @@ func (q *QoSEngine) doRetry() {
 				continue
 			}
 
-			msg.Retries++
-			msg.SentAt = time.Now()
+			// Increment retry count on the copy, not the original,
+			// to avoid overcounting if republish fails.
+			copy := *msg
+			copy.Retries++
+			copy.SentAt = time.Now()
 			toRetry = append(toRetry, retryMsg{
 				clientID: clientID,
-				msg:      *msg,
+				msg:      copy,
 			})
+			// Update original so next retry cycle uses the new count
+			msg.Retries = copy.Retries
+			msg.SentAt = copy.SentAt
 		}
 	}
 	republish := q.republish

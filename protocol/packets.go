@@ -8,6 +8,7 @@ type FixedHeader struct {
 	QoS             uint8
 	Retain          bool
 	RemainingLength int
+	HeaderSize      int // actual wire size of the fixed header (1-5 bytes)
 }
 
 // Packet is the base interface for all MQTT packets.

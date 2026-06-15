@@ -25,7 +25,8 @@ type MQTTServer struct {
 	connCount  atomic.Int64
 	earlyClose atomic.Int64
 	tlsConfig  *tls.Config
-	tlsErr     error // set when TLS config fails to load
+	tlsErr     error       // set when TLS config fails to load
+	started    atomic.Bool // prevents double Start
 	logr       logger.Logger
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -89,6 +90,9 @@ func (s *MQTTServer) SetHandler(h ConnectionHandler) {
 
 // Start begins accepting TCP connections.
 func (s *MQTTServer) Start() error {
+	if s.started.Swap(true) {
+		return fmt.Errorf("server already started")
+	}
 	if s.tlsErr != nil {
 		return s.tlsErr
 	}
@@ -129,6 +133,7 @@ func (s *MQTTServer) Stop() {
 	}
 	s.wg.Wait()
 	s.listener = nil
+	s.started.Store(false) // allow re-Start after Stop
 
 	// Close remaining connections
 	s.mu.Lock()

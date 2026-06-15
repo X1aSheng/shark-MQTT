@@ -283,6 +283,11 @@ func (c *Codec) decodeProperties(r io.Reader) (*Properties, error) {
 			}
 			props.RetainAvailable = &v
 		case PropUserProperty:
+			// Limit user properties to prevent memory exhaustion (MQTT recommends capping)
+			const maxUserProperties = 100
+			if len(props.UserProperties) >= maxUserProperties {
+				return nil, ErrMalformedPacket
+			}
 			k, err := readStringFromReader(reader)
 			if err != nil {
 				return nil, err

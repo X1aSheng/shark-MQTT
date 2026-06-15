@@ -60,9 +60,10 @@ type Broker struct {
 	// connRate limits the rate of new TCP connections accepted.
 	connRate *connRateLimiter
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	opts   brokerOptions
+	started atomic.Bool // prevents double-Start
+	ctx     context.Context
+	cancel  context.CancelFunc
+	opts    brokerOptions
 }
 
 // New creates a new Broker with the given options.
@@ -385,6 +386,9 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 
 // Start starts the broker's internal subsystems.
 func (b *Broker) Start() error {
+	if b.started.Swap(true) {
+		return fmt.Errorf("broker already started")
+	}
 	b.qos.Start()
 	go b.sessionCleanupLoop()
 	if b.opts.retainedExpiry > 0 {
@@ -522,6 +526,7 @@ func (b *Broker) Stop() {
 
 	b.qos.Stop()
 	b.will.Stop()
+	b.started.Store(false) // allow re-Start after Stop
 }
 
 func (b *Broker) dispatch(hook plugin.Hook, data *plugin.Context) {
@@ -1178,7 +1183,7 @@ func (b *Broker) writePacket(clientID string, pkt protocol.Packet) {
 	err := cs.codec.Encode(cs.conn, pkt)
 	cs.wmu.Unlock()
 	if err != nil {
-		b.logger.Debug("write error", "clientID", clientID, "error", err)
+		b.logger.Warn("write error", "clientID", clientID, "error", err)
 	}
 }
 
@@ -1204,7 +1209,7 @@ func (b *Broker) sendConnAck(clientID string, reasonCode byte, sessionPresent bo
 
 	cs.wmu.Lock()
 	if err := cs.codec.Encode(cs.conn, pkt); err != nil {
-		b.logger.Debug("write error", "clientID", clientID, "error", err)
+		b.logger.Warn("write error", "clientID", clientID, "error", err)
 	}
 	cs.wmu.Unlock()
 }
