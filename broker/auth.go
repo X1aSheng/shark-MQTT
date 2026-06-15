@@ -161,6 +161,22 @@ func (s *StaticAuth) CanSubscribe(ctx context.Context, username, topic string) b
 	return false
 }
 
+// matchWithSysProtection wraps protocol.MatchTopic with MQTT §4.7.2
+// system topic protection: root-level + and # wildcards must not
+// match topics starting with $.
+func matchWithSysProtection(pattern, topic string) bool {
+	if len(topic) > 0 && topic[0] == '$' {
+		firstLevel := pattern
+		if i := strings.IndexByte(pattern, '/'); i >= 0 {
+			firstLevel = pattern[:i]
+		}
+		if firstLevel == "#" || firstLevel == "+" {
+			return false
+		}
+	}
+	return protocol.MatchTopic(pattern, topic)
+}
+
 // AllowAllAuth allows all authentication (development only).
 type AllowAllAuth struct{}
 

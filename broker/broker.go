@@ -536,23 +536,23 @@ func (b *Broker) dispatch(hook plugin.Hook, data *plugin.Context) {
 func (b *Broker) disconnect(clientID string, conn net.Conn) {
 	b.will.RemoveWill(clientID)
 
-	// Verify this connection is still the current one before cleaning up.
-	// In session takeover, the old readLoop calls disconnect after the new
-	// connection is already registered; the identity check prevents the old
-	// cleanup from removing the new connection's state.
-	b.mu.RLock()
-	cs, exists := b.connections[clientID]
-	b.mu.RUnlock()
-	if !exists || cs.conn != conn {
-		return
-	}
-
-	// Persist non-clean session before removal so state survives reconnect
+	// Persist session BEFORE taking the lock, since Save() is a heavy
+	// operation that should not block connection registration.
 	if sess, ok := b.sessions.GetSession(clientID); ok && !sess.IsClean && b.sessionStore != nil {
 		if err := sess.Save(b.ctx, b.sessionStore); err != nil {
 			b.logger.Debug("failed to save session", "clientID", clientID, "error", err)
 			b.metrics.IncErrors("session_save")
 		}
+	}
+
+	// Atomic identity check + cleanup under a single Lock to prevent
+	// session takeover race. Hold b.mu.Lock() throughout cleanup so
+	// HandleConnection cannot register a new connection mid-cleanup.
+	b.mu.Lock()
+	cs, exists := b.connections[clientID]
+	if !exists || cs.conn != conn {
+		b.mu.Unlock()
+		return
 	}
 
 	// Reset flow control counter before removing session
@@ -562,19 +562,15 @@ func (b *Broker) disconnect(clientID string, conn net.Conn) {
 
 	b.sessions.RemoveSession(clientID)
 	b.qos.RemoveClient(clientID)
+	delete(b.connections, clientID)
+	online := len(b.connections)
+	b.mu.Unlock()
 
 	b.receivedQoS2Mu.Lock()
 	delete(b.receivedQoS2, clientID)
 	b.receivedQoS2Mu.Unlock()
 
-	b.mu.Lock()
-	if cs, exists := b.connections[clientID]; exists && cs.conn == conn {
-		delete(b.connections, clientID)
-	}
-	online := len(b.connections)
-	b.mu.Unlock()
 	b.metrics.SetOnlineSessions(online)
-
 	// Plugin hook
 	b.dispatch(plugin.OnClose, &plugin.Context{ClientID: clientID})
 

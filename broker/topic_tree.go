@@ -2,6 +2,7 @@
 package broker
 
 import (
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -280,7 +281,7 @@ func (tt *TopicTree) MatchShared(topic string) []SharedSubscriber {
 	for shareName, filters := range tt.sharedSubs {
 		matchingFilters := make([]string, 0)
 		for filter := range filters {
-			if protocol.MatchTopic(filter, topic) {
+			if matchSysProtected(filter, topic) {
 				matchingFilters = append(matchingFilters, filter)
 			}
 		}
@@ -331,4 +332,19 @@ func (tt *TopicTree) collectAllSubscribers(node *TopicNode, results *[]Subscribe
 	for _, child := range node.children {
 		tt.collectAllSubscribers(child, results, visited)
 	}
+}
+
+// matchSysProtected wraps protocol.MatchTopic with MQTT §4.7.2
+// system topic protection for non-TopicTree callers (MatchShared, ACL).
+func matchSysProtected(pattern, topic string) bool {
+	if len(topic) > 0 && topic[0] == '$' {
+		firstLevel := pattern
+		if i := strings.IndexByte(pattern, '/'); i >= 0 {
+			firstLevel = pattern[:i]
+		}
+		if firstLevel == "#" || firstLevel == "+" {
+			return false
+		}
+	}
+	return protocol.MatchTopic(pattern, topic)
 }

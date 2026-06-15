@@ -25,6 +25,7 @@ type MQTTServer struct {
 	connCount  atomic.Int64
 	earlyClose atomic.Int64
 	tlsConfig  *tls.Config
+	tlsErr     error // set when TLS config fails to load
 	logr       logger.Logger
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -62,7 +63,8 @@ func NewMQTTServer(cfg *config.Config, opts ...ServerOption) *MQTTServer {
 	} else if cfg.TLSEnabled {
 		tlsCfg, err := cfg.TLSConfig()
 		if err != nil {
-			s.logr.Warn("TLS enabled but config failed", "error", err)
+			s.tlsErr = fmt.Errorf("TLS config failed: %w", err)
+			s.logr.Error("TLS config failed", "error", err)
 		}
 		s.tlsConfig = tlsCfg
 	}
@@ -87,6 +89,10 @@ func (s *MQTTServer) SetHandler(h ConnectionHandler) {
 
 // Start begins accepting TCP connections.
 func (s *MQTTServer) Start() error {
+	if s.tlsErr != nil {
+		return s.tlsErr
+	}
+
 	select {
 	case <-s.ctx.Done():
 		s.ctx, s.cancel = context.WithCancel(context.Background())
