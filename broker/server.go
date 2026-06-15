@@ -7,13 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/X1aSheng/shark-mqtt/config"
+	"github.com/X1aSheng/shark-mqtt/pkg/logger"
 	"github.com/X1aSheng/shark-mqtt/protocol"
 )
 
@@ -25,6 +25,7 @@ type MQTTServer struct {
 	connCount  atomic.Int64
 	earlyClose atomic.Int64
 	tlsConfig  *tls.Config
+	logr       logger.Logger
 	ctx        context.Context
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
@@ -49,20 +50,26 @@ func NewMQTTServer(cfg *config.Config, opts ...ServerOption) *MQTTServer {
 
 	s := &MQTTServer{
 		cfg:    cfg,
+		logr:   logger.Noop(),
 		ctx:    ctx,
 		cancel: cancel,
 		conns:  make(map[net.Conn]struct{}),
 	}
 
-	// TLS: explicit option takes priority over config
+	// Apply server options
 	if sopts.tlsConfig != nil {
 		s.tlsConfig = sopts.tlsConfig
 	} else if cfg.TLSEnabled {
 		tlsCfg, err := cfg.TLSConfig()
 		if err != nil {
-			log.Printf("[server] warning: TLS enabled but config failed: %v", err)
+			s.logr.Warn("TLS enabled but config failed", "error", err)
 		}
 		s.tlsConfig = tlsCfg
+	}
+
+	// Use logger if provided
+	if sopts.logr != nil {
+		s.logr = sopts.logr
 	}
 
 	// Use custom listener if provided
@@ -100,7 +107,7 @@ func (s *MQTTServer) Start() error {
 		s.listener = tls.NewListener(s.listener, s.tlsConfig)
 	}
 
-	log.Printf("[server] listening on %s (TLS: %v)", s.listener.Addr(), s.cfg.TLSEnabled)
+	s.logr.Info("server listening", "addr", s.listener.Addr(), "tls", s.cfg.TLSEnabled)
 
 	ln := s.listener
 	s.wg.Add(1)
@@ -126,7 +133,7 @@ func (s *MQTTServer) Stop() {
 	s.mu.Unlock()
 
 	if n := s.earlyClose.Load(); n > 0 {
-		log.Printf("[server] %d connections closed before CONNECT", n)
+		s.logr.Info("connections closed before CONNECT", "count", n)
 	}
 }
 
@@ -156,14 +163,14 @@ func (s *MQTTServer) acceptLoop(ln net.Listener) {
 			if errors.Is(err, net.ErrClosed) {
 				return
 			}
-			log.Printf("[server] accept error: %v", err)
+			s.logr.Debug("accept error", "error", err)
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
 
 		// Check max connections
 		if s.cfg.MaxConnections > 0 && int(s.connCount.Load()) >= s.cfg.MaxConnections {
-			log.Printf("[server] max connections reached (%d), rejecting", s.cfg.MaxConnections)
+			s.logr.Warn("max connections reached, rejecting", "limit", s.cfg.MaxConnections)
 			conn.Close()
 			continue
 		}
@@ -189,7 +196,7 @@ func (s *MQTTServer) acceptLoop(ln net.Listener) {
 					if isEarlyClose(err) {
 						s.earlyClose.Add(1)
 					} else {
-						log.Printf("[server] connection handler error: %v", err)
+						s.logr.Debug("connection handler error", "error", err)
 					}
 				}
 			}

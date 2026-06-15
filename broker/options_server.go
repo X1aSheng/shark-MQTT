@@ -4,6 +4,8 @@ import (
 	"crypto/tls"
 	"net"
 	"time"
+
+	"github.com/X1aSheng/shark-mqtt/pkg/logger"
 )
 
 // ServerOption configures the Server.
@@ -17,7 +19,8 @@ type serverOpts struct {
 	keepAlive       time.Duration
 	writeQueueSize  int
 	connectTimeout  time.Duration
-	listener        net.Listener // custom listener (for testing)
+	listener        net.Listener  // custom listener (for testing)
+	logr            logger.Logger // diagnostic logger
 }
 
 func defaultServerOptions() serverOpts {
@@ -83,5 +86,13 @@ func WithConnectTimeout(d time.Duration) ServerOption {
 func WithListener(ln net.Listener) ServerOption {
 	return func(o *serverOpts) {
 		o.listener = ln
+	}
+}
+
+// WithServerLogger sets the logger for the MQTT server. Default is a no-op
+// logger; set this in production entrypoints to enable server diagnostics.
+func WithServerLogger(l logger.Logger) ServerOption {
+	return func(o *serverOpts) {
+		o.logr = l
 	}
 }

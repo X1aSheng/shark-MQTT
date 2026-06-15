@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"time"
@@ -24,8 +23,9 @@ type Broker struct {
 	broker     *broker.Broker
 	cfg        *config.Config
 	healthSrv  *http.Server
-	healthAddr string // actual listener address for health/metrics
-	initErr    error  // set if config validation fails during construction
+	healthAddr string        // actual listener address for health/metrics
+	logr       logger.Logger // diagnostic logger for lifecycle events
+	initErr    error         // set if config validation fails during construction
 }
 
 // Option configures the broker.
@@ -132,7 +132,8 @@ func NewBroker(opts ...Option) *Broker {
 	var initErr error
 	if err := o.cfg.Validate(); err != nil {
 		initErr = err
-		log.Printf("[api] config validation error: %v", err)
+		lg := logger.Default()
+		lg.Error("config validation error", "error", err)
 	}
 
 	// Build broker options. Preserve broker package defaults unless the API
@@ -202,6 +203,7 @@ func NewBroker(opts ...Option) *Broker {
 	srv.SetHandler(brk)
 
 	return &Broker{
+		logr:    logger.Noop(),
 		srv:     srv,
 		broker:  brk,
 		cfg:     o.cfg,
@@ -228,7 +230,7 @@ func (b *Broker) Start() error {
 	// Health check endpoint
 	b.startHealthServer()
 
-	log.Printf("[api] Shark-MQTT started on %s", b.cfg.ListenAddr)
+	b.logr.Info("Shark-MQTT started", "addr", b.cfg.ListenAddr)
 	return nil
 }
 
@@ -238,12 +240,12 @@ func (b *Broker) Stop() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := b.healthSrv.Shutdown(ctx); err != nil {
-			log.Printf("[api] health shutdown error: %v", err)
+			b.logr.Warn("health shutdown error", "error", err)
 		}
 	}
 	b.srv.Stop()
 	b.broker.Stop()
-	log.Println("[api] Shark-MQTT stopped")
+	b.logr.Info("Shark-MQTT stopped")
 }
 
 // Addr returns the listening address.
@@ -306,7 +308,7 @@ func (b *Broker) startHealthServer() {
 
 	ln, err := net.Listen("tcp", b.cfg.MetricsAddr)
 	if err != nil {
-		log.Printf("[api] health server: %v (skipped)", err)
+		b.logr.Warn("health server skipped", "error", err)
 		return
 	}
 	b.healthAddr = ln.Addr().String()
@@ -319,8 +321,8 @@ func (b *Broker) startHealthServer() {
 	}
 	go func() {
 		if err := b.healthSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Printf("[api] health server error: %v", err)
+			b.logr.Warn("health server error", "error", err)
 		}
 	}()
-	log.Printf("[api] health endpoint on %s", b.healthAddr)
+	b.logr.Info("health endpoint", "addr", b.healthAddr)
 }
