@@ -131,9 +131,8 @@ func NewBroker(opts ...Option) *Broker {
 	}
 	var initErr error
 	if err := o.cfg.Validate(); err != nil {
+			// initErr returned from Start(); no separate log needed
 		initErr = err
-		lg := logger.Default()
-		lg.Error("config validation error", "error", err)
 	}
 
 	// Build broker options. Preserve broker package defaults unless the API
