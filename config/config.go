@@ -111,6 +111,12 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("tls_ca_cert_file is required when tls_mutual is enabled")
 		}
 	}
+	if c.StorageBackend == "badger" && c.BadgerPath == "" {
+		return fmt.Errorf("badger_path is required when storage_backend is badger")
+	}
+	if c.TLSMinVersion > 0 && c.TLSMaxVersion > 0 && c.TLSMinVersion > c.TLSMaxVersion {
+		return fmt.Errorf("tls_min_version (%d) must be <= tls_max_version (%d)", c.TLSMinVersion, c.TLSMaxVersion)
+	}
 	switch c.StorageBackend {
 	case "memory", "redis", "badger", "":
 	default:

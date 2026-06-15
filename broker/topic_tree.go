@@ -200,11 +200,10 @@ func ParseSharedFilter(filter string) (shareName, topicFilter string, ok bool) {
 	}
 	rest := filter[len(sharedSubPrefix):]
 	slashIdx := -1
-	for i, c := range rest {
-		if c == '/' {
-			slashIdx = i
-			break
-		}
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		slashIdx = i
+	} else {
+		return "", "", false
 	}
 	if slashIdx <= 0 || slashIdx >= len(rest)-1 {
 		return "", "", false

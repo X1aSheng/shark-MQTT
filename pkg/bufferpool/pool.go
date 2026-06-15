@@ -30,8 +30,6 @@ func (p *Pool) Get() []byte {
 	switch buf := p.pool.Get().(type) {
 	case *[]byte:
 		return (*buf)[:p.size]
-	case []byte:
-		return buf[:p.size]
 	default:
 		return make([]byte, p.size)
 	}

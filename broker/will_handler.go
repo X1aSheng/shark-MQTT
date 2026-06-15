@@ -87,28 +87,29 @@ func (wh *WillHandler) TriggerWill(clientID string) error {
 	}
 	delete(wh.wills, clientID)
 	wh.mu.Unlock()
-
 	if will.Delay > 0 {
 		// Delayed will message
 		ctx, cancel := context.WithCancel(context.Background())
 		wh.mu.Lock()
 		wh.cancel[clientID] = cancel
 		wh.mu.Unlock()
-
 		wh.wg.Add(1)
 		go func() {
 			defer wh.wg.Done()
 			select {
 			case <-time.After(will.Delay):
-				_ = wh.publishWillMessage(will)
+				if err := wh.publishWillMessage(will); err != nil {
+					_ = err // will delivery failed (non-critical, broker may already be disconnected)
+				}
 			case <-ctx.Done():
 				// Will was cancelled (client reconnected before delay elapsed)
 			}
 		}()
 	} else {
-		return wh.publishWillMessage(will)
+		if err := wh.publishWillMessage(will); err != nil {
+			_ = err // will delivery failed (non-critical, broker may already be disconnected)
+		}
 	}
-
 	return nil
 }
 
