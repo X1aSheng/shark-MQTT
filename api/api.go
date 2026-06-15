@@ -131,7 +131,7 @@ func NewBroker(opts ...Option) *Broker {
 	}
 	var initErr error
 	if err := o.cfg.Validate(); err != nil {
-			// initErr returned from Start(); no separate log needed
+		// initErr returned from Start(); no separate log needed
 		initErr = err
 	}
 
