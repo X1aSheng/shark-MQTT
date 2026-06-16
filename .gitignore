@@ -1,4 +1,4 @@
-# Binaries
+# ─── Binaries & compiled artifacts ───────────────────────
 *.exe
 *.exe~
 *.dll
@@ -6,34 +6,37 @@
 *.dylib
 *.test
 *.out
+/shark-mqtt
+/shark-mqtt.exe
 
-# Go workspace
+# ─── Go workspace ────────────────────────────────────────
 go.work
 
-# IDE
+# ─── IDE & editors ───────────────────────────────────────
 .idea/
 .vscode/
 *.swp
 *.swo
 
-# Coverage
-coverage
+# ─── Coverage & profiling ────────────────────────────────
 coverage.out
+coverage.html
 *.cover
+*.prof
 
-# OS
+# ─── OS files ────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 
-# Build artifacts
-/shark-mqtt
-/shark-mqtt.exe
-
-# Vendor (if used)
+# ─── Vendor ──────────────────────────────────────────────
 vendor/
 
-# Temporary files
+# ─── Temporary & build output ────────────────────────────
 logs/
 *.log
 tmp/
 bin/
+dist/
+
+# ─── Skills ─────────────────────────────────────────────
+.skills/

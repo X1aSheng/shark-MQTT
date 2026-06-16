@@ -1,23 +1,40 @@
+# ─── Version control ─────────────────────────────────────
 .git/
 .gitignore
 .github/
+
+# ─── Development tools ───────────────────────────────────
 .claude/
-logs/
-*.log
-*.md
-k8s/
-deploy/k8s/
+.skills/
 .golangci.yml
+
+# ─── Documentation ───────────────────────────────────────
+*.md
+
+# ─── Deployment manifests (not needed in image) ──────────
+deploy/k8s/
+
+# ─── Environment files ───────────────────────────────────
 .env
 .env.local
+
+# ─── Build & temp output ─────────────────────────────────
 bin/
 dist/
+logs/
+tmp/
+*.log
+
+# ─── Coverage & profiling ────────────────────────────────
 coverage.out
 coverage.html
-cpu.prof
-mem.prof
-vendor/
-go.work
+*.prof
+*.test
+
+# ─── OS files ────────────────────────────────────────────
 .DS_Store
 Thumbs.db
-tmp/
+
+# ─── Vendor ──────────────────────────────────────────────
+vendor/
+go.work
