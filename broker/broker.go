@@ -494,27 +494,14 @@ func (b *Broker) cleanupExpiredRetained() {
 }
 
 // Stop stops the broker's internal subsystems and closes all sessions.
-// It waits up to drainTimeout for in-flight QoS messages to complete.
+// Connections are closed first to stop readLoops and prevent new inflight
+// messages from arriving during shutdown. Then we drain remaining inflight
+// and stop QoS/will subsystems.
 func (b *Broker) Stop() {
 	b.cancel()
 
-	// Drain in-flight messages with a timeout
-	drainTimeout := 5 * time.Second
-	deadline := time.Now().Add(drainTimeout)
-	for time.Now().Before(deadline) {
-		total := 0
-		b.mu.RLock()
-		for clientID := range b.connections {
-			total += b.qos.InflightCount(clientID)
-		}
-		b.mu.RUnlock()
-		if total == 0 {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-
-	// Close all client connections
+	// Close all client connections first — stops readLoops so no
+	// new messages can arrive during the drain phase.
 	b.mu.Lock()
 	for id, cs := range b.connections {
 		if err := cs.conn.Close(); err != nil {
@@ -523,6 +510,20 @@ func (b *Broker) Stop() {
 		delete(b.connections, id)
 	}
 	b.mu.Unlock()
+
+	// Drain remaining in-flight messages (they are already queued,
+	// no new ones can arrive since connections are closed).
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		total := 0
+		for _, clientID := range b.sessions.ListSessions() {
+			total += b.qos.InflightCount(clientID)
+		}
+		if total == 0 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 
 	b.qos.Stop()
 	b.will.Stop()

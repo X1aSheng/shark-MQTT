@@ -107,7 +107,8 @@ func WithPluginManager(m *plugin.Manager) Option {
 	}
 }
 
-// WithMaxConnections sets the maximum concurrent connections (0 = unlimited).
+// WithMaxConnections sets the maximum concurrent connections.
+// Use 0 for unlimited, -1 to defer to config (default).
 func WithMaxConnections(n int) Option {
 	return func(o *brokerOpts) {
 		o.maxConnections = n
@@ -117,7 +118,8 @@ func WithMaxConnections(n int) Option {
 // NewBroker creates a new MQTT broker with the given options.
 func NewBroker(opts ...Option) *Broker {
 	o := &brokerOpts{
-		cfg: config.DefaultConfig(),
+		cfg:            config.DefaultConfig(),
+		maxConnections: -1, // sentinel: not set by API user
 	}
 
 	// Apply options to collect config and auth components
@@ -149,7 +151,7 @@ func NewBroker(opts ...Option) *Broker {
 		bopts = append(bopts, broker.WithPluginManager(o.pluginManager))
 	}
 
-	if o.maxConnections > 0 {
+	if o.maxConnections >= 0 {
 		bopts = append(bopts, broker.WithMaxConnections(o.maxConnections))
 	}
 	if o.cfg.MaxPacketSize > 0 {
@@ -172,7 +174,7 @@ func NewBroker(opts ...Option) *Broker {
 		bopts = append(bopts, broker.WithQoSOptions(qosOpts...))
 	}
 	// Propagate max connections from config when not explicitly set
-	if o.maxConnections == 0 && o.cfg.MaxConnections > 0 {
+	if o.maxConnections < 0 && o.cfg.MaxConnections > 0 {
 		bopts = append(bopts, broker.WithMaxConnections(o.cfg.MaxConnections))
 	}
 
@@ -307,7 +309,7 @@ func (b *Broker) startHealthServer() {
 
 	ln, err := net.Listen("tcp", b.cfg.MetricsAddr)
 	if err != nil {
-		b.logr.Warn("health server skipped", "error", err)
+		b.logr.Error("health/metrics server failed to start — endpoints unavailable", "addr", b.cfg.MetricsAddr, "error", err)
 		return
 	}
 	b.healthAddr = ln.Addr().String()

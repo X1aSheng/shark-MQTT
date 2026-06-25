@@ -77,6 +77,9 @@ func (f *FileAuth) LoadFile(filePath string) error {
 	f.users = authFile.Users
 	f.userIndex = make(map[string]int, len(authFile.Users))
 	for i, u := range authFile.Users {
+		if _, exists := f.userIndex[u.Username]; exists {
+			return fmt.Errorf("duplicate username %q in auth file", u.Username)
+		}
 		f.userIndex[u.Username] = i
 	}
 

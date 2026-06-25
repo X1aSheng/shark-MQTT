@@ -55,7 +55,9 @@ func (tt *TopicTree) Subscribe(topic string, clientID string, qos uint8) bool {
 }
 
 // SubscribeSystem adds a subscription for a system topic ($SYS).
-// System topics are protected from wildcard matching.
+// The topic is stored in the same tree as regular subscriptions.
+// Protection against wildcard matching of $SYS topics is enforced
+// in Match() / matchNodeWithSys() per MQTT §4.7.2.
 func (tt *TopicTree) SubscribeSystem(topic string, clientID string, qos uint8) bool {
 	if !protocol.ValidateTopicFilter(topic) {
 		return false
