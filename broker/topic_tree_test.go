@@ -560,3 +560,89 @@ func TestTopicTree_QoSMinOnMultipleMatches(t *testing.T) {
 		t.Errorf("expected client1 once, got %d times", count)
 	}
 }
+
+// TestTopicTree_SysProtection verifies MQTT Section 4.7.2: root-level +
+// and # wildcards never match topics starting with $ (P0-C02).
+func TestTopicTree_SysProtection(t *testing.T) {
+	tt := NewTopicTree()
+	tt.Subscribe("#", "wildcard", 0)
+	tt.Subscribe("+", "plus", 0)
+	tt.Subscribe("+/#", "plus_hash", 0)
+	tt.Subscribe("$SYS/uptime", "explicit", 0)
+
+	// Wildcard subscribers must NOT receive $SYS messages
+	results := tt.Match("$SYS/uptime")
+	for _, r := range results {
+		if r.ClientID == "wildcard" || r.ClientID == "plus" || r.ClientID == "plus_hash" {
+			t.Errorf("wildcard subscriber %s should not match $SYS topic", r.ClientID)
+		}
+	}
+
+	// Explicit $SYS subscriber SHOULD receive it
+	found := false
+	for _, r := range results {
+		if r.ClientID == "explicit" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("explicit $SYS subscriber should receive $SYS messages")
+	}
+}
+
+// TestACL_SysProtection verifies StaticAuth ACL does not match $SYS
+// topics via wildcard patterns (P0-C02).
+func TestACL_SysProtection(t *testing.T) {
+	auth := NewStaticAuth()
+	auth.AddCredentials("user", "pass")
+	auth.AddACL("user", &ACL{
+		PublishTopics:   []string{"#"},
+		SubscribeTopics: []string{"+/#"},
+	})
+
+	// Wildcard ACL should NOT authorize $SYS topics
+	if auth.CanPublish(nil, "user", "$SYS/uptime") {
+		t.Error("wildcard ACL should not authorize publish to $SYS")
+	}
+	if auth.CanSubscribe(nil, "user", "$SYS/memory") {
+		t.Error("wildcard ACL should not authorize subscribe to $SYS")
+	}
+
+	// Normal topics should still work
+	if !auth.CanPublish(nil, "user", "sport/tennis") {
+		t.Error("wildcard ACL should authorize publish to normal topics")
+	}
+
+	// Explicit $SYS ACL should work
+	auth.AddACL("user2", &ACL{
+		PublishTopics: []string{"$SYS/+"},
+	})
+	auth.AddCredentials("user2", "pass")
+	if !auth.CanPublish(nil, "user2", "$SYS/uptime") {
+		t.Error("explicit $SYS ACL should authorize publish")
+	}
+}
+
+// TestParseSharedFilter verifies shared subscription filter parsing (P3-L01).
+func TestParseSharedFilter(t *testing.T) {
+	tests := []struct {
+		filter    string
+		shareName string
+		topic     string
+		ok        bool
+	}{
+		{"$share/group1/sport/#", "group1", "sport/#", true},
+		{"$share/mygroup/+/tennis", "mygroup", "+/tennis", true},
+		{"sport/#", "", "", false},
+		{"$share/", "", "", false},
+		{"$share/x", "", "", false},
+		{"", "", "", false},
+	}
+	for _, tt := range tests {
+		shareName, topic, ok := ParseSharedFilter(tt.filter)
+		if ok != tt.ok || shareName != tt.shareName || topic != tt.topic {
+			t.Errorf("ParseSharedFilter(%q) = (%q,%q,%v), want (%q,%q,%v)",
+				tt.filter, shareName, topic, ok, tt.shareName, tt.topic, tt.ok)
+		}
+	}
+}

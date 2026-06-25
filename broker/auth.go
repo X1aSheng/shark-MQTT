@@ -138,7 +138,7 @@ func (s *StaticAuth) CanPublish(ctx context.Context, username, topic string) boo
 		return false
 	}
 	for _, t := range acl.PublishTopics {
-		if protocol.MatchTopic(t, topic) {
+		if matchWithSysProtection(t, topic) {
 			return true
 		}
 	}
@@ -154,7 +154,7 @@ func (s *StaticAuth) CanSubscribe(ctx context.Context, username, topic string) b
 		return false
 	}
 	for _, t := range acl.SubscribeTopics {
-		if protocol.MatchTopic(t, topic) {
+		if matchWithSysProtection(t, topic) {
 			return true
 		}
 	}

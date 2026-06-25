@@ -255,3 +255,26 @@ func TestValidate_EmptyStorageBackend(t *testing.T) {
 		t.Errorf("empty storage_backend should be accepted (defaults to memory), got %v", err)
 	}
 }
+
+// TestValidate_BadgerPathRequired verifies BadgerPath is validated (P3-L03).
+func TestValidate_BadgerPathRequired(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.StorageBackend = "badger"
+	cfg.BadgerPath = ""
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error when storage_backend=badger and badger_path is empty")
+	}
+}
+
+// TestValidate_TLSVersionRange verifies TLS version range check (P3-L03).
+func TestValidate_TLSVersionRange(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.TLSEnabled = true
+	cfg.TLSCertFile = "/tmp/cert.pem"
+	cfg.TLSKeyFile = "/tmp/key.pem"
+	cfg.TLSMinVersion = 772 // TLS 1.3
+	cfg.TLSMaxVersion = 771 // TLS 1.2 - invalid range
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error when TLSMinVersion > TLSMaxVersion")
+	}
+}

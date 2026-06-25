@@ -548,3 +548,17 @@ func TestServerKeepAlive(t *testing.T) {
 		t.Error("ServerKeepAlive not set correctly")
 	}
 }
+
+// TestBroker_StartIdempotent verifies double-Start returns error (P1-H02).
+func TestBroker_StartIdempotent(t *testing.T) {
+	b := New(WithAuth(AllowAllAuth{}))
+	if err := b.Start(); err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+	defer b.Stop()
+
+	err := b.Start()
+	if err == nil {
+		t.Fatal("expected error on double Start")
+	}
+}

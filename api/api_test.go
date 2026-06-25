@@ -281,3 +281,21 @@ func TestConfigValidationError(t *testing.T) {
 		t.Fatal("expected Start() to fail with invalid config")
 	}
 }
+
+// TestMaxConnections_Sentinel verifies -1 defers to config, 0 means unlimited (P2-M06).
+func TestMaxConnections_Sentinel(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.MaxConnections = 500
+	cfg.ListenAddr = ":0"
+
+	// Default (-1 sentinel): should use config's 500
+	b1 := NewBroker(WithConfig(cfg))
+	if b1.initErr != nil {
+		t.Fatal(b1.initErr)
+	}
+	// Explicit 0: unlimited, should NOT use config's 500
+	b2 := NewBroker(WithConfig(cfg), WithMaxConnections(0))
+	if b2.initErr != nil {
+		t.Fatal(b2.initErr)
+	}
+}
