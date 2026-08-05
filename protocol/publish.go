@@ -11,9 +11,6 @@ func (c *Codec) decodePublish(r io.Reader, fh *FixedHeader) (*PublishPacket, err
 	if err != nil {
 		return nil, err
 	}
-	if !ValidatePublishTopic(topic) {
-		return nil, ErrMalformedPacket
-	}
 
 	var packetID uint16
 	if fh.QoS > 0 {
@@ -53,6 +50,17 @@ func (c *Codec) decodePublish(r io.Reader, fh *FixedHeader) (*PublishPacket, err
 		}
 	}
 
+	// A zero-length Topic Name is allowed only for MQTT 5.0 when a non-zero
+	// Topic Alias property is present (MQTT 5.0 §3.3.2.3.4). Otherwise the
+	// topic must be non-empty and free of wildcards.
+	if len(topic) == 0 {
+		if c.protocolVersion != Version50 || props == nil || props.TopicAlias == nil || *props.TopicAlias == 0 {
+			return nil, ErrMalformedPacket
+		}
+	} else if !ValidatePublishTopic(topic) {
+		return nil, ErrMalformedPacket
+	}
+
 	// Whatever remains is the payload
 	payloadLen := reader.Len()
 	var payload []byte
@@ -75,7 +83,12 @@ func (c *Codec) decodePublish(r io.Reader, fh *FixedHeader) (*PublishPacket, err
 func (c *Codec) encodePublish(w io.Writer, pkt *PublishPacket) error {
 	var buf bytes.Buffer
 
-	if !ValidatePublishTopic(pkt.Topic) {
+	if len(pkt.Topic) == 0 {
+		// MQTT 5.0 topic-alias publish with an empty topic name.
+		if c.protocolVersion != Version50 || pkt.Properties == nil || pkt.Properties.TopicAlias == nil || *pkt.Properties.TopicAlias == 0 {
+			return ErrMalformedPacket
+		}
+	} else if !ValidatePublishTopic(pkt.Topic) {
 		return ErrMalformedPacket
 	}
 	if pkt.QoS == 0 && pkt.PacketID != 0 {
