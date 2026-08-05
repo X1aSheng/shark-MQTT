@@ -10,6 +10,7 @@ import (
 // WillMessage represents a last will message.
 type WillMessage struct {
 	ClientID string
+	Username string // owner username, used for publish authorization
 	Topic    string
 	Payload  []byte
 	QoS      uint8
@@ -24,8 +25,8 @@ type WillHandler struct {
 	cancel map[string]context.CancelFunc
 	wg     sync.WaitGroup
 
-	// Callback to publish will message
-	publishWill func(topic string, payload []byte, qos uint8, retain bool) error
+	// Callback to publish will message (username included for authorization)
+	publishWill func(username string, topic string, payload []byte, qos uint8, retain bool) error
 }
 
 // NewWillHandler creates a new WillHandler.
@@ -50,13 +51,13 @@ func (wh *WillHandler) Stop() {
 }
 
 // SetPublishCallback sets the callback for publishing will messages.
-func (wh *WillHandler) SetPublishCallback(fn func(topic string, payload []byte, qos uint8, retain bool) error) {
+func (wh *WillHandler) SetPublishCallback(fn func(username string, topic string, payload []byte, qos uint8, retain bool) error) {
 	wh.publishWill = fn
 }
 
 // RegisterWill registers a will message for a client.
 // Cancels any pending delayed will for the same client.
-func (wh *WillHandler) RegisterWill(clientID string, topic string, payload []byte, qos uint8, retain bool, delay time.Duration) error {
+func (wh *WillHandler) RegisterWill(clientID string, username string, topic string, payload []byte, qos uint8, retain bool, delay time.Duration) error {
 	wh.mu.Lock()
 	defer wh.mu.Unlock()
 
@@ -68,6 +69,7 @@ func (wh *WillHandler) RegisterWill(clientID string, topic string, payload []byt
 
 	wh.wills[clientID] = &WillMessage{
 		ClientID: clientID,
+		Username: username,
 		Topic:    topic,
 		Payload:  payload,
 		QoS:      qos,
@@ -140,7 +142,7 @@ func (wh *WillHandler) RemoveWill(clientID string) {
 
 func (wh *WillHandler) publishWillMessage(will *WillMessage) error {
 	if wh.publishWill != nil && len(will.Topic) > 0 {
-		return wh.publishWill(will.Topic, will.Payload, will.QoS, will.Retain)
+		return wh.publishWill(will.Username, will.Topic, will.Payload, will.QoS, will.Retain)
 	}
 	return nil
 }

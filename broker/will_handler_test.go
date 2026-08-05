@@ -28,7 +28,7 @@ func TestWillHandler_RegisterWill(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			wh.RegisterWill(tc.clientID, tc.topic, tc.payload, tc.qos, tc.retain, tc.delay)
+			wh.RegisterWill(tc.clientID, "user-"+tc.clientID, tc.topic, tc.payload, tc.qos, tc.retain, tc.delay)
 
 			info, ok := wh.GetWillInfo(tc.clientID)
 			if !ok {
@@ -56,8 +56,8 @@ func TestWillHandler_RegisterWill(t *testing.T) {
 func TestWillHandler_RegisterWill_Overwrites(t *testing.T) {
 	wh := NewWillHandler()
 
-	wh.RegisterWill("client1", "old/topic", []byte("old"), 0, false, 0)
-	wh.RegisterWill("client1", "new/topic", []byte("new"), 1, true, 0)
+	wh.RegisterWill("client1", "user1", "old/topic", []byte("old"), 0, false, 0)
+	wh.RegisterWill("client1", "user1", "new/topic", []byte("new"), 1, true, 0)
 
 	info, ok := wh.GetWillInfo("client1")
 	if !ok {
@@ -95,7 +95,7 @@ func TestWillHandler_TriggerWill_Immediate(t *testing.T) {
 	var publishedRetain bool
 
 	wh := NewWillHandler()
-	wh.SetPublishCallback(func(topic string, payload []byte, qos uint8, retain bool) error {
+	wh.SetPublishCallback(func(_ string, topic string, payload []byte, qos uint8, retain bool) error {
 		mu.Lock()
 		publishedTopic = topic
 		publishedPayload = payload
@@ -105,7 +105,7 @@ func TestWillHandler_TriggerWill_Immediate(t *testing.T) {
 		return nil
 	})
 
-	wh.RegisterWill("client1", "client1/status", []byte("offline"), 1, true, 0)
+	wh.RegisterWill("client1", "user1", "client1/status", []byte("offline"), 1, true, 0)
 	err := wh.TriggerWill("client1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -145,7 +145,7 @@ func TestWillHandler_TriggerWill_NonExistent(t *testing.T) {
 
 func TestWillHandler_TriggerWill_NoCallback(t *testing.T) {
 	wh := NewWillHandler()
-	wh.RegisterWill("client1", "topic", []byte("data"), 0, false, 0)
+	wh.RegisterWill("client1", "user1", "topic", []byte("data"), 0, false, 0)
 
 	// No publish callback set - should not panic
 	err := wh.TriggerWill("client1")
@@ -157,12 +157,12 @@ func TestWillHandler_TriggerWill_NoCallback(t *testing.T) {
 func TestWillHandler_TriggerWill_EmptyTopic(t *testing.T) {
 	var published bool
 	wh := NewWillHandler()
-	wh.SetPublishCallback(func(topic string, payload []byte, qos uint8, retain bool) error {
+	wh.SetPublishCallback(func(_ string, _ string, _ []byte, _ uint8, _ bool) error {
 		published = true
 		return nil
 	})
 
-	wh.RegisterWill("client1", "", []byte("data"), 0, false, 0)
+	wh.RegisterWill("client1", "user1", "", []byte("data"), 0, false, 0)
 	wh.TriggerWill("client1")
 
 	if published {
@@ -177,7 +177,7 @@ func TestWillHandler_TriggerWill_Delayed(t *testing.T) {
 	var published bool
 
 	wh := NewWillHandler()
-	wh.SetPublishCallback(func(topic string, payload []byte, qos uint8, retain bool) error {
+	wh.SetPublishCallback(func(_ string, _ string, _ []byte, _ uint8, _ bool) error {
 		mu.Lock()
 		published = true
 		mu.Unlock()
@@ -185,7 +185,7 @@ func TestWillHandler_TriggerWill_Delayed(t *testing.T) {
 	})
 
 	delay := 100 * time.Millisecond
-	wh.RegisterWill("client1", "client1/status", []byte("delayed"), 0, false, delay)
+	wh.RegisterWill("client1", "user1", "client1/status", []byte("delayed"), 0, false, delay)
 	wh.TriggerWill("client1")
 
 	// Should not be published immediately
@@ -210,7 +210,7 @@ func TestWillHandler_TriggerWill_Delayed_CancelBeforeFiring(t *testing.T) {
 	var published bool
 
 	wh := NewWillHandler()
-	wh.SetPublishCallback(func(topic string, payload []byte, qos uint8, retain bool) error {
+	wh.SetPublishCallback(func(_ string, _ string, _ []byte, _ uint8, _ bool) error {
 		mu.Lock()
 		published = true
 		mu.Unlock()
@@ -218,7 +218,7 @@ func TestWillHandler_TriggerWill_Delayed_CancelBeforeFiring(t *testing.T) {
 	})
 
 	delay := 200 * time.Millisecond
-	wh.RegisterWill("client1", "client1/status", []byte("data"), 0, false, delay)
+	wh.RegisterWill("client1", "user1", "client1/status", []byte("data"), 0, false, delay)
 	wh.TriggerWill("client1")
 
 	// Cancel before the delay elapses
@@ -238,7 +238,7 @@ func TestWillHandler_TriggerWill_Delayed_CancelBeforeFiring(t *testing.T) {
 
 func TestWillHandler_RemoveWill(t *testing.T) {
 	wh := NewWillHandler()
-	wh.RegisterWill("client1", "client1/status", []byte("offline"), 0, false, 0)
+	wh.RegisterWill("client1", "user1", "client1/status", []byte("offline"), 0, false, 0)
 
 	wh.RemoveWill("client1")
 
@@ -260,7 +260,7 @@ func TestWillHandler_RemoveWill_Delayed(t *testing.T) {
 	var published bool
 
 	wh := NewWillHandler()
-	wh.SetPublishCallback(func(topic string, payload []byte, qos uint8, retain bool) error {
+	wh.SetPublishCallback(func(_ string, _ string, _ []byte, _ uint8, _ bool) error {
 		mu.Lock()
 		published = true
 		mu.Unlock()
@@ -268,7 +268,7 @@ func TestWillHandler_RemoveWill_Delayed(t *testing.T) {
 	})
 
 	delay := 100 * time.Millisecond
-	wh.RegisterWill("client1", "client1/status", []byte("data"), 0, false, delay)
+	wh.RegisterWill("client1", "user1", "client1/status", []byte("data"), 0, false, delay)
 
 	// Graceful disconnect: remove will (cancels delayed will)
 	wh.RemoveWill("client1")
@@ -286,7 +286,7 @@ func TestWillHandler_RemoveWill_Delayed(t *testing.T) {
 
 func TestWillHandler_CancelWill(t *testing.T) {
 	wh := NewWillHandler()
-	wh.RegisterWill("client1", "client1/status", []byte("data"), 0, false, 0)
+	wh.RegisterWill("client1", "user1", "client1/status", []byte("data"), 0, false, 0)
 
 	wh.CancelWill("client1")
 
@@ -307,8 +307,8 @@ func TestWillHandler_CancelWill_NonExistent(t *testing.T) {
 
 func TestWillHandler_Stop(t *testing.T) {
 	wh := NewWillHandler()
-	wh.RegisterWill("client1", "client1/status", []byte("data"), 0, false, 0)
-	wh.RegisterWill("client2", "client2/status", []byte("data"), 0, false, 0)
+	wh.RegisterWill("client1", "user1", "client1/status", []byte("data"), 0, false, 0)
+	wh.RegisterWill("client2", "user2", "client2/status", []byte("data"), 0, false, 0)
 
 	wh.Stop()
 
@@ -324,7 +324,7 @@ func TestWillHandler_Stop_CancelsDelayed(t *testing.T) {
 	var publishedCount int
 
 	wh := NewWillHandler()
-	wh.SetPublishCallback(func(topic string, payload []byte, qos uint8, retain bool) error {
+	wh.SetPublishCallback(func(_ string, _ string, _ []byte, _ uint8, _ bool) error {
 		mu.Lock()
 		publishedCount++
 		mu.Unlock()
@@ -332,8 +332,8 @@ func TestWillHandler_Stop_CancelsDelayed(t *testing.T) {
 	})
 
 	delay := 100 * time.Millisecond
-	wh.RegisterWill("client1", "t1", []byte("data"), 0, false, delay)
-	wh.RegisterWill("client2", "t2", []byte("data"), 0, false, delay)
+	wh.RegisterWill("client1", "user1", "t1", []byte("data"), 0, false, delay)
+	wh.RegisterWill("client2", "user2", "t2", []byte("data"), 0, false, delay)
 
 	wh.Stop()
 
@@ -356,7 +356,7 @@ func TestWillHandler_SetPublishCallback(t *testing.T) {
 		t.Error("expected publishWill to be nil initially")
 	}
 
-	cb := func(topic string, payload []byte, qos uint8, retain bool) error { return nil }
+	cb := func(_ string, _ string, _ []byte, _ uint8, _ bool) error { return nil }
 	wh.SetPublishCallback(cb)
 
 	if wh.publishWill == nil {
@@ -371,7 +371,7 @@ func TestWillHandler_FullLifecycle(t *testing.T) {
 	var publishedMessages []string
 
 	wh := NewWillHandler()
-	wh.SetPublishCallback(func(topic string, payload []byte, qos uint8, retain bool) error {
+	wh.SetPublishCallback(func(_ string, topic string, _ []byte, _ uint8, _ bool) error {
 		mu.Lock()
 		publishedMessages = append(publishedMessages, topic)
 		mu.Unlock()
@@ -379,8 +379,8 @@ func TestWillHandler_FullLifecycle(t *testing.T) {
 	})
 
 	// Register wills
-	wh.RegisterWill("client1", "client1/status", []byte("offline"), 0, false, 0)
-	wh.RegisterWill("client2", "client2/status", []byte("offline"), 1, true, 0)
+	wh.RegisterWill("client1", "user1", "client1/status", []byte("offline"), 0, false, 0)
+	wh.RegisterWill("client2", "user2", "client2/status", []byte("offline"), 1, true, 0)
 
 	// Graceful disconnect for client2 (no will published)
 	wh.RemoveWill("client2")

@@ -180,7 +180,7 @@ func TestBroker_PublishWillStoresRetainedMessage(t *testing.T) {
 	}
 	defer b.Stop()
 
-	if err := b.publishWill("will/retained", []byte("offline"), 1, true); err != nil {
+	if err := b.publishWill("user1", "will/retained", []byte("offline"), 1, true); err != nil {
 		t.Fatalf("publishWill: %v", err)
 	}
 
@@ -560,5 +560,49 @@ func TestBroker_StartIdempotent(t *testing.T) {
 	err := b.Start()
 	if err == nil {
 		t.Fatal("expected error on double Start")
+	}
+}
+
+// TestBroker_WillAuthDenied verifies a will message respects the authorizer:
+// a client without publish permission for the will topic must not have its
+// will delivered (authorization bypass regression).
+func TestBroker_WillAuthDenied(t *testing.T) {
+	auth := NewStaticAuth()
+	auth.AddCredentials("u1", "pass")
+	auth.AddACL("u1", &ACL{
+		PublishTopics:   []string{"public/#"},
+		SubscribeTopics: []string{"#"},
+	})
+
+	b := New(WithAuth(auth), WithAuthorizer(auth))
+	if err := b.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer b.Stop()
+
+	// Subscriber on the protected topic.
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+	defer clientConn.Close()
+	codec := protocol.NewCodec(0)
+	b.mu.Lock()
+	b.connections["sub"] = &clientState{conn: serverConn, codec: codec}
+	b.mu.Unlock()
+	b.topics.Subscribe("secret/topic", "sub", 1)
+	go func() {
+		buf := make([]byte, 4096)
+		_, _ = clientConn.Read(buf)
+	}()
+
+	// Publishing a will to a topic the user cannot publish must be denied.
+	if err := b.publishWill("u1", "secret/topic", []byte("leak"), 1, false); err != nil {
+		t.Fatalf("publishWill: %v", err)
+	}
+
+	// The subscriber must NOT receive anything. Decode reads from serverConn
+	// (the side the broker writes to), so set the deadline there.
+	_ = serverConn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	if _, err := codec.Decode(serverConn); err == nil {
+		t.Fatal("subscriber received a message for a will on a non-authorized topic")
 	}
 }

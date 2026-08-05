@@ -114,8 +114,8 @@ func New(opts ...Option) *Broker {
 	)
 
 	// Setup Will callback
-	b.will.SetPublishCallback(func(topic string, payload []byte, qos uint8, retain bool) error {
-		return b.publishWill(topic, payload, qos, retain)
+	b.will.SetPublishCallback(func(username string, topic string, payload []byte, qos uint8, retain bool) error {
+		return b.publishWill(username, topic, payload, qos, retain)
 	})
 
 	return b
@@ -354,7 +354,7 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 				"requested", willDelay, "max", b.opts.maxWillDelay)
 			willDelay = b.opts.maxWillDelay
 		}
-		if err := b.will.RegisterWill(clientID, connectPkt.WillTopic, connectPkt.WillMessage, connectPkt.Flags.WillQoS, connectPkt.Flags.WillRetain, willDelay); err != nil {
+		if err := b.will.RegisterWill(clientID, connectPkt.Username, connectPkt.WillTopic, connectPkt.WillMessage, connectPkt.Flags.WillQoS, connectPkt.Flags.WillRetain, willDelay); err != nil {
 			b.metrics.IncErrors("will")
 			return fmt.Errorf("broker: register will failed: %w", err)
 		}
@@ -1382,7 +1382,16 @@ func (b *Broker) republish(clientID string, packetID uint16, topic string, paylo
 	return nil
 }
 
-func (b *Broker) publishWill(topic string, payload []byte, qos uint8, retain bool) error {
+func (b *Broker) publishWill(username string, topic string, payload []byte, qos uint8, retain bool) error {
+	// A will message must respect publish authorization just like a normal
+	// PUBLISH, otherwise any client could set a will on a topic it has no
+	// permission to publish.
+	if b.opts.authorizer != nil && !b.opts.authorizer.CanPublish(b.ctx, username, topic) {
+		b.logger.Debug("will publish denied by authorizer", "topic", topic, "username", username)
+		b.metrics.IncAuthFailures()
+		return nil
+	}
+
 	pubPkt := &protocol.PublishPacket{
 		FixedHeader: protocol.FixedHeader{
 			PacketType: protocol.PacketTypePublish,
