@@ -21,6 +21,7 @@ var (
 
 	// 认证错误
 	ErrAuthFailed    = errors.New("authentication failed")
+	ErrUserNotFound  = errors.New("user not found")
 	ErrNotAuthorized = errors.New("not authorized")
 
 	// QoS 错误

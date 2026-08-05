@@ -16,6 +16,7 @@ import (
 // Re-export errs sentinels for backward compatibility.
 var (
 	ErrAuthFailed      = errs.ErrAuthFailed
+	ErrUserNotFound    = errs.ErrUserNotFound
 	ErrAuthUnavailable = errors.New("authenticator unavailable")
 	ErrUnauthorized    = errs.ErrNotAuthorized
 )
@@ -114,7 +115,10 @@ func (s *StaticAuth) Authenticate(ctx context.Context, clientID, username, passw
 
 	expected, ok := s.credentials[username]
 	if !ok {
-		return ErrAuthFailed
+		// Distinguish "user not recognized" so an authentication chain can
+		// continue to the next authenticator while still failing closed for
+		// a recognized user with wrong credentials.
+		return ErrUserNotFound
 	}
 
 	// If the stored password is a bcrypt hash, use bcrypt comparison.

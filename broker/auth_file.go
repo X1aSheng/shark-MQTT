@@ -93,7 +93,9 @@ func (f *FileAuth) Authenticate(ctx context.Context, clientID, username, passwor
 
 	idx, ok := f.userIndex[username]
 	if !ok {
-		return ErrAuthFailed
+		// Unknown user: allow an authentication chain to continue rather than
+		// aborting (recognized-but-rejected users still fail closed).
+		return ErrUserNotFound
 	}
 
 	user := f.users[idx]

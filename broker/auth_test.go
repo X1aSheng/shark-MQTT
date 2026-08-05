@@ -49,8 +49,15 @@ func TestChainAuth_FirstSuccess(t *testing.T) {
 	}
 }
 
+// notFoundAuth reports that the user is not known, so a chain may continue.
+type notFoundAuth struct{}
+
+func (notFoundAuth) Authenticate(context.Context, string, string, string) error {
+	return ErrUserNotFound
+}
+
 func TestChainAuth_FallthroughToSecond(t *testing.T) {
-	deny := DenyAllAuth{}
+	deny := notFoundAuth{} // user not recognized -> chain may continue
 	allow := AllowAllAuth{}
 	chain := NewChainAuth(deny, allow)
 	ctx := context.Background()
@@ -113,8 +120,8 @@ users:
 	}
 
 	// Unknown user
-	if err := fa.Authenticate(ctx, "admin-client", "unknown", "x"); err != ErrAuthFailed {
-		t.Errorf("expected ErrAuthFailed for unknown user, got %v", err)
+	if err := fa.Authenticate(ctx, "admin-client", "unknown", "x"); err != ErrUserNotFound {
+		t.Errorf("expected ErrUserNotFound for unknown user, got %v", err)
 	}
 }
 
@@ -232,7 +239,7 @@ func TestFileAuth_LoadFile(t *testing.T) {
 
 	ctx := context.Background()
 	// Old user should no longer work
-	if err := fa.Authenticate(ctx, "c1", "user1", "pass1"); err != ErrAuthFailed {
+	if err := fa.Authenticate(ctx, "c1", "user1", "pass1"); err != ErrUserNotFound {
 		t.Errorf("expected old user to be gone after reload, got %v", err)
 	}
 	// New user should work
@@ -255,8 +262,8 @@ func TestStaticAuthAuthenticate(t *testing.T) {
 
 	// Test invalid user
 	err := a.Authenticate(ctx, "client1", "nonexistent", "secret")
-	if err != ErrAuthFailed {
-		t.Errorf("expected ErrAuthFailed, got %v", err)
+	if err != ErrUserNotFound {
+		t.Errorf("expected ErrUserNotFound, got %v", err)
 	}
 
 	// Test invalid password
@@ -345,5 +352,29 @@ func TestTopicMatch(t *testing.T) {
 		if got := protocol.MatchTopic(tt.pattern, tt.topic); got != tt.want {
 			t.Errorf("MatchTopic(%q, %q) = %v, want %v", tt.pattern, tt.topic, got, tt.want)
 		}
+	}
+}
+
+// TestChainAuthFailsClosedForRecognizedUser verifies a chain does NOT fall
+// through to a permissive authenticator when an earlier authenticator
+// recognized the user but rejected the credentials.
+func TestChainAuthFailsClosedForRecognizedUser(t *testing.T) {
+	a := NewStaticAuth()
+	a.AddCredentials("admin", "secret")
+	// AllowAllAuth is a permissive fallback that would accept anything.
+	chain := NewChainAuth(a, AllowAllAuth{})
+
+	ctx := context.Background()
+	// Recognized user, wrong password: must fail (not fall through).
+	if err := chain.Authenticate(ctx, "c1", "admin", "wrong"); err != ErrAuthFailed {
+		t.Fatalf("recognized user with wrong password = %v, want %v (fail-closed)", err, ErrAuthFailed)
+	}
+	// Unknown user may fall through to the fallback authenticator.
+	if err := chain.Authenticate(ctx, "c1", "stranger", "x"); err != nil {
+		t.Fatalf("unknown user should fall through to AllowAllAuth, got %v", err)
+	}
+	// Valid credentials succeed on the first authenticator.
+	if err := chain.Authenticate(ctx, "c1", "admin", "secret"); err != nil {
+		t.Fatalf("valid credentials failed: %v", err)
 	}
 }
