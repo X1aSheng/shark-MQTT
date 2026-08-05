@@ -197,7 +197,7 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 	if b.opts.maxClientIDLength > 0 && len(connectPkt.ClientID) > b.opts.maxClientIDLength {
 		b.metrics.IncRejections("client_id_too_long")
 		b.metrics.IncErrors("protocol")
-		var reasonCode byte = protocol.ReasonCodeTopicNameInvalid
+		var reasonCode byte
 		if connectPkt.ProtocolVersion == protocol.Version50 {
 			reasonCode = protocol.ReasonCodeProtocolError
 		} else {
