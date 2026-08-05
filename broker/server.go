@@ -131,17 +131,20 @@ func (s *MQTTServer) Stop() {
 	if s.listener != nil {
 		s.listener.Close()
 	}
-	s.wg.Wait()
-	s.listener = nil
-	s.started.Store(false) // allow re-Start after Stop
-
-	// Close remaining connections
+	// Close connections BEFORE waiting on the WaitGroup: connection
+	// goroutines block in the read loop (bounded by the keep-alive read
+	// deadline), so closing them here lets wg.Wait() return promptly
+	// instead of stalling shutdown for up to 1.5x keep-alive per conn.
 	s.mu.Lock()
 	for conn := range s.conns {
 		conn.Close()
 	}
 	s.conns = make(map[net.Conn]struct{})
 	s.mu.Unlock()
+
+	s.wg.Wait()
+	s.listener = nil
+	s.started.Store(false) // allow re-Start after Stop
 
 	if n := s.earlyClose.Load(); n > 0 {
 		s.logr.Info("connections closed before CONNECT", "count", n)

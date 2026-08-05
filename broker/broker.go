@@ -801,18 +801,17 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 	// Route to shared subscribers (round-robin, one per share group)
 	b.routeSharedPublish(clientID, pkt)
 
-	// Send PUBACK for QoS 1
+	// Send PUBACK for QoS 1. Incoming QoS 1 has no client acknowledgment and
+	// must NOT be tracked in the QoS engine: tracking it here caused the
+	// retry loop to re-route the message to subscribers (duplicate delivery)
+	// because the inflight entry could never be acked.
 	if pkt.QoS == 1 {
-		var reasonCode byte = protocol.ReasonCodeSuccess
-		if err := b.qos.TrackQoS1(clientID, pkt.PacketID, pkt.Topic, pkt.Payload, pkt.Retain); err != nil {
-			reasonCode = protocol.ReasonCodeReceiveMaxExceeded
-		}
 		b.writePacket(clientID, &protocol.PubAckPacket{
 			FixedHeader: protocol.FixedHeader{
 				PacketType: protocol.PacketTypePubAck,
 			},
 			PacketID:   pkt.PacketID,
-			ReasonCode: reasonCode,
+			ReasonCode: protocol.ReasonCodeSuccess,
 		})
 	}
 }
@@ -1356,23 +1355,19 @@ func (b *Broker) sendPubComp(clientID string, packetID uint16) error {
 }
 
 func (b *Broker) republish(clientID string, packetID uint16, topic string, payload []byte, qos uint8, retain bool) error {
-	pubPkt := &protocol.PublishPacket{
+	// This is the QoS engine's retry callback for an incoming message whose
+	// handshake has not completed. For QoS 2 the client is waiting on our
+	// PUBREC; re-send it (the original may have been lost) instead of
+	// re-routing the message to subscribers, which would duplicate delivery
+	// and violate at-most-once / exactly-once semantics.
+	pubRec := &protocol.PubRecPacket{
 		FixedHeader: protocol.FixedHeader{
-			PacketType: protocol.PacketTypePublish,
-			QoS:        qos,
-			Retain:     retain,
+			PacketType: protocol.PacketTypePubRec,
 		},
-		Topic:    topic,
-		Payload:  payload,
-		PacketID: packetID,
+		PacketID:   packetID,
+		ReasonCode: protocol.ReasonCodeSuccess,
 	}
-
-	// Route to subscribers via TopicTree
-	subscribers := b.topics.Match(topic)
-	for _, sub := range subscribers {
-		b.deliverToClient(sub.ClientID, clientID, pubPkt)
-	}
-	b.routeSharedPublish(clientID, pubPkt)
+	b.writePacket(clientID, pubRec)
 	return nil
 }
 
