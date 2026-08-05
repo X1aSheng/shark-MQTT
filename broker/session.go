@@ -285,7 +285,18 @@ func (s *Session) MatchesSubscription(topic string) (bool, uint8, SubscriptionOp
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for pattern, qos := range s.Subscriptions {
-		if protocol.MatchTopic(pattern, topic) {
+		// Shared subscription filters are stored as "$share/{group}/{filter}";
+		// match against the real filter so retained messages are delivered to
+		// shared subscribers.
+		realPattern := pattern
+		if IsSharedSubscription(pattern) {
+			_, realFilter, ok := ParseSharedFilter(pattern)
+			if !ok {
+				continue
+			}
+			realPattern = realFilter
+		}
+		if protocol.MatchTopic(realPattern, topic) {
 			opts := s.SubOptions[pattern]
 			return true, qos, opts
 		}

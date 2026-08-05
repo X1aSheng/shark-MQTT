@@ -153,6 +153,11 @@ func (q *QoSEngine) reportError(clientID string, packetID uint16, err error) {
 
 // Start begins the retry loop.
 func (q *QoSEngine) Start() {
+	// Rebuild the context so the retry loop works after a Stop->Start cycle
+	// (Stop cancels the previous context).
+	q.mu.Lock()
+	q.ctx, q.cancel = context.WithCancel(context.Background())
+	q.mu.Unlock()
 	q.wg.Add(1)
 	go q.retryLoop()
 }

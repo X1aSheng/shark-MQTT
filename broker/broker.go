@@ -237,7 +237,9 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 	}
 
 	// Create or resume session. Check in-memory first, then persistent store.
-	isResuming := b.sessions.SessionExists(connectPkt.ClientID)
+	// A clean session must never report SessionPresent=1 (MQTT 5.0 §3.2.2.2
+	// / 3.1.1 §3.2.2.1).
+	isResuming := !connectPkt.Flags.CleanSession && b.sessions.SessionExists(connectPkt.ClientID)
 	if !isResuming && !connectPkt.Flags.CleanSession && b.sessionStore != nil {
 		if exists, storeErr := b.sessionStore.IsSessionExists(ctx, connectPkt.ClientID); exists {
 			restored, err := b.sessions.Restore(ctx, connectPkt.ClientID)
@@ -389,6 +391,9 @@ func (b *Broker) Start() error {
 	if b.started.Swap(true) {
 		return fmt.Errorf("broker already started")
 	}
+	// Rebuild the context so cleanup loops actually run after a Stop->Start
+	// cycle (Stop cancels the previous context).
+	b.ctx, b.cancel = context.WithCancel(context.Background())
 	b.qos.Start()
 	go b.sessionCleanupLoop()
 	if b.opts.retainedExpiry > 0 {
@@ -887,12 +892,18 @@ func (b *Broker) handleSubscribe(clientID string, sess *Session, pkt *protocol.S
 		b.logger.Debug("too many topic filters in SUBSCRIBE",
 			"clientID", clientID, "count", len(pkt.Topics),
 			"max", b.opts.maxTopicFiltersPerSub)
+		// Report failure for every filter instead of granting QoS 0, so the
+		// client does not wrongly believe the subscriptions succeeded.
+		codes := make([]byte, len(pkt.Topics))
+		for i := range codes {
+			codes[i] = protocol.SubAckFailure
+		}
 		b.writePacket(clientID, &protocol.SubAckPacket{
 			FixedHeader: protocol.FixedHeader{
 				PacketType: protocol.PacketTypeSubAck,
 			},
 			PacketID:    pkt.PacketID,
-			ReasonCodes: make([]byte, len(pkt.Topics)),
+			ReasonCodes: codes,
 		})
 		b.metrics.IncErrors("protocol")
 		return
