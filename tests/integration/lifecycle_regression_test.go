@@ -21,7 +21,7 @@ import (
 func connectClientReturnConnAck(t *testing.T, conn net.Conn, codec *protocol.Codec, clientID string, clean bool) (*protocol.ConnAckPacket, error) {
 	t.Helper()
 	connectPkt := &protocol.ConnectPacket{
-		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeConnect},
+		FixedHeader:     protocol.FixedHeader{PacketType: protocol.PacketTypeConnect},
 		ProtocolName:    protocol.ProtocolNameMQTT,
 		ProtocolVersion: protocol.Version50,
 		Flags: protocol.ConnectFlags{
