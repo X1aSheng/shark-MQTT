@@ -478,6 +478,10 @@ func (c *MQTTClient) readLoop() {
 			c.deliverResponse(p.PacketID, p)
 		case *protocol.PubCompPacket:
 			c.deliverResponse(p.PacketID, p)
+		case *protocol.PubRelPacket:
+			// Broker is completing an inbound QoS 2 exchange: send PUBCOMP
+			// and clear the duplicate-tracking entry.
+			c.handlePubRel(p.PacketID)
 		case *protocol.SubAckPacket:
 			c.deliverResponse(p.PacketID, p)
 		case *protocol.UnsubAckPacket:
@@ -549,6 +553,25 @@ func (c *MQTTClient) handlePublish(pkt *protocol.PublishPacket) {
 				c.logError("failed to send PUBREC for packet %d: %v", pkt.PacketID, err)
 			}
 		}
+	}
+}
+
+// handlePubRel completes an inbound QoS 2 exchange: the broker sent PUBREL
+// after our PUBREC, so we send PUBCOMP and drop the duplicate-tracking entry.
+func (c *MQTTClient) handlePubRel(packetID uint16) {
+	c.mu.Lock()
+	conn := c.conn
+	delete(c.receivedQoS2, packetID)
+	c.mu.Unlock()
+	if conn == nil {
+		return
+	}
+	pubcomp := &protocol.PubCompPacket{
+		PacketID: packetID,
+	}
+	pubcomp.FixedHeader.PacketType = protocol.PacketTypePubComp
+	if err := c.codec.Encode(conn, pubcomp); err != nil {
+		c.logError("failed to send PUBCOMP for packet %d: %v", packetID, err)
 	}
 }
 

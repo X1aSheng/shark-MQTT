@@ -768,10 +768,11 @@ func TestDisconnectClosesConnectionBeforeWaitingForReadLoop(t *testing.T) {
 // ─── Mock helpers ──────────────────────────────────────────────
 
 type mockConn struct {
-	mu          sync.Mutex
-	closed      bool
-	wrotePubAck bool
-	pubrecCount int
+	mu           sync.Mutex
+	closed       bool
+	wrotePubAck  bool
+	pubrecCount  int
+	pubcompCount int
 }
 
 func (m *mockConn) Read(p []byte) (int, error) {
@@ -782,7 +783,7 @@ func (m *mockConn) Read(p []byte) (int, error) {
 func (m *mockConn) Write(p []byte) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// Detect PUBACK (type 4) or PUBREC (type 5) packets
+	// Detect PUBACK (type 4), PUBREC (type 5) or PUBCOMP (type 7) packets
 	if len(p) > 1 {
 		packetType := p[0] >> 4
 		if packetType == 4 {
@@ -790,6 +791,9 @@ func (m *mockConn) Write(p []byte) (int, error) {
 		}
 		if packetType == 5 {
 			m.pubrecCount++
+		}
+		if packetType == 7 {
+			m.pubcompCount++
 		}
 	}
 	return len(p), nil
@@ -877,4 +881,29 @@ func trimBrackets(host string) string {
 		return host[1 : len(host)-1]
 	}
 	return host
+}
+
+// TestHandlePubRelSendsPubComp verifies the client completes an inbound QoS 2
+// exchange by sending PUBCOMP for a broker PUBREL and clears the duplicate
+// tracking entry.
+func TestHandlePubRelSendsPubComp(t *testing.T) {
+	conn := &mockConn{}
+	c := New()
+	c.mu.Lock()
+	c.conn = conn
+	c.receivedQoS2[7] = struct{}{}
+	c.mu.Unlock()
+
+	// Simulate the readLoop receiving a PUBREL for packet 7.
+	c.handlePubRel(7)
+
+	if conn.pubcompCount != 1 {
+		t.Errorf("expected 1 PUBCOMP written, got %d", conn.pubcompCount)
+	}
+	c.mu.Lock()
+	_, stillTracked := c.receivedQoS2[7]
+	c.mu.Unlock()
+	if stillTracked {
+		t.Error("receivedQoS2 entry was not cleared after PUBCOMP")
+	}
 }
