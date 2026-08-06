@@ -95,7 +95,9 @@ func (tt *TopicTree) Match(topic string) []Subscriber {
 	defer tt.mu.RUnlock()
 
 	parts := protocol.SplitTopic(topic)
-	var results []Subscriber
+	// Pre-size results to the common fanout case so the append in
+	// matchNodeWithSys/collectAllSubscribers does not reallocate (R3).
+	results := make([]Subscriber, 0, 4)
 	visited := make(map[string]struct{})
 	isSystemTopic := len(parts) > 0 && len(parts[0]) > 0 && parts[0][0] == '$'
 	tt.matchNodeWithSys(tt.root, parts, 0, &results, visited, isSystemTopic, !isSystemTopic)

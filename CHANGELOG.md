@@ -35,9 +35,13 @@ Details in `docs/reports/PROJECT-REVIEW-260806-143527.md`.
   it was not a real round-robin and skewed when a member left/went offline).
   Selection now tracks the last-selected client per share and picks the next
   member after it, so no member is double-selected or starved by a change.
-- **R3-R5, R8 noted:** O(1) topic-match, dependency footprint (11.5 MB binary /
-  61 modules vs. reference <4 MB), WebSocket transport, and `$SYS` status topics
-  are catalogued as improvement items.
+- **R3 (evaluated):** `TopicTree.Match` allocs reduced 3→2/op by pre-sizing the
+  results slice for the common fanout case; pooling the dedup map and replacing
+  the trie with a bitmap/bloom index were measured to give no further benefit at
+  this scale (the report already judged the trie sufficient for normal load).
+- **R4, R5, R8 noted:** dependency footprint (11.5 MB binary / 61 modules vs.
+  reference <4 MB), WebSocket transport, and `$SYS` status topics are catalogued
+  as improvement items.
 
 ### V6 Fix Round (2026-08-06)
 
