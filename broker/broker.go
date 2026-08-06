@@ -300,6 +300,12 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 	sess := b.sessions.CreateSession(connectPkt.ClientID, connectPkt, isResuming)
 	clientID := connectPkt.ClientID
 
+	// The client may request Response Information in the CONNACK (MQTT 5.0
+	// §3.2.2.3.8).
+	if connectPkt.Properties != nil && connectPkt.Properties.RequestResponseInfo != nil && *connectPkt.Properties.RequestResponseInfo == 1 {
+		sess.RequestResponseInfo = true
+	}
+
 	// Reconnecting to an existing session cancels any pending delayed will
 	// (MQTT 5.0 §3.1.2.5): the session is no longer being abandoned.
 	if isResuming {
@@ -1832,7 +1838,13 @@ func (b *Broker) buildConnAckProperties(sess *Session) *protocol.Properties {
 		receiveMax = 65535
 	}
 	maxPktSize := uint32(b.opts.maxPacketSize)
-	requestResponseInfo := byte(0) // don't send ResponseInfo by default
+	// MQTT 5.0 §3.2.2.3.8: only advertise Response Information when the client
+	// requested it, and return the client ID as the basis for building a
+	// response topic (§3.2.2.3.9).
+	requestResponseInfo := byte(0)
+	if sess.RequestResponseInfo {
+		requestResponseInfo = 1
+	}
 
 	props := &protocol.Properties{
 		SessionExpiryInterval: &sess.ExpiryInterval,
@@ -1843,6 +1855,9 @@ func (b *Broker) buildConnAckProperties(sess *Session) *protocol.Properties {
 		SubIDAvailable:        &subIDAvailable,
 		SharedSubAvailable:    &sharedSubAvailable,
 		RequestResponseInfo:   &requestResponseInfo,
+	}
+	if sess.RequestResponseInfo {
+		props.ResponseInfo = sess.ClientID
 	}
 
 	// Advertise Topic Alias Maximum if the session negotiated a non-zero value.

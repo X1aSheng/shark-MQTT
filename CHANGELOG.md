@@ -26,6 +26,10 @@ This project uses semantic versioning. Pre-release tags use the form
   MQTT-over-WebSocket over TLS using the broker's TLS certificate (requires
   `tls_enabled`); plain `ws_listen_addr` and `wss_listen_addr` can run
   simultaneously. `WSSAddr()` exposed on the api/server.
+- **Request Response Information (MQTT 5.0 §3.2.2.3.8/.9):** the CONNACK now
+  honors the client's RequestResponseInformation: when requested it advertises
+  RequestResponseInfo=1 and returns the client ID as the Response Information
+  base; otherwise neither is sent.
 
 ### Review Round V7 (2026-08-06) - reference comparison
 

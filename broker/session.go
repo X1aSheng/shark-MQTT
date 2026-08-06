@@ -51,6 +51,10 @@ type Session struct {
 	// that connected with an empty ClientID (MQTT 5.0 §3.1.3.6).
 	AssignedClientID string
 
+	// RequestResponseInfo records that the client requested the server to return
+	// Response Information in the CONNACK (MQTT 5.0 §3.2.2.3.8).
+	RequestResponseInfo bool
+
 	// ServerKeepAlive is set when the server enforces a shorter keep-alive than
 	// the client requested (MQTT 5.0 §3.1.2.11.4).
 	ServerKeepAlive *uint16
