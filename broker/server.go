@@ -22,22 +22,28 @@ import (
 // MQTTServer handles incoming MQTT connections over TCP and, when configured,
 // MQTT-over-WebSocket (R5).
 type MQTTServer struct {
-	cfg        *config.Config
-	listener   net.Listener
-	handler    ConnectionHandler
-	connCount  atomic.Int64
-	earlyClose atomic.Int64
-	tlsConfig  *tls.Config
-	tlsErr     error       // set when TLS config fails to load
-	started    atomic.Bool // prevents double Start
-	logr       logger.Logger
-	ctx        context.Context
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
-	mu         sync.Mutex
-	conns      map[net.Conn]struct{}
-	wsListener net.Listener // WebSocket listener (nil when WS disabled, R5)
-	wsServer   *http.Server // WebSocket HTTP server (R5)
+	cfg         *config.Config
+	listener    net.Listener
+	handler     ConnectionHandler
+	connCount   atomic.Int64
+	earlyClose  atomic.Int64
+	tlsConfig   *tls.Config
+	tlsErr      error       // set when TLS config fails to load
+	started     atomic.Bool // prevents double Start
+	logr        logger.Logger
+	ctx         context.Context
+	cancel      context.CancelFunc
+	wg          sync.WaitGroup
+	mu          sync.Mutex
+	conns       map[net.Conn]struct{}
+	wsEndpoints []*wsEndpoint // WebSocket listeners (plain WS and/or WSS, R5)
+}
+
+// wsEndpoint is one WebSocket listener (plain WS or TLS WSS).
+type wsEndpoint struct {
+	ln  net.Listener
+	srv *http.Server
+	tls bool
 }
 
 // ConnectionHandler is called when a new connection is accepted.
@@ -129,9 +135,19 @@ func (s *MQTTServer) Start() error {
 	go s.acceptLoop(ln)
 
 	if s.cfg.WSListenAddr != "" {
-		if err := s.startWS(s.cfg.WSListenAddr); err != nil {
+		if err := s.startWS(s.cfg.WSListenAddr, false); err != nil {
 			s.listener.Close()
 			return fmt.Errorf("server: failed to listen on ws %s: %w", s.cfg.WSListenAddr, err)
+		}
+	}
+	if s.cfg.WSSListenAddr != "" {
+		if s.tlsConfig == nil {
+			s.listener.Close()
+			return fmt.Errorf("server: wss_listen_addr requires TLS to be configured (tls_enabled)")
+		}
+		if err := s.startWS(s.cfg.WSSListenAddr, true); err != nil {
+			s.listener.Close()
+			return fmt.Errorf("server: failed to listen on wss %s: %w", s.cfg.WSSListenAddr, err)
 		}
 	}
 	return nil
@@ -143,13 +159,11 @@ func (s *MQTTServer) Stop() {
 	if s.listener != nil {
 		s.listener.Close()
 	}
-	// Stop the WebSocket listener/server; its accepted connections are closed
+	// Stop the WebSocket listener(s); their accepted connections are closed
 	// below via s.conns (R5).
-	if s.wsListener != nil {
-		s.wsListener.Close()
-	}
-	if s.wsServer != nil {
-		s.wsServer.Close()
+	for _, ep := range s.wsEndpoints {
+		ep.ln.Close()
+		ep.srv.Close()
 	}
 	// Close connections BEFORE waiting on the WaitGroup: connection
 	// goroutines block in the read loop (bounded by the keep-alive read
@@ -179,10 +193,24 @@ func (s *MQTTServer) Addr() net.Addr {
 	return nil
 }
 
-// WSAddr returns the WebSocket listener address, or nil when WS is disabled (R5).
+// WSAddr returns the plain WebSocket listener address, or nil when plain WS is
+// disabled (R5).
 func (s *MQTTServer) WSAddr() net.Addr {
-	if s.wsListener != nil {
-		return s.wsListener.Addr()
+	for _, ep := range s.wsEndpoints {
+		if !ep.tls {
+			return ep.ln.Addr()
+		}
+	}
+	return nil
+}
+
+// WSSAddr returns the TLS WebSocket (WSS) listener address, or nil when WSS is
+// disabled (R5).
+func (s *MQTTServer) WSSAddr() net.Addr {
+	for _, ep := range s.wsEndpoints {
+		if ep.tls {
+			return ep.ln.Addr()
+		}
 	}
 	return nil
 }
@@ -273,20 +301,37 @@ var wsUpgrader = websocket.Upgrader{
 	CheckOrigin:     func(*http.Request) bool { return true },
 }
 
-// startWS starts an HTTP/WebSocket listener for MQTT-over-WebSocket on addr (R5).
-func (s *MQTTServer) startWS(addr string) error {
+// startWS starts an HTTP/WebSocket listener for MQTT-over-WebSocket on addr
+// (R5). When useTLS is true, the listener serves WSS (TLS-wrapped WebSocket)
+// using the server's TLS config.
+func (s *MQTTServer) startWS(addr string, useTLS bool) error {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
-	s.wsListener = ln
+	if useTLS {
+		if s.tlsConfig == nil {
+			ln.Close()
+			return fmt.Errorf("server: WSS requires TLS configuration")
+		}
+		ln = tls.NewListener(ln, s.tlsConfig)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/mqtt", s.wsHandler)
 	mux.HandleFunc("/", s.wsHandler)
-	s.wsServer = &http.Server{Handler: mux}
-	s.logr.Info("ws listening", "addr", addr)
+	ep := &wsEndpoint{
+		ln:  ln,
+		srv: &http.Server{Handler: mux},
+		tls: useTLS,
+	}
+	s.wsEndpoints = append(s.wsEndpoints, ep)
+	scheme := "ws"
+	if useTLS {
+		scheme = "wss"
+	}
+	s.logr.Info("ws listening", "addr", addr, "scheme", scheme)
 	go func() {
-		if err := s.wsServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := ep.srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			s.logr.Debug("ws server error", "error", err)
 		}
 	}()

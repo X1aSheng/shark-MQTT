@@ -22,6 +22,10 @@ This project uses semantic versioning. Pre-release tags use the form
   messages are dropped on reconnect instead of being delivered late; inflight
   retries stop once the deadline passes; forwarded PUBLISHes carry the remaining
   interval. (Retained messages are still governed by the retained-expiry TTL.)
+- **WSS (WebSocket over TLS):** new `wss_listen_addr` config serves
+  MQTT-over-WebSocket over TLS using the broker's TLS certificate (requires
+  `tls_enabled`); plain `ws_listen_addr` and `wss_listen_addr` can run
+  simultaneously. `WSSAddr()` exposed on the api/server.
 
 ### Review Round V7 (2026-08-06) - reference comparison
 

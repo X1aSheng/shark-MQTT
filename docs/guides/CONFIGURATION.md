@@ -64,6 +64,7 @@ export MQTT_CONNECT_TIMEOUT="15s"
 | `keep_alive` | uint16 | `60` | Keep-alive interval in seconds |
 | `write_queue_size` | int | `256` | Per-connection write queue size |
 | `ws_listen_addr` | string | - | MQTT-over-WebSocket listen address (empty disables, R5) |
+| `wss_listen_addr` | string | - | MQTT-over-TLS-WebSocket (WSS) listen address; requires `tls_enabled` |
 
 **Examples:**
 ```yaml
@@ -246,6 +247,7 @@ All configuration options can be set via environment variables with the `MQTT_` 
 | `MQTT_SESSION_EXPIRY_INTERVAL` | `session_expiry_interval` |
 | `MQTT_SYS_INTERVAL` | `sys_interval` |
 | `MQTT_WS_LISTEN_ADDR` | `ws_listen_addr` |
+| `MQTT_WSS_LISTEN_ADDR` | `wss_listen_addr` |
 | `MQTT_REDIS_ADDR` | `redis_addr` |
 | `MQTT_REDIS_PASSWORD` | `redis_password` |
 | `MQTT_REDIS_DB` | `redis_db` |
