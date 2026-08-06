@@ -265,6 +265,17 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 	sess := b.sessions.CreateSession(connectPkt.ClientID, connectPkt, isResuming)
 	clientID := connectPkt.ClientID
 
+	// A clean-session connect discards any previously stored session and its
+	// queued offline messages (MQTT session state is not carried over).
+	if connectPkt.Flags.CleanSession {
+		if b.sessionStore != nil {
+			_ = b.sessionStore.DeleteSession(b.ctx, clientID)
+		}
+		if b.messageStore != nil {
+			_ = b.messageStore.ClearMessages(b.ctx, clientID)
+		}
+	}
+
 	if assignedClientID != "" {
 		sess.AssignedClientID = assignedClientID
 	}
@@ -373,6 +384,9 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 
 	// Send CONNACK
 	b.sendConnAck(clientID, protocol.ConnAckAccepted, isResuming, sess)
+
+	// Deliver messages queued while this persistent session was offline (P1-5).
+	b.deliverQueuedMessages(clientID, sess)
 
 	// Set initial keep-alive deadline so idle clients are detected
 	if sess.KeepAlive > 0 {
@@ -1035,10 +1049,13 @@ func (b *Broker) handleUnsubscribe(clientID string, sess *Session, pkt *protocol
 }
 
 // deliverToClient sends a PUBLISH packet to a specific client.
-// It checks subscription matches and applies QoS downgrade.
+// It checks subscription matches and applies QoS downgrade. An offline
+// persistent-session subscriber has its message queued for later delivery
+// instead of silently dropped (P1-5).
 func (b *Broker) deliverToClient(clientID, sourceClientID string, pkt *protocol.PublishPacket) {
 	sess, ok := b.sessions.GetSession(clientID)
 	if !ok {
+		b.queueOfflineMessage(clientID, pkt)
 		return
 	}
 	if sourceClientID != "" && clientID == sourceClientID && !sess.AllowsLocalPublish(pkt.Topic) {
@@ -1073,6 +1090,79 @@ func (b *Broker) deliverToSharedClient(clientID, sourceClientID string, pkt *pro
 		deliverQoS = subQoS
 	}
 	b.doDeliver(clientID, pkt, deliverQoS, SubscriptionOptions{QoS: subQoS})
+}
+
+// queueOfflineMessage stores a QoS 1/2 message for an offline persistent
+// session so it can be delivered when the client reconnects (P1-5). QoS 0 is
+// fire-and-forget and is never queued.
+func (b *Broker) queueOfflineMessage(clientID string, pkt *protocol.PublishPacket) {
+	if b.messageStore == nil || b.sessionStore == nil || pkt.FixedHeader.QoS == 0 {
+		return
+	}
+	exists, err := b.sessionStore.IsSessionExists(b.ctx, clientID)
+	if err != nil || !exists {
+		return
+	}
+	data, err := b.sessionStore.GetSession(b.ctx, clientID)
+	if err != nil {
+		return
+	}
+	if data.ExpiryInterval > 0 && !data.ExpiryTime.IsZero() && time.Now().After(data.ExpiryTime) {
+		return // session already expired; nothing to deliver to
+	}
+	msg := &store.StoredMessage{
+		ID:        fmt.Sprintf("%s-%d", clientID, time.Now().UnixNano()),
+		Topic:     pkt.Topic,
+		QoS:       pkt.FixedHeader.QoS,
+		Payload:   pkt.Payload,
+		Retain:    pkt.Retain,
+		Timestamp: time.Now(),
+	}
+	if err := b.messageStore.SaveMessage(b.ctx, clientID, msg); err != nil {
+		b.metrics.IncErrors("message_store")
+		b.logger.Debug("failed to queue offline message", "clientID", clientID, "error", err)
+	}
+}
+
+// deliverQueuedMessages delivers messages queued while a persistent session
+// was offline, respecting the subscription QoS downgrade and the client's
+// ReceiveMaximum. Delivered messages are removed from the store; messages that
+// would exceed the flow-control window stay queued for a later reconnect.
+func (b *Broker) deliverQueuedMessages(clientID string, sess *Session) {
+	if b.messageStore == nil {
+		return
+	}
+	msgs, err := b.messageStore.ListMessages(b.ctx, clientID)
+	if err != nil {
+		b.logger.Debug("failed to list queued messages", "clientID", clientID, "error", err)
+		return
+	}
+	for _, msg := range msgs {
+		matches, subQoS, subOpts := sess.MatchesSubscription(msg.Topic)
+		if !matches {
+			continue
+		}
+		deliverQoS := msg.QoS
+		if subQoS < deliverQoS {
+			deliverQoS = subQoS
+		}
+		if deliverQoS > 0 && !sess.CanSendOutbound() {
+			continue // keep queued; the client must catch up on flow control first
+		}
+		pubPkt := &protocol.PublishPacket{
+			FixedHeader: protocol.FixedHeader{
+				PacketType: protocol.PacketTypePublish,
+				QoS:        deliverQoS,
+				Retain:     msg.Retain,
+			},
+			Topic:   msg.Topic,
+			Payload: msg.Payload,
+		}
+		b.doDeliver(clientID, pubPkt, deliverQoS, subOpts)
+		if err := b.messageStore.DeleteMessage(b.ctx, clientID, msg.ID); err != nil {
+			b.logger.Debug("failed to delete queued message", "clientID", clientID, "error", err)
+		}
+	}
 }
 
 // doDeliver performs the actual PUBLISH write after QoS negotiation.

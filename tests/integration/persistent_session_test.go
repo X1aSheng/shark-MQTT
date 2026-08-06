@@ -387,9 +387,105 @@ func TestPersistentSession_Reconnect(t *testing.T) {
 	}
 }
 
-// TestPersistentSession_OfflinePublish verifies that QoS 1 messages
-// published while a persistent client is offline are not delivered
-// (since the client has no active subscription at that point).
+// TestPersistentSession_OfflineQueue verifies QoS 1 messages published while a
+// persistent session is offline are queued and delivered on reconnect (P1-5).
+func TestPersistentSession_OfflineQueue(t *testing.T) {
+	broker := testBroker(t)
+	clientID := "offline-queue-client"
+
+	// 1. Connect a persistent subscriber and subscribe.
+	conn := dialTestBroker(t, broker)
+	codec := protocol.NewCodec(0)
+	connectPkt := &protocol.ConnectPacket{
+		FixedHeader:    protocol.FixedHeader{PacketType: protocol.PacketTypeConnect},
+		ProtocolName:   protocol.ProtocolNameMQTT,
+		ProtocolVersion: protocol.Version50,
+		Flags:          protocol.ConnectFlags{CleanSession: false},
+		KeepAlive:      30,
+		ClientID:       clientID,
+	}
+	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := codec.Encode(conn, connectPkt); err != nil {
+		t.Fatalf("CONNECT: %v", err)
+	}
+	if _, err := codec.Decode(conn); err != nil {
+		t.Fatalf("CONNACK: %v", err)
+	}
+	subPkt := &protocol.SubscribePacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe, QoS: 1},
+		PacketID:    1,
+		Topics:      []protocol.TopicFilter{{Topic: "offline/queue", QoS: 1}},
+	}
+	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := codec.Encode(conn, subPkt); err != nil {
+		t.Fatalf("SUBSCRIBE: %v", err)
+	}
+	if _, err := codec.Decode(conn); err != nil {
+		t.Fatalf("SUBACK: %v", err)
+	}
+	conn.Close()
+	// Let the broker process the disconnect and persist the session.
+	time.Sleep(150 * time.Millisecond)
+
+	// 2. Publish QoS 1 while the subscriber is offline.
+	pub := dialTestBroker(t, broker)
+	pubCodec := protocol.NewCodec(0)
+	connectClient(t, pub, pubCodec, "offline-pub")
+	pub.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := pubCodec.Encode(pub, &protocol.PublishPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 1},
+		PacketID:    1,
+		Topic:       "offline/queue",
+		Payload:     []byte("queued-while-offline"),
+	}); err != nil {
+		t.Fatalf("PUBLISH: %v", err)
+	}
+	if _, err := pubCodec.Decode(pub); err != nil {
+		t.Fatalf("publisher PUBACK: %v", err)
+	}
+	pub.Close()
+
+	// 3. Reconnect: the queued message must be delivered.
+	conn2 := dialTestBroker(t, broker)
+	codec2 := protocol.NewCodec(0)
+	connectPkt2 := &protocol.ConnectPacket{
+		FixedHeader:    protocol.FixedHeader{PacketType: protocol.PacketTypeConnect},
+		ProtocolName:   protocol.ProtocolNameMQTT,
+		ProtocolVersion: protocol.Version50,
+		Flags:          protocol.ConnectFlags{CleanSession: false},
+		KeepAlive:      30,
+		ClientID:       clientID,
+	}
+	conn2.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := codec2.Encode(conn2, connectPkt2); err != nil {
+		t.Fatalf("reconnect CONNECT: %v", err)
+	}
+	if _, err := codec2.Decode(conn2); err != nil {
+		t.Fatalf("reconnect CONNACK: %v", err)
+	}
+
+	conn2.SetDeadline(time.Now().Add(2 * time.Second))
+	pkt, err := codec2.Decode(conn2)
+	if err != nil {
+		t.Fatalf("queued message not delivered on reconnect: %v", err)
+	}
+	delivered, ok := pkt.(*protocol.PublishPacket)
+	if !ok {
+		t.Fatalf("expected PUBLISH, got %T", pkt)
+	}
+	if delivered.Topic != "offline/queue" {
+		t.Errorf("topic = %q, want offline/queue", delivered.Topic)
+	}
+	if string(delivered.Payload) != "queued-while-offline" {
+		t.Errorf("payload = %q, want queued-while-offline", delivered.Payload)
+	}
+	_ = codec2.Encode(conn2, &protocol.PubAckPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePubAck},
+		PacketID:    delivered.PacketID,
+	})
+	conn2.Close()
+}
+
 func TestQoS1Publish_PubAckFlow(t *testing.T) {
 	broker := testBroker(t)
 

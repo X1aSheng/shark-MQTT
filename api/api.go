@@ -15,6 +15,7 @@ import (
 	"github.com/X1aSheng/shark-mqtt/pkg/metrics"
 	"github.com/X1aSheng/shark-mqtt/plugin"
 	"github.com/X1aSheng/shark-mqtt/store"
+	"github.com/X1aSheng/shark-mqtt/store/memory"
 )
 
 // Broker is the main MQTT broker that combines network server with broker core.
@@ -176,6 +177,18 @@ func NewBroker(opts ...Option) *Broker {
 	// Propagate max connections from config when not explicitly set
 	if o.maxConnections < 0 && o.cfg.MaxConnections > 0 {
 		bopts = append(bopts, broker.WithMaxConnections(o.cfg.MaxConnections))
+	}
+
+	// Default to in-memory storage when no stores are provided and the
+	// configured backend is memory (the default). This makes persistent
+	// sessions and the offline persistent-session message queue work out of
+	// the box instead of silently ignoring StorageBackend (P2-3, P1-5).
+	// Redis/Badger backends are wired explicitly via WithSessionStore etc.
+	if o.sessionStore == nil && o.messageStore == nil && o.retainedStore == nil &&
+		(o.cfg.StorageBackend == "" || o.cfg.StorageBackend == "memory") {
+		o.sessionStore = memory.NewSessionStore()
+		o.messageStore = memory.NewMessageStore()
+		o.retainedStore = memory.NewRetainedStore()
 	}
 
 	if o.sessionStore != nil {
