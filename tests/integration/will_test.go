@@ -181,6 +181,75 @@ func TestWillMessageOnAbnormalDisconnect(t *testing.T) {
 	subConn.Close()
 }
 
+// TestWillMessage_DelayedFires verifies a will with a delay interval is
+// published AFTER the delay on abnormal disconnect. Previously disconnect()
+// cancelled the just-armed delayed-will timer, so a delayed will never fired
+// (P2-5b).
+func TestWillMessage_DelayedFires(t *testing.T) {
+	broker := testBroker(t)
+
+	subConn := dialTestBroker(t, broker)
+	subCodec := protocol.NewCodec(0)
+	connectTestClient(t, subConn, subCodec, "will-delay-sub")
+	subscribeToTopic(t, subConn, subCodec, "client/delayed-will", 1, 1)
+
+	delay := uint32(1) // seconds
+	willConn := dialTestBroker(t, broker)
+	willCodec := protocol.NewCodec(0)
+	connectPkt := &protocol.ConnectPacket{
+		FixedHeader: protocol.FixedHeader{
+			PacketType: protocol.PacketTypeConnect,
+		},
+		ProtocolName:    protocol.ProtocolNameMQTT,
+		ProtocolVersion: protocol.Version50,
+		Flags: protocol.ConnectFlags{
+			CleanSession: true,
+			WillFlag:     true,
+			WillQoS:      1,
+			WillRetain:   false,
+		},
+		KeepAlive:   30,
+		ClientID:    "delayed-will-client",
+		WillTopic:   "client/delayed-will",
+		WillMessage: []byte("delayed-will-payload"),
+		WillProperties: &protocol.Properties{
+			WillDelayInterval: &delay,
+		},
+	}
+	willConn.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := willCodec.Encode(willConn, connectPkt); err != nil {
+		t.Fatalf("failed to send CONNECT with delayed will: %v", err)
+	}
+	if _, err := willCodec.Decode(willConn); err != nil {
+		t.Fatalf("failed to read CONNACK: %v", err)
+	}
+
+	// Abnormal disconnect (no DISCONNECT).
+	start := time.Now()
+	willConn.Close()
+
+	// The delayed will must arrive AFTER the delay interval.
+	subConn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	pkt, err := subCodec.Decode(subConn)
+	if err != nil {
+		t.Fatalf("delayed will not delivered: %v", err)
+	}
+	pubPkt, ok := pkt.(*protocol.PublishPacket)
+	if !ok {
+		t.Fatalf("expected PUBLISH, got %T", pkt)
+	}
+	if pubPkt.Topic != "client/delayed-will" {
+		t.Errorf("expected topic client/delayed-will, got %s", pubPkt.Topic)
+	}
+	if string(pubPkt.Payload) != "delayed-will-payload" {
+		t.Errorf("expected payload 'delayed-will-payload', got %s", pubPkt.Payload)
+	}
+	if elapsed := time.Since(start); elapsed < 900*time.Millisecond {
+		t.Errorf("will fired after %v, expected after the delay interval (>= 900ms)", elapsed)
+	}
+	subConn.Close()
+}
+
 // TestWillMessageNotPublishedOnGracefulDisconnect tests that will is NOT published
 // when client disconnects gracefully with DISCONNECT.
 func TestWillMessageNotPublishedOnGracefulDisconnect(t *testing.T) {

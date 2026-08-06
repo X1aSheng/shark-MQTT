@@ -265,6 +265,12 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 	sess := b.sessions.CreateSession(connectPkt.ClientID, connectPkt, isResuming)
 	clientID := connectPkt.ClientID
 
+	// Reconnecting to an existing session cancels any pending delayed will
+	// (MQTT 5.0 §3.1.2.5): the session is no longer being abandoned.
+	if isResuming {
+		b.will.CancelWill(clientID)
+	}
+
 	// A clean-session connect discards any previously stored session and its
 	// queued offline messages (MQTT session state is not carried over).
 	if connectPkt.Flags.CleanSession {
@@ -343,6 +349,18 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 	// The old readLoop will call disconnect() asynchronously; it must not
 	// remove the new connection from the map, so disconnect() checks conn
 	// identity before deleting.
+	//
+	// Takeover: the previous connection ends abnormally, so its will must be
+	// triggered before the new connection registers its own will under the
+	// same clientID (P2-10). TriggerWill is idempotent per client, so the old
+	// readLoop firing later is a no-op.
+	b.mu.RLock()
+	_, hadOld := b.connections[clientID]
+	b.mu.RUnlock()
+	if hadOld {
+		b.will.TriggerWill(clientID)
+	}
+
 	b.mu.Lock()
 	if old, exists := b.connections[clientID]; exists {
 		if err := old.conn.Close(); err != nil {
@@ -361,8 +379,9 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 		if connectPkt.WillProperties != nil && connectPkt.WillProperties.WillDelayInterval != nil {
 			willDelay = time.Duration(*connectPkt.WillProperties.WillDelayInterval) * time.Second
 		}
-		// Cap will delay to the configured maximum to prevent abuse
-		if b.opts.maxWillDelay > 0 && willDelay > b.opts.maxWillDelay {
+		// Cap will delay to the configured maximum to prevent abuse. A
+		// maxWillDelay of 0 disables will delay entirely (P2-5).
+		if willDelay > b.opts.maxWillDelay {
 			b.logger.Debug("capping will delay", "clientID", clientID,
 				"requested", willDelay, "max", b.opts.maxWillDelay)
 			willDelay = b.opts.maxWillDelay
@@ -561,7 +580,10 @@ func (b *Broker) dispatch(hook plugin.Hook, data *plugin.Context) {
 }
 
 func (b *Broker) disconnect(clientID string, conn net.Conn) {
-	b.will.RemoveWill(clientID)
+	// The will is NOT touched here. gracefulDisconnect removes it and
+	// abnormalDisconnect triggers it; calling RemoveWill here cancelled a
+	// just-armed delayed will (P2-5b) and, on takeover, deleted the NEW
+	// connection's will (P2-10).
 
 	// Persist session BEFORE taking the lock, since Save() is a heavy
 	// operation that should not block connection registration.
