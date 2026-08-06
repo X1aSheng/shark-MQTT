@@ -202,6 +202,43 @@ func TestSessionInflight(t *testing.T) {
 	}
 }
 
+// TestSessionOutboundBuffer verifies QoS 1/2 deliveries are buffered when the
+// client's receive window is full and popped once a slot frees (P2-14).
+func TestSessionOutboundBuffer(t *testing.T) {
+	sess := &Session{ReceiveMax: 1}
+	sess.IncOutboundUnacked()
+	if sess.CanSendOutbound() {
+		t.Fatal("expected receive window to be full with 1 unacked")
+	}
+
+	pkt := &protocol.PublishPacket{}
+	pkt.FixedHeader.PacketType = protocol.PacketTypePublish
+	pkt.FixedHeader.QoS = 1
+	pkt.Topic = "buf/topic"
+	pkt.Payload = []byte("data")
+
+	sess.BufferOutbound(pkt, 1, SubscriptionOptions{QoS: 1})
+	if sess.OutboundQueueLen() != 1 {
+		t.Fatalf("expected 1 buffered message, got %d", sess.OutboundQueueLen())
+	}
+
+	// No window until an ack frees a slot.
+	sess.DecOutboundUnacked()
+	if !sess.CanSendOutbound() {
+		t.Fatal("expected receive window open after ack")
+	}
+	msg, ok := sess.PopOutbound()
+	if !ok {
+		t.Fatal("expected buffered message available")
+	}
+	if msg.deliverQoS != 1 || msg.pkt.Topic != "buf/topic" {
+		t.Errorf("unexpected buffered message: %+v", msg)
+	}
+	if sess.OutboundQueueLen() != 0 {
+		t.Errorf("expected empty queue after pop, got %d", sess.OutboundQueueLen())
+	}
+}
+
 // TestOutboundUnackedFloor verifies spurious acknowledgments cannot drive the
 // flow-control counter below zero (P2-16).
 func TestOutboundUnackedFloor(t *testing.T) {

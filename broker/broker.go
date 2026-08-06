@@ -641,11 +641,14 @@ func (b *Broker) disconnect(clientID string, conn net.Conn) {
 	// also releases its topic-tree subscriptions so stale entries do not
 	// accumulate across disconnect/reconnect cycles (P2-13, NEW-3).
 	// Persistent sessions keep theirs for offline queueing and are
-	// re-subscribed on reconnect.
+	// re-subscribed on reconnect; any flow-control-buffered deliveries are
+	// persisted so they are not lost (P1-5 + P2-14).
 	if sess, ok := b.sessions.GetSession(clientID); ok {
 		sess.ResetOutboundUnacked()
 		if sess.IsClean {
 			b.unsubscribeSessionTopics(sess)
+		} else if b.messageStore != nil {
+			b.persistBufferedOutbound(clientID, sess)
 		}
 	}
 
@@ -853,18 +856,20 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 		b.receivedQoS2Mu.Unlock()
 	}
 
-	// QoS 2: defer subscriber delivery until PUBCOMP completes the handshake
+	// QoS 2: defer subscriber delivery until PUBCOMP completes the handshake.
+	// The duplicate-tracking entry is only added for accepted messages, so the
+	// map stays bounded by the QoS engine's maxInflight (P2-15).
 	if pkt.QoS == 2 {
-		b.receivedQoS2Mu.Lock()
-		if b.receivedQoS2[clientID] == nil {
-			b.receivedQoS2[clientID] = make(map[uint16]struct{})
-		}
-		b.receivedQoS2[clientID][pkt.PacketID] = struct{}{}
-		b.receivedQoS2Mu.Unlock()
-
 		var reasonCode byte = protocol.ReasonCodeSuccess
 		if err := b.qos.TrackQoS2(clientID, pkt.PacketID, pkt.Topic, pkt.Payload, pkt.Retain); err != nil {
 			reasonCode = protocol.ReasonCodeReceiveMaxExceeded
+		} else {
+			b.receivedQoS2Mu.Lock()
+			if b.receivedQoS2[clientID] == nil {
+				b.receivedQoS2[clientID] = make(map[uint16]struct{})
+			}
+			b.receivedQoS2[clientID][pkt.PacketID] = struct{}{}
+			b.receivedQoS2Mu.Unlock()
 		}
 		b.writePacket(clientID, &protocol.PubRecPacket{
 			FixedHeader: protocol.FixedHeader{
@@ -876,13 +881,16 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 		return
 	}
 
-	// Route to subscribers for QoS 0 and QoS 1
-	subscribers := b.topics.Match(pkt.Topic)
+	// Route to subscribers for QoS 0 and QoS 1. Live forwards to established
+	// subscriptions always carry Retain=0 regardless of the source flag.
+	forwardPkt := *pkt
+	forwardPkt.FixedHeader.Retain = false
+	subscribers := b.topics.Match(forwardPkt.Topic)
 	for _, sub := range subscribers {
-		b.deliverToClient(sub.ClientID, clientID, pkt)
+		b.deliverToClient(sub.ClientID, clientID, &forwardPkt)
 	}
 	// Route to shared subscribers (round-robin, one per share group)
-	b.routeSharedPublish(clientID, pkt)
+	b.routeSharedPublish(clientID, &forwardPkt)
 
 	// Send PUBACK for QoS 1. Incoming QoS 1 has no client acknowledgment and
 	// must NOT be tracked in the QoS engine: tracking it here caused the
@@ -1236,12 +1244,15 @@ func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliver
 		return
 	}
 
-	// MQTT 5.0 flow control (ReceiveMaximum)
+	// MQTT 5.0 flow control (ReceiveMaximum). When the client's receive window
+	// is full, buffer the QoS 1/2 message instead of silently dropping it
+	// (P2-14); it is flushed once the client acknowledges earlier deliveries.
 	if deliverQoS > 0 && !sess.CanSendOutbound() {
-		b.metrics.IncMessagesDropped("receive_max_exceeded")
-		b.metrics.IncErrors("flow_control")
-		b.logger.Debug("receive maximum exceeded, dropping message",
-			"clientID", clientID, "receiveMax", sess.ReceiveMax)
+		var opts SubscriptionOptions
+		if len(subOpts) > 0 {
+			opts = subOpts[0]
+		}
+		sess.BufferOutbound(pkt, deliverQoS, opts)
 		return
 	}
 
@@ -1249,6 +1260,7 @@ func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliver
 		FixedHeader: protocol.FixedHeader{
 			PacketType: protocol.PacketTypePublish,
 			QoS:        deliverQoS,
+			Retain:     pkt.Retain,
 		},
 		Topic:   pkt.Topic,
 		Payload: pkt.Payload,
@@ -1290,10 +1302,57 @@ func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliver
 	b.metrics.IncMessagesDelivered(deliverQoS)
 }
 
+// flushBufferedOutbound delivers messages buffered while the client's receive
+// window was full, as soon as the window has room again (P2-14). Called after
+// an acknowledgment frees a slot.
+func (b *Broker) flushBufferedOutbound(clientID string, sess *Session) {
+	for sess.OutboundQueueLen() > 0 {
+		if !sess.CanSendOutbound() {
+			return
+		}
+		msg, _ := sess.PopOutbound()
+		b.doDeliver(clientID, msg.pkt, msg.deliverQoS, msg.subOpts)
+	}
+}
+
+// persistBufferedOutbound moves a persistent session's buffered deliveries into
+// the message store when it disconnects, so they are not lost and are delivered
+// on reconnect (P1-5 + P2-14).
+func (b *Broker) persistBufferedOutbound(clientID string, sess *Session) {
+	if b.messageStore == nil {
+		return
+	}
+	for {
+		msg, ok := sess.PopOutbound()
+		if !ok {
+			return
+		}
+		sm := &store.StoredMessage{
+			ID:        fmt.Sprintf("%s-%d", clientID, time.Now().UnixNano()),
+			Topic:     msg.pkt.Topic,
+			QoS:       msg.deliverQoS,
+			Payload:   msg.pkt.Payload,
+			Retain:    msg.pkt.Retain,
+			Timestamp: time.Now(),
+		}
+		if err := b.messageStore.SaveMessage(b.ctx, clientID, sm); err != nil {
+			b.metrics.IncErrors("message_store")
+		}
+	}
+}
+
+// isClientOnline reports whether a client currently has a connected session.
+func (b *Broker) isClientOnline(clientID string) bool {
+	_, ok := b.sessions.GetSession(clientID)
+	return ok
+}
+
 // routeSharedPublish delivers a PUBLISH to shared subscribers via MatchShared,
-// which selects one subscriber per share group using round-robin.
+// which selects one subscriber per share group using round-robin. Only online
+// members are considered so the message is never handed to an offline member
+// (P2-9).
 func (b *Broker) routeSharedPublish(sourceClientID string, pkt *protocol.PublishPacket) {
-	shared := b.topics.MatchShared(pkt.Topic)
+	shared := b.topics.MatchSharedOnline(pkt.Topic, b.isClientOnline)
 	for _, sub := range shared {
 		b.deliverToSharedClient(sub.ClientID, sourceClientID, pkt, sub.QoS)
 	}
@@ -1314,11 +1373,11 @@ func (b *Broker) deliverRetainedMessages(clientID string, sess *Session, topicFi
 	}
 
 	for _, msg := range retained {
-		deliverQoS := msg.QoS
 		matches, subQoS, subOpts := sess.MatchesSubscription(msg.Topic)
 		if !matches {
 			continue
 		}
+		deliverQoS := msg.QoS
 		if subQoS < deliverQoS {
 			deliverQoS = subQoS
 		}
@@ -1331,23 +1390,9 @@ func (b *Broker) deliverRetainedMessages(clientID string, sess *Session, topicFi
 			Topic:   msg.Topic,
 			Payload: msg.Payload,
 		}
-
-		if deliverQoS > 0 {
-			pubPkt.PacketID = sess.NextPacketID()
-		}
-
-		// Include SubscriptionIdentifier from matching subscription
-		if subOpts.SubscriptionIdentifier != nil {
-			pubPkt.Properties = &protocol.Properties{
-				SubscriptionIdentifier: subOpts.SubscriptionIdentifier,
-			}
-		}
-
-		// Track sent messages for statistics
-		sess.TrackSent(len(msg.Topic) + len(msg.Payload))
-
-		b.writePacket(clientID, pubPkt)
-		b.metrics.IncMessagesDelivered(deliverQoS)
+		// doDeliver applies flow control (buffering when the window is full),
+		// assigns the packet ID, and tracks the delivery (NEW-4).
+		b.doDeliver(clientID, pubPkt, deliverQoS, subOpts)
 	}
 }
 
@@ -1462,6 +1507,7 @@ func (b *Broker) handlePubAck(clientID string, packetID uint16) {
 		if sess.RemoveInflight(packetID) {
 			sess.DecOutboundUnacked()
 		}
+		b.flushBufferedOutbound(clientID, sess)
 	}
 }
 
@@ -1477,7 +1523,8 @@ func (b *Broker) handlePubRel(clientID string, packetID uint16) {
 			FixedHeader: protocol.FixedHeader{
 				PacketType: protocol.PacketTypePublish,
 				QoS:        msg.QoS,
-				Retain:     msg.Retain,
+				// Live forward to established subscriptions: Retain=0.
+				Retain: false,
 			},
 			Topic:    msg.Topic,
 			Payload:  msg.Payload,
@@ -1500,6 +1547,7 @@ func (b *Broker) handlePubComp(clientID string, packetID uint16) {
 		if sess.RemoveInflight(packetID) {
 			sess.DecOutboundUnacked()
 		}
+		b.flushBufferedOutbound(clientID, sess)
 	}
 	b.receivedQoS2Mu.Lock()
 	if clientDups := b.receivedQoS2[clientID]; clientDups != nil {
@@ -1589,16 +1637,19 @@ func (b *Broker) publishWill(username string, topic string, payload []byte, qos 
 		FixedHeader: protocol.FixedHeader{
 			PacketType: protocol.PacketTypePublish,
 			QoS:        qos,
-			Retain:     retain,
 		},
 		Topic:   topic,
 		Payload: payload,
 	}
 
 	if retain {
-		b.handleRetainedMessage(pubPkt)
+		retainedPkt := *pubPkt
+		retainedPkt.FixedHeader.Retain = true
+		b.handleRetainedMessage(&retainedPkt)
 	}
 
+	// Live forward to established subscriptions: Retain=0.
+	pubPkt.FixedHeader.Retain = false
 	subscribers := b.topics.Match(topic)
 	for _, sub := range subscribers {
 		b.deliverToClient(sub.ClientID, "", pubPkt)

@@ -269,6 +269,17 @@ type SharedSubscriber struct {
 // MatchShared returns shared subscribers for a given topic, selecting exactly
 // one subscriber per share group in round-robin fashion.
 func (tt *TopicTree) MatchShared(topic string) []SharedSubscriber {
+	return tt.matchShared(topic, nil)
+}
+
+// MatchSharedOnline is MatchShared restricted to members for which isOnline
+// returns true, so a round-robin selection never lands on an offline member
+// (P2-9) and loses the message.
+func (tt *TopicTree) MatchSharedOnline(topic string, isOnline func(clientID string) bool) []SharedSubscriber {
+	return tt.matchShared(topic, isOnline)
+}
+
+func (tt *TopicTree) matchShared(topic string, isOnline func(string) bool) []SharedSubscriber {
 	tt.sharedSubsMu.RLock()
 	defer tt.sharedSubsMu.RUnlock()
 
@@ -302,6 +313,17 @@ func (tt *TopicTree) MatchShared(topic string) []SharedSubscriber {
 					members = append(members, member{clientID: cid, qos: qos})
 				}
 			}
+		}
+
+		// Skip members that are not online (if an online check is provided).
+		if isOnline != nil {
+			online := members[:0]
+			for _, m := range members {
+				if isOnline(m.clientID) {
+					online = append(online, m)
+				}
+			}
+			members = online
 		}
 
 		if len(members) == 0 {

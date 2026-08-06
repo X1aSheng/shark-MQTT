@@ -34,6 +34,11 @@ type Session struct {
 	// Combined with ReceiveMax, this enforces MQTT 5.0 flow control (§4.9).
 	outboundUnacked int32
 
+	// outboundQueue buffers QoS 1/2 deliveries when the client's receive
+	// window is full, so they are not silently dropped (P2-14). Flushed when
+	// the client acknowledges earlier deliveries.
+	outboundQueue []outboundMsg
+
 	// publishRate tracks the rate of PUBLISH packets from this client for
 	// server-enforced rate limiting.
 	publishRate *publishRateTracker
@@ -69,6 +74,14 @@ type SubscriptionOptions struct {
 	RetainAsPublished      bool
 	RetainHandling         uint8
 	SubscriptionIdentifier *uint32 // MQTT 5.0: included in delivered PUBLISH
+}
+
+// outboundMsg is a QoS 1/2 delivery buffered when the client's receive window
+// is full.
+type outboundMsg struct {
+	pkt        *protocol.PublishPacket
+	deliverQoS uint8
+	subOpts    SubscriptionOptions
 }
 
 // InflightMsg tracks an in-flight QoS message.
@@ -623,4 +636,31 @@ func (s *Session) DecOutboundUnacked() {
 // Called on disconnect.
 func (s *Session) ResetOutboundUnacked() {
 	atomic.StoreInt32(&s.outboundUnacked, 0)
+}
+
+// BufferOutbound queues a QoS 1/2 delivery for when the client's receive
+// window opens (P2-14).
+func (s *Session) BufferOutbound(pkt *protocol.PublishPacket, deliverQoS uint8, subOpts SubscriptionOptions) {
+	s.mu.Lock()
+	s.outboundQueue = append(s.outboundQueue, outboundMsg{pkt: pkt, deliverQoS: deliverQoS, subOpts: subOpts})
+	s.mu.Unlock()
+}
+
+// PopOutbound returns and removes the oldest buffered delivery.
+func (s *Session) PopOutbound() (outboundMsg, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.outboundQueue) == 0 {
+		return outboundMsg{}, false
+	}
+	msg := s.outboundQueue[0]
+	s.outboundQueue = s.outboundQueue[1:]
+	return msg, true
+}
+
+// OutboundQueueLen returns the number of buffered deliveries.
+func (s *Session) OutboundQueueLen() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.outboundQueue)
 }

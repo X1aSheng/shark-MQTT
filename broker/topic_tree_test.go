@@ -646,3 +646,27 @@ func TestParseSharedFilter(t *testing.T) {
 		}
 	}
 }
+
+// TestTopicTree_MatchSharedOnline verifies shared-subscription selection only
+// picks online members, so a round-robin never lands on an offline member
+// (P2-9).
+func TestTopicTree_MatchSharedOnline(t *testing.T) {
+	tt := NewTopicTree()
+	tt.SubscribeShared("grp", "a/b", "offline-client", 1)
+	tt.SubscribeShared("grp", "a/b", "online-client", 1)
+
+	online := func(id string) bool { return id == "online-client" }
+	res := tt.MatchSharedOnline("a/b", online)
+	if len(res) != 1 {
+		t.Fatalf("expected 1 shared subscriber, got %d", len(res))
+	}
+	if res[0].ClientID != "online-client" {
+		t.Errorf("expected online-client selected, got %s", res[0].ClientID)
+	}
+
+	// No online members -> nothing selected.
+	allOffline := func(id string) bool { return false }
+	if res := tt.MatchSharedOnline("a/b", allOffline); len(res) != 0 {
+		t.Errorf("expected no selection when all members are offline, got %+v", res)
+	}
+}
