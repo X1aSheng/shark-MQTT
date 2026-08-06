@@ -22,8 +22,11 @@ This project uses semantic versioning. Pre-release tags use the form
 - **Optional store backends behind build tags:** `store/badger` and
   `store/redis` now build only under `-tags=store_badger,store_redis`, so the
   default build no longer compiles them (faster builds/CI). `make test-stores`
-  and a CI step run their tests under the tags. Note: their dependencies remain
-  in go.mod so tagged builds still work.
+  and a CI step run their tests under the tags.
+- **Dependency upgrades:** prometheus 1.23→1.24, badger 4.7→4.9,
+  redis 9.7→9.22, x/crypto 0.53→0.54, plus transitive deps. `govulncheck`
+  reports the 8 standard-library advisories are fixed by **Go 1.26.2+** (the
+  local toolchain is 1.26.1); imported-package advisories are unreachable.
 
 ### Protocol gaps (2026-08-06)
 
