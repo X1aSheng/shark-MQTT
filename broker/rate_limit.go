@@ -62,9 +62,10 @@ func (r *connRateLimiter) SetRate(rate float64) {
 }
 
 // publishRateTracker tracks the publish rate for a single client using a
-// simple sliding-window counter. It is NOT safe for concurrent use — callers
-// must synchronize access (typically under session.mu or via atomic ops).
+// simple sliding-window counter. It is safe for concurrent use so a session
+// taken over by a new connection cannot race the old read loop (NEW-2).
 type publishRateTracker struct {
+	mu          sync.Mutex
 	window      time.Duration
 	maxRate     int // messages per window (0 = unlimited)
 	count       int
@@ -81,6 +82,8 @@ func newPublishRateTracker(window time.Duration) *publishRateTracker {
 // Allow reports whether a publish should be accepted. It records the attempt
 // if allowed.
 func (t *publishRateTracker) Allow() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if t.maxRate <= 0 {
 		return true
 	}
@@ -98,5 +101,7 @@ func (t *publishRateTracker) Allow() bool {
 
 // SetMaxRate updates the maximum allowed publishes per window. 0 means unlimited.
 func (t *publishRateTracker) SetMaxRate(rate int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.maxRate = rate
 }

@@ -5,6 +5,20 @@
 - 方法: 3 个并行审查代理深度审查 + 本人逐文件复核核心模块 + 全量测试实证
 - 基线: build OK, vet OK, gofmt 干净, 单元测试 PASS, 集成测试 PASS, benchmark PASS
 
+## 修复状态更新 (V6 Fix Round, 2026-08-06)
+
+审查后已按优先级执行修复并逐个提交 (详见 CHANGELOG "V6 Fix Round"):
+
+- 已修复: P1-5, P1-6, P2-3, P2-5 (a/b/c), P2-9, P2-10, P2-11, P2-12, P2-13,
+  P2-14, P2-15, P2-16, P3-1, P3-2, P3-3, P3-4, P3-5, P3-6, NEW-1, NEW-2,
+  NEW-3, NEW-4, NEW-5, NEW-7, NEW-8, NEW-9, NEW-11, NEW-13, NEW-16, NEW-17,
+  NEW-18, NEW-19, NEW-20.
+- 设计决策保留 (不修): NEW-10, NEW-12 属 fail-fast/校验门设计, 文档说明.
+- 环境问题 (不修): P3-7 (Windows 端口竞争, 建议 -p=1).
+- 修复后测试: 344 单元 PASS (13 Redis SKIP) + 96 集成 PASS + 65 基准 PASS,
+  build/vet/gofmt 干净, race 检测通过.
+
+
 ## 1. 测试基线
 
 | 检查项 | 结果 |

@@ -1,6 +1,6 @@
 # Testing Guide
 
-Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。最新完整脚本运行为 `logs/20260806_120538_*`：326 个单元测试运行通过、13 个 Redis 测试跳过（本地无 Redis）、92 个集成测试运行通过、65 个基准测试执行通过。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
+Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。最新完整脚本运行为 `logs/20260806_*`：344 个单元测试运行通过、13 个 Redis 测试跳过（本地无 Redis）、96 个集成测试运行通过、65 个基准测试执行通过。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
 
 ---
 
@@ -30,7 +30,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 |  +-- data_delivery_bench_test.go - E2E 数据验证基准       |
 |  +-- micro_bench_test.go     - 组件级微基准               |
 +------------------------------------------------------------+
-|  Integration Tests (92 latest passed runs)                 |
+|  Integration Tests (96 latest passed runs)                 |
 |  tests/integration/                                        |
 |  +-- connect_test.go         - 连接与会话                 |
 |  +-- pubsub_test.go          - 发布订阅                   |
@@ -51,7 +51,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 |  +-- topic_filter_defect_test.go - topic filter 边界       |
 |  +-- windows_benchmark_test.go - Windows benchmark 隔离    |
 +------------------------------------------------------------+
-|  Unit Tests (326 top-level passed runs)                    |
+|  Unit Tests (344 top-level passed runs)                    |
 |  各包内 *_test.go 文件                                     |
 |  broker/ protocol/ store/ pkg/ api/ client/ config/       |
 |  plugin/ errs/                                             |
@@ -64,11 +64,11 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 
 | 类型 | 数量 | 位置 |
 |------|------|------|
-| 单元测试 | 326 top-level passed runs | 各包 `*_test.go` |
-| 集成测试 | 92 latest passed runs | `tests/integration/` |
+| 单元测试 | 344 top-level passed runs | 各包 `*_test.go` |
+| 集成测试 | 96 latest passed runs | `tests/integration/` |
 | 缺陷回归测试 | `tests/defects` + package-level regressions | `tests/defects/`, `broker/`, `client/` |
 | 基准测试 | 65 executed | `tests/bench/`, `store/redis/`, `plugin/` |
-| **最新脚本运行** | **326 unit passed, 92 integration passed, 65 benchmarks passed** | `logs/20260806_120538_*` |
+| **最新脚本运行** | **344 unit passed, 96 integration passed, 65 benchmarks passed** | `logs/20260806_*` |
 
 ### 各包测试明细
 
