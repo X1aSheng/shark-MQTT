@@ -7,6 +7,23 @@ This project uses semantic versioning. Pre-release tags use the form
 
 ## Unreleased
 
+### Review Round V7 (2026-08-06) - reference comparison
+
+Reviewed against smart-mqtt (Java, <4MB), smart-mqtt-4g (Go) and mica-mqtt
+(~500KB core). Full baseline green (344 unit / 96 integration / 65 benchmark).
+Details in `docs/reports/PROJECT-REVIEW-260806-143527.md`.
+
+- **R6 fixed:** the flow-control outbound buffer is now bounded
+  (`maxBufferedOutbound = 1000`); a client that never acknowledges can no
+  longer grow the buffer without bound (memory exhaustion).
+- **R1 (P2) open:** `WriteQueueSize` is declared but no write queue is
+  implemented; synchronous per-connection writes cause head-of-line blocking
+  when a subscriber is slow. Planned as the next large item.
+- **R2-R5, R7, R8 noted:** decode payload pooling, O(1) topic-match, dependency
+  footprint (11.5 MB binary / 61 modules vs. reference <4 MB), WebSocket
+  transport, shared-sub round-robin fairness, and `$SYS` status topics are
+  catalogued as improvement items.
+
 ### V6 Fix Round (2026-08-06)
 
 Implemented the prioritized improvement plan from the 2026-08-06 review. Each

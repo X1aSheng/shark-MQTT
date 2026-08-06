@@ -45,7 +45,7 @@ docs/
 | [Deployment](architecture/DEPLOY.md) | Docker, docker-compose, K8s |
 | [Testing](guides/TESTING.md) | Unit, integration, benchmark tests |
 | [Protocol Audit](reports/PROTOCOL-AUDIT-260602-215254.md) | MQTT 3.1.1/5.0 compliance |
-| [Latest Review](reports/PROJECT-REVIEW-260806-121651.md) | Most recent project review |
+| [Latest Review](reports/PROJECT-REVIEW-260806-143527.md) | V7 reference comparison (smart-mqtt / mica-mqtt) |
 | [Latest Deployment Validation](reports/DEPLOYMENT-VALIDATION-260806-124906.md) | Cloud server cleanup + docker/k8s validation |
 
 ---
