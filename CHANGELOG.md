@@ -7,6 +7,13 @@ This project uses semantic versioning. Pre-release tags use the form
 
 ## Unreleased
 
+### Performance (2026-08-07)
+
+- **Publish latency sampling:** `WithLatencySampling(N)` controls how often
+  publish latency is observed for metrics (1 = every message, the default; N =
+  1 in N; 0 = off). Prometheus histogram observations are comparatively
+  expensive, so sampling cuts per-message overhead when metrics are enabled.
+
 ### Protocol gaps (2026-08-06)
 
 - **Enhanced authentication (MQTT 5.0 §4.12):** `EnhancedAuthenticator` interface

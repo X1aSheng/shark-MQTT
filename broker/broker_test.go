@@ -69,6 +69,19 @@ func TestNewBroker_WithOptions(t *testing.T) {
 	if b == nil {
 		t.Fatal("expected broker, got nil")
 	}
+	if b.opts.latencySampling != 1 {
+		t.Errorf("default latency sampling should be 1, got %d", b.opts.latencySampling)
+	}
+}
+
+// TestLatencySamplingOption verifies WithLatencySampling controls observation.
+func TestLatencySamplingOption(t *testing.T) {
+	if got := New(WithLatencySampling(0)).opts.latencySampling; got != 0 {
+		t.Errorf("WithLatencySampling(0) => %d, want 0", got)
+	}
+	if got := New(WithLatencySampling(100)).opts.latencySampling; got != 100 {
+		t.Errorf("WithLatencySampling(100) => %d, want 100", got)
+	}
 }
 
 func TestBroker_StartStop(t *testing.T) {

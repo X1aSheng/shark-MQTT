@@ -45,6 +45,7 @@ type brokerOptions struct {
 	connectionRateWindow    time.Duration
 	sysInterval             time.Duration // $SYS status topic publish interval (0 = off, R8)
 	version                 string        // broker version published to $SYS/broker/version
+	latencySampling         int           // observe publish latency every N messages (0 = off, 1 = every message)
 }
 
 func defaultBrokerOptions() brokerOptions {
@@ -74,6 +75,7 @@ func defaultBrokerOptions() brokerOptions {
 		connectionRateWindow:    time.Second,
 		sysInterval:             30 * time.Second,
 		version:                 "dev",
+		latencySampling:         1,
 	}
 }
 
@@ -280,5 +282,16 @@ func WithSysInterval(d time.Duration) Option {
 func WithVersion(v string) Option {
 	return func(o *brokerOptions) {
 		o.version = v
+	}
+}
+
+// WithLatencySampling sets the rate at which publish latency is observed for
+// metrics: 1 (default) observes every message, N observes 1 in N, and 0
+// disables latency observation entirely. Prometheus histogram observations are
+// comparatively expensive, so sampling reduces per-message overhead when
+// metrics are enabled.
+func WithLatencySampling(n int) Option {
+	return func(o *brokerOptions) {
+		o.latencySampling = n
 	}
 }

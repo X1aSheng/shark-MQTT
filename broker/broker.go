@@ -82,6 +82,9 @@ type Broker struct {
 	opts    brokerOptions
 
 	startedAt time.Time // broker start time, for $SYS/broker/uptime (R8)
+
+	// latencyCounter drives metric sampling for publish latency observation.
+	latencyCounter atomic.Uint64
 }
 
 // New creates a new Broker with the given options.
@@ -1013,7 +1016,17 @@ func (b *Broker) readLoop(clientID string, sess *Session, codec *protocol.Codec,
 func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.PublishPacket) {
 	start := time.Now()
 	defer func() {
-		b.metrics.ObserveMessageLatency(time.Since(start).Seconds(), pkt.FixedHeader.QoS)
+		// Observe latency at the configured sampling rate; histogram
+		// observations are comparatively expensive (WithLatencySampling).
+		switch {
+		case b.opts.latencySampling <= 0:
+		case b.opts.latencySampling == 1:
+			b.metrics.ObserveMessageLatency(time.Since(start).Seconds(), pkt.FixedHeader.QoS)
+		default:
+			if (b.latencyCounter.Add(1)-1)%uint64(b.opts.latencySampling) == 0 {
+				b.metrics.ObserveMessageLatency(time.Since(start).Seconds(), pkt.FixedHeader.QoS)
+			}
+		}
 	}()
 
 	// Check client publish rate limit
