@@ -19,6 +19,11 @@ This project uses semantic versioning. Pre-release tags use the form
   (A QoS 0 "direct write" delivery path was evaluated but rejected: it would
   have forwarded the Topic Alias property, which MQTT 5.0 forbids the server
   from sending.)
+- **Optional store backends behind build tags:** `store/badger` and
+  `store/redis` now build only under `-tags=store_badger,store_redis`, so the
+  default build no longer compiles them (faster builds/CI). `make test-stores`
+  and a CI step run their tests under the tags. Note: their dependencies remain
+  in go.mod so tagged builds still work.
 
 ### Protocol gaps (2026-08-06)
 

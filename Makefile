@@ -30,6 +30,12 @@ test-unit:
 test-integration:
 	$(GO) test -v -count=1 -timeout 120s ./tests/integration/...
 
+# test-stores runs the optional badger/redis store backends, which are built
+# only under their build tags (store_badger / store_redis) to keep the default
+# build lean.
+test-stores:
+	$(GO) test -tags=store_badger,store_redis -count=1 -timeout 120s ./store/badger/... ./store/redis/...
+
 test-race:
 	$(GO) test -race -count=1 ./...
 
@@ -117,6 +123,7 @@ help:
 	@echo "Test:"
 	@echo "  test               Run unit tests"
 	@echo "  test-integration   Run integration tests"
+	@echo "  test-stores        Run optional badger/redis store backend tests"
 	@echo "  test-race          Run tests with race detector"
 	@echo "  benchmark          Run benchmarks"
 	@echo "  bench              Alias for benchmark"

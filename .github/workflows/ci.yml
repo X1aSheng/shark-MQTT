@@ -52,6 +52,10 @@ jobs:
           MQTT_REDIS_ADDR: localhost:6379
         run: go test -coverprofile=coverage.out -count=1 ./...
 
+      - name: Run optional store backends (badger/redis build tags)
+        if: matrix.os == 'ubuntu-latest'
+        run: go test -tags=store_badger,store_redis -count=1 ./store/badger/... ./store/redis/...
+
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.26'
         uses: codecov/codecov-action@v4

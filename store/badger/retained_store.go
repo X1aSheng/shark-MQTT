@@ -1,3 +1,5 @@
+//go:build store_badger
+
 package badger
 
 import (

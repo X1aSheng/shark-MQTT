@@ -1,3 +1,5 @@
+//go:build store_redis
+
 package redis
 
 import (
