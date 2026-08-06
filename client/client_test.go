@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -905,5 +906,178 @@ func TestHandlePubRelSendsPubComp(t *testing.T) {
 	c.mu.Unlock()
 	if stillTracked {
 		t.Error("receivedQoS2 entry was not cleared after PUBCOMP")
+	}
+}
+
+// TestNextPacketIDSkipsInFlight verifies the allocator skips packet IDs that are
+// still in flight or awaiting a response (P2-12 wrap-around ACK correlation).
+func TestNextPacketIDSkipsInFlight(t *testing.T) {
+	c := New()
+	c.inflightMu.Lock()
+	c.inflight[3] = &inflightEntry{}
+	c.inflightMu.Unlock()
+	c.pendingMu.Lock()
+	c.pending[5] = make(chan protocol.Packet, 1)
+	c.pendingMu.Unlock()
+
+	c.nextPID.Store(3)
+	if pid := c.nextPacketID(); pid != 4 {
+		t.Errorf("expected 4 (skipping inflight 3), got %d", pid)
+	}
+	if pid := c.nextPacketID(); pid != 6 {
+		t.Errorf("expected 6 (skipping pending 5), got %d", pid)
+	}
+}
+
+// TestReconnectAfterDisconnect verifies the client can reconnect after a
+// Disconnect (P2-11: one-shot context is rebuilt on Connect).
+func TestReconnectAfterDisconnect(t *testing.T) {
+	_, addr := startTestBroker(t)
+	host, port := splitAddr(addr)
+	ctx := context.Background()
+
+	c := New(
+		WithHostPort(host, port),
+		WithClientID("reconnect-client"),
+		WithConnectTimeout(5*time.Second),
+	)
+	if err := c.Connect(ctx); err != nil {
+		t.Fatalf("first Connect failed: %v", err)
+	}
+	if err := c.Disconnect(ctx); err != nil {
+		t.Fatalf("Disconnect failed: %v", err)
+	}
+	if err := c.Connect(ctx); err != nil {
+		t.Fatalf("second Connect failed: %v", err)
+	}
+	defer c.Disconnect(ctx)
+	if !c.IsConnected() {
+		t.Error("expected connected after reconnect")
+	}
+	if err := c.Publish(ctx, "test/reconnect", 1, false, []byte("hi")); err != nil {
+		t.Fatalf("Publish after reconnect failed: %v", err)
+	}
+}
+
+// TestConcurrentConnectGuard verifies only one concurrent Connect proceeds
+// (NEW-16: the connecting flag rejects a second in-flight Connect).
+func TestConcurrentConnectGuard(t *testing.T) {
+	_, addr := startTestBroker(t)
+	host, port := splitAddr(addr)
+	ctx := context.Background()
+
+	c := New(
+		WithHostPort(host, port),
+		WithClientID("concurrent-connect"),
+		WithConnectTimeout(5*time.Second),
+	)
+
+	results := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			results <- c.Connect(ctx)
+		}()
+	}
+	success, failed := 0, 0
+	for i := 0; i < 2; i++ {
+		if err := <-results; err != nil {
+			failed++
+		} else {
+			success++
+		}
+	}
+	if success != 1 || failed != 1 {
+		t.Errorf("expected exactly 1 success and 1 failure, got %d success / %d failed", success, failed)
+	}
+	if c.IsConnected() {
+		_ = c.Disconnect(ctx)
+	}
+}
+
+// TestKeepAliveSendsPing verifies an idle client with a keep-alive sends PINGREQ
+// (P1-6: without it the broker disconnects the client after 1.5x keep-alive).
+func TestKeepAliveSendsPing(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	var pingCount atomic.Int32
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		codec := protocol.NewCodec(65536)
+		if _, err := codec.Decode(conn); err != nil { // CONNECT
+			return
+		}
+		connack := &protocol.ConnAckPacket{}
+		connack.FixedHeader.PacketType = protocol.PacketTypeConnAck
+		connack.ReasonCode = protocol.ConnAckAccepted
+		if err := codec.Encode(conn, connack); err != nil {
+			return
+		}
+		// Count PINGREQ and answer with PINGRESP for ~3 seconds.
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			p, err := codec.Decode(conn)
+			if err != nil {
+				return
+			}
+			if _, ok := p.(*protocol.PingReqPacket); ok {
+				pingCount.Add(1)
+				pingresp := &protocol.PingRespPacket{}
+				pingresp.FixedHeader.PacketType = protocol.PacketTypePingResp
+				_ = codec.Encode(conn, pingresp)
+			}
+		}
+	}()
+
+	host, port := splitAddr(ln.Addr().String())
+	c := New(
+		WithHostPort(host, port),
+		WithClientID("keepalive-test"),
+		WithKeepAlive(1),
+		WithConnectTimeout(3*time.Second),
+	)
+	ctx := context.Background()
+	if err := c.Connect(ctx); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+	time.Sleep(1500 * time.Millisecond)
+	_ = c.Disconnect(ctx)
+	<-done
+
+	if pingCount.Load() < 1 {
+		t.Error("expected at least one PINGREQ from the keep-alive loop")
+	}
+}
+
+// TestReceivedQoS2ClearedOnReadLoopError verifies the dedup map is cleared when
+// the connection dies (NEW-17: no unbounded leak on abnormal disconnect).
+func TestReceivedQoS2ClearedOnReadLoopError(t *testing.T) {
+	conn := newBlockingReadConn()
+	c := New()
+	c.mu.Lock()
+	c.conn = conn
+	c.connected = true
+	c.receivedQoS2[7] = struct{}{}
+	c.mu.Unlock()
+
+	c.wg.Add(1)
+	go c.readLoop()
+	conn.Close()
+	c.wg.Wait()
+
+	c.mu.Lock()
+	remaining := len(c.receivedQoS2)
+	c.mu.Unlock()
+	if remaining != 0 {
+		t.Errorf("expected receivedQoS2 cleared after readLoop error, got %d entries", remaining)
 	}
 }

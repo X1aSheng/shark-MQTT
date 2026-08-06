@@ -24,6 +24,7 @@ type TopicSubscription struct {
 // MQTTClient is an MQTT 3.1.1/5.0 client.
 type MQTTClient struct {
 	mu             sync.Mutex
+	wmu            sync.Mutex // serializes writes to the connection
 	conn           net.Conn
 	codec          *protocol.Codec
 	opts           *Options
@@ -38,6 +39,8 @@ type MQTTClient struct {
 	cancel         context.CancelFunc
 	wg             sync.WaitGroup
 	connected      bool
+	connecting     bool // guards against concurrent Connect calls
+	lastRead       atomic.Int64 // unix nanos of last received packet
 	onMessage      func(topic string, qos byte, payload []byte)
 	msgMu          sync.RWMutex
 	onError        func(format string, args ...interface{})
@@ -75,7 +78,33 @@ func (c *MQTTClient) Connect(ctx context.Context) error {
 		c.mu.Unlock()
 		return fmt.Errorf("already connected")
 	}
+	if c.connecting {
+		c.mu.Unlock()
+		return fmt.Errorf("connect already in progress")
+	}
+	c.connecting = true
 	c.mu.Unlock()
+	// Always release the in-progress marker, including on error paths.
+	defer func() {
+		c.mu.Lock()
+		c.connecting = false
+		c.mu.Unlock()
+	}()
+
+	// Rebuild one-shot state so Disconnect followed by Connect works: the
+	// previous context was cancelled and the maps were drained on close.
+	c.ctx, c.cancel = context.WithCancel(context.Background())
+	c.pendingMu.Lock()
+	c.pending = make(map[uint16]chan protocol.Packet)
+	c.pendingMu.Unlock()
+	c.inflightMu.Lock()
+	c.inflight = make(map[uint16]*inflightEntry)
+	c.inflightMu.Unlock()
+	c.mu.Lock()
+	c.receivedQoS2 = make(map[uint16]struct{})
+	c.lastRead.Store(time.Now().UnixNano())
+	c.mu.Unlock()
+	c.nextPID.Store(1)
 
 	addr := fmt.Sprintf("%s:%d", c.opts.Host, c.opts.Port)
 
@@ -126,7 +155,10 @@ func (c *MQTTClient) Connect(ctx context.Context) error {
 	c.clientID = pkt.ClientID
 
 	// Send CONNECT
-	if err := c.codec.Encode(conn, pkt); err != nil {
+	c.wmu.Lock()
+	err = c.codec.Encode(conn, pkt)
+	c.wmu.Unlock()
+	if err != nil {
 		_ = conn.Close()
 		return fmt.Errorf("send CONNECT: %w", err)
 	}
@@ -153,11 +185,17 @@ func (c *MQTTClient) Connect(ctx context.Context) error {
 	c.conn = conn
 	c.connected = true
 	c.sessionPresent = connack.SessionPresent
+	c.lastRead.Store(time.Now().UnixNano())
 	c.mu.Unlock()
 
-	// Start reader goroutine
+	// Start reader goroutine and, if keep-alive is configured, a PINGREQ
+	// keepalive loop so an idle connection is not dropped by the broker.
 	c.wg.Add(1)
 	go c.readLoop()
+	if c.opts.KeepAlive > 0 {
+		c.wg.Add(1)
+		go c.keepAliveLoop(conn)
+	}
 
 	return nil
 }
@@ -183,8 +221,8 @@ func (c *MQTTClient) Publish(ctx context.Context, topic string, qos byte, retain
 
 	if qos > 0 {
 		pkt.QoS = qos
-		c.inflightMu.Lock()
 		pid := c.nextPacketID()
+		c.inflightMu.Lock()
 		pkt.PacketID = pid
 		c.inflight[pid] = &inflightEntry{pkt: pkt}
 		c.inflightMu.Unlock()
@@ -207,9 +245,12 @@ func (c *MQTTClient) Publish(ctx context.Context, topic string, qos byte, retain
 		}()
 	}
 
+	c.wmu.Lock()
 	if err := c.codec.Encode(conn, pkt); err != nil {
+		c.wmu.Unlock()
 		return fmt.Errorf("send PUBLISH: %w", err)
 	}
+	c.wmu.Unlock()
 
 	// For QoS 0, return immediately
 	if qos == 0 {
@@ -234,9 +275,12 @@ func (c *MQTTClient) Publish(ctx context.Context, topic string, qos byte, retain
 			}
 			pubrel.FixedHeader.PacketType = protocol.PacketTypePubRel
 			pubrel.FixedHeader.QoS = 1
+			c.wmu.Lock()
 			if err := c.codec.Encode(conn, pubrel); err != nil {
+				c.wmu.Unlock()
 				return fmt.Errorf("send PUBREL: %w", err)
 			}
+			c.wmu.Unlock()
 			// Wait for PUBCOMP
 			select {
 			case <-ctx.Done():
@@ -265,9 +309,7 @@ func (c *MQTTClient) Subscribe(ctx context.Context, topics []TopicSubscription) 
 	conn := c.conn
 	c.mu.Unlock()
 
-	c.inflightMu.Lock()
 	pid := c.nextPacketID()
-	c.inflightMu.Unlock()
 
 	filters := make([]protocol.TopicFilter, len(topics))
 	for i, t := range topics {
@@ -294,9 +336,12 @@ func (c *MQTTClient) Subscribe(ctx context.Context, topics []TopicSubscription) 
 		c.pendingMu.Unlock()
 	}()
 
+	c.wmu.Lock()
 	if err := c.codec.Encode(conn, pkt); err != nil {
+		c.wmu.Unlock()
 		return nil, fmt.Errorf("send SUBSCRIBE: %w", err)
 	}
+	c.wmu.Unlock()
 
 	select {
 	case <-ctx.Done():
@@ -322,9 +367,7 @@ func (c *MQTTClient) Unsubscribe(ctx context.Context, topics []string) error {
 	conn := c.conn
 	c.mu.Unlock()
 
-	c.inflightMu.Lock()
 	pid := c.nextPacketID()
-	c.inflightMu.Unlock()
 
 	pkt := &protocol.UnsubscribePacket{
 		PacketID: pid,
@@ -343,9 +386,12 @@ func (c *MQTTClient) Unsubscribe(ctx context.Context, topics []string) error {
 		c.pendingMu.Unlock()
 	}()
 
+	c.wmu.Lock()
 	if err := c.codec.Encode(conn, pkt); err != nil {
+		c.wmu.Unlock()
 		return fmt.Errorf("send UNSUBSCRIBE: %w", err)
 	}
+	c.wmu.Unlock()
 
 	select {
 	case <-ctx.Done():
@@ -376,12 +422,25 @@ func (c *MQTTClient) Disconnect(ctx context.Context) error {
 	}
 	pkt.FixedHeader.PacketType = protocol.PacketTypeDisconnect
 
+	c.wmu.Lock()
 	if err := c.codec.Encode(conn, pkt); err != nil {
 		c.logError("failed to send DISCONNECT: %v", err)
 	}
+	c.wmu.Unlock()
 
 	c.cancel()
 	closeErr := conn.Close()
+
+	// Clear client-side state so a subsequent Connect starts clean.
+	c.pendingMu.Lock()
+	c.pending = make(map[uint16]chan protocol.Packet)
+	c.pendingMu.Unlock()
+	c.inflightMu.Lock()
+	c.inflight = make(map[uint16]*inflightEntry)
+	c.inflightMu.Unlock()
+	c.mu.Lock()
+	c.receivedQoS2 = make(map[uint16]struct{})
+	c.mu.Unlock()
 
 	done := make(chan struct{})
 	go func() {
@@ -456,6 +515,7 @@ func (c *MQTTClient) readLoop() {
 		if err != nil {
 			c.mu.Lock()
 			c.connected = false
+			c.receivedQoS2 = make(map[uint16]struct{})
 			c.mu.Unlock()
 			// Cancel context to wake up pending QoS publish/response waiters
 			c.cancel()
@@ -466,8 +526,12 @@ func (c *MQTTClient) readLoop() {
 				delete(c.pending, pid)
 			}
 			c.pendingMu.Unlock()
+			c.inflightMu.Lock()
+			c.inflight = make(map[uint16]*inflightEntry)
+			c.inflightMu.Unlock()
 			return
 		}
+		c.lastRead.Store(time.Now().UnixNano())
 
 		switch p := pkt.(type) {
 		case *protocol.PublishPacket:
@@ -504,9 +568,11 @@ func (c *MQTTClient) handlePublish(pkt *protocol.PublishPacket) {
 				pubrec := &protocol.PubRecPacket{PacketID: pkt.PacketID}
 				pubrec.FixedHeader.PacketType = protocol.PacketTypePubRec
 				pubrec.FixedHeader.QoS = 1
+				c.wmu.Lock()
 				if err := c.codec.Encode(conn, pubrec); err != nil {
 					c.logError("failed to send PUBREC for packet %d: %v", pkt.PacketID, err)
 				}
+				c.wmu.Unlock()
 			}
 			return
 		}
@@ -532,9 +598,11 @@ func (c *MQTTClient) handlePublish(pkt *protocol.PublishPacket) {
 				PacketID: pkt.PacketID,
 			}
 			puback.FixedHeader.PacketType = protocol.PacketTypePubAck
+			c.wmu.Lock()
 			if err := c.codec.Encode(conn, puback); err != nil {
 				c.logError("failed to send PUBACK for packet %d: %v", pkt.PacketID, err)
 			}
+			c.wmu.Unlock()
 		}
 	}
 
@@ -549,9 +617,11 @@ func (c *MQTTClient) handlePublish(pkt *protocol.PublishPacket) {
 			}
 			pubrec.FixedHeader.PacketType = protocol.PacketTypePubRec
 			pubrec.FixedHeader.QoS = 1
+			c.wmu.Lock()
 			if err := c.codec.Encode(conn, pubrec); err != nil {
 				c.logError("failed to send PUBREC for packet %d: %v", pkt.PacketID, err)
 			}
+			c.wmu.Unlock()
 		}
 	}
 }
@@ -570,9 +640,11 @@ func (c *MQTTClient) handlePubRel(packetID uint16) {
 		PacketID: packetID,
 	}
 	pubcomp.FixedHeader.PacketType = protocol.PacketTypePubComp
+	c.wmu.Lock()
 	if err := c.codec.Encode(conn, pubcomp); err != nil {
 		c.logError("failed to send PUBCOMP for packet %d: %v", packetID, err)
 	}
+	c.wmu.Unlock()
 }
 
 // deliverResponse delivers a packet to a waiting response channel.
@@ -588,16 +660,73 @@ func (c *MQTTClient) deliverResponse(packetID uint16, pkt protocol.Packet) {
 	}
 }
 
-// nextPacketID returns the next packet identifier, cycling through 1-65535.
+// keepAliveLoop sends PINGREQ packets on a keep-alive schedule and detects a
+// dead connection when no packet has been received within 1.5x KeepAlive.
+// It runs only when the client is configured with a non-zero KeepAlive.
+func (c *MQTTClient) keepAliveLoop(conn net.Conn) {
+	defer c.wg.Done()
+	interval := time.Duration(c.opts.KeepAlive) * time.Second / 2
+	if interval <= 0 {
+		interval = time.Second
+	}
+	deadline := time.Duration(c.opts.KeepAlive) * time.Second * 3 / 2
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-ticker.C:
+			c.mu.Lock()
+			current := c.conn
+			c.mu.Unlock()
+			if current != conn {
+				return // connection was replaced or closed
+			}
+			if time.Since(time.Unix(0, c.lastRead.Load())) > deadline {
+				// No traffic within the keep-alive window: connection is dead.
+				_ = conn.Close()
+				return
+			}
+			ping := &protocol.PingReqPacket{
+				FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePingReq},
+			}
+			c.wmu.Lock()
+			if err := c.codec.Encode(conn, ping); err != nil {
+				_ = conn.Close()
+				c.wmu.Unlock()
+				return
+			}
+			c.wmu.Unlock()
+		}
+	}
+}
+
+// nextPacketID returns the next packet identifier, cycling through 1-65535 and
+// skipping identifiers already in flight or awaiting a response so that a
+// wrapped ID never collides with an outstanding operation.
 func (c *MQTTClient) nextPacketID() uint16 {
-	for attempts := 0; attempts < 100; attempts++ {
+	for attempts := 0; attempts < 65535; attempts++ {
 		old := c.nextPID.Load()
 		next := old + 1
 		if next > 65535 {
 			next = 1
 		}
 		if c.nextPID.CompareAndSwap(old, next) {
-			return uint16(old)
+			id := uint16(old)
+			c.inflightMu.RLock()
+			_, inFlight := c.inflight[id]
+			c.inflightMu.RUnlock()
+			if inFlight {
+				continue // skip an ID that is still in flight
+			}
+			c.pendingMu.RLock()
+			_, inPending := c.pending[id]
+			c.pendingMu.RUnlock()
+			if !inPending {
+				return id
+			}
 		}
 	}
 	// Fallback: all attempts exhausted (extreme contention), use atomic add.
