@@ -418,3 +418,59 @@ func drainQoS2(t *testing.T, conn net.Conn, codec *protocol.Codec, packetID uint
 		t.Fatalf("expected PUBCOMP packetID %d, got %d", packetID, comp.PacketID)
 	}
 }
+
+// TestRetainedSystemTopicNotDeliveredToWildcard verifies a $SYS retained
+// message is not delivered to a bare '#' subscription but is delivered to a
+// '$SYS/#' subscription (P3-4, MQTT 4.7.2).
+func TestRetainedSystemTopicNotDeliveredToWildcard(t *testing.T) {
+	broker := testBrokerWithRetain(t)
+
+	// 1. Publish a retained message to a $SYS topic.
+	pub := dialTestBroker(t, broker)
+	pubCodec := protocol.NewCodec(0)
+	connectTestClient(t, pub, pubCodec, "sys-pub")
+	pub.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := pubCodec.Encode(pub, &protocol.PublishPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 1, Retain: true},
+		PacketID:    1,
+		Topic:       "$SYS/retained",
+		Payload:     []byte("sys-data"),
+	}); err != nil {
+		t.Fatalf("PUBLISH: %v", err)
+	}
+	if _, err := pubCodec.Decode(pub); err != nil { // PUBACK
+		t.Fatalf("puback: %v", err)
+	}
+	pub.Close()
+
+	// 2. A '#' subscriber must NOT receive the $SYS retained message.
+	hashSub := dialTestBroker(t, broker)
+	hashCodec := protocol.NewCodec(0)
+	connectTestClient(t, hashSub, hashCodec, "hash-sub")
+	subscribeToTopic(t, hashSub, hashCodec, "#", 0, 1)
+	hashSub.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+	if pkt, err := hashCodec.Decode(hashSub); err == nil {
+		t.Fatalf("'#' subscriber should NOT receive $SYS retained, got %T", pkt)
+	}
+	hashSub.Close()
+
+	// 3. A '$SYS/#' subscriber MUST receive it.
+	sysSub := dialTestBroker(t, broker)
+	sysCodec := protocol.NewCodec(0)
+	connectTestClient(t, sysSub, sysCodec, "sys-sub")
+	subscribeToTopic(t, sysSub, sysCodec, "$SYS/#", 1, 1)
+	sysSub.SetReadDeadline(time.Now().Add(2 * time.Second))
+	pkt, err := sysCodec.Decode(sysSub)
+	if err != nil {
+		t.Fatalf("$SYS/# subscriber should receive $SYS retained: %v", err)
+	}
+	delivered, ok := pkt.(*protocol.PublishPacket)
+	if !ok || string(delivered.Payload) != "sys-data" {
+		t.Fatalf("expected $SYS retained payload sys-data, got %T %v", pkt, pkt)
+	}
+	_ = sysCodec.Encode(sysSub, &protocol.PubAckPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePubAck},
+		PacketID:    delivered.PacketID,
+	})
+	sysSub.Close()
+}

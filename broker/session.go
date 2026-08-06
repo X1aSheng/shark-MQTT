@@ -317,6 +317,34 @@ func (s *Session) MatchesSubscription(topic string) (bool, uint8, SubscriptionOp
 	return false, 0, SubscriptionOptions{}
 }
 
+// MatchesRetainedSubscription is MatchesSubscription but applies MQTT §4.7.2
+// system-topic protection, so a retained $SYS message is only delivered to a
+// filter whose first level begins with $ (P3-4). Live routing already applies
+// this protection in the topic tree; retained delivery goes through the store,
+// so it needs the check here.
+func (s *Session) MatchesRetainedSubscription(topic string) (bool, uint8, SubscriptionOptions) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for pattern, qos := range s.Subscriptions {
+		realPattern := pattern
+		if IsSharedSubscription(pattern) {
+			_, realFilter, ok := ParseSharedFilter(pattern)
+			if !ok {
+				continue
+			}
+			realPattern = realFilter
+		}
+		if !matchSysProtected(realPattern, topic) {
+			continue
+		}
+		if protocol.MatchTopic(realPattern, topic) {
+			opts := s.SubOptions[pattern]
+			return true, qos, opts
+		}
+	}
+	return false, 0, SubscriptionOptions{}
+}
+
 // AllowsLocalPublish reports whether a matching subscription accepts messages
 // published by the same client. MQTT delivers local publishes by default;
 // MQTT 5.0 No Local suppresses them per subscription.

@@ -432,9 +432,38 @@ func (b *Broker) Start() error {
 	b.qos.Start()
 	go b.sessionCleanupLoop()
 	if b.opts.retainedExpiry > 0 {
+		// Rebuild the in-memory expiry map from persisted retained messages so
+		// TTL cleanup survives a restart (P3-5).
+		b.rebuildRetainedExpirations()
 		go b.retainedCleanupLoop()
 	}
 	return nil
+}
+
+// rebuildRetainedExpirations reconstructs the in-memory retained-expiry map and
+// count from the store after a restart (P3-5).
+func (b *Broker) rebuildRetainedExpirations() {
+	if b.retainedStore == nil || b.opts.retainedExpiry <= 0 {
+		return
+	}
+	msgs, err := b.retainedStore.MatchRetained(b.ctx, "#")
+	if err != nil {
+		b.logger.Debug("failed to list retained messages on start", "error", err)
+		return
+	}
+	b.retainedMu.Lock()
+	b.retainedExpirations = make(map[string]time.Time)
+	b.retainedCount.Store(0)
+	for _, m := range msgs {
+		base := m.Timestamp
+		if base.IsZero() {
+			base = time.Now()
+		}
+		b.retainedExpirations[m.Topic] = base.Add(b.opts.retainedExpiry)
+		b.retainedCount.Add(1)
+	}
+	b.retainedMu.Unlock()
+	b.metrics.SetRetainedMessages(int(b.retainedCount.Load()))
 }
 
 // Metrics returns the broker's metrics collector.
@@ -912,23 +941,6 @@ func (b *Broker) handleRetainedMessage(pkt *protocol.PublishPacket) {
 		return
 	}
 
-	// Enforce retained message count limit before attempting to store
-	if len(pkt.Payload) > 0 && b.opts.maxRetainedTopics > 0 &&
-		int(b.retainedCount.Load()) >= b.opts.maxRetainedTopics {
-
-		// Check if this is an update to an existing retained message
-		b.retainedMu.Lock()
-		if _, err := b.retainedStore.GetRetained(b.ctx, pkt.Topic); err != nil {
-			// New retained topic would exceed the limit
-			b.retainedMu.Unlock()
-			b.logger.Debug("retained message limit reached, dropping",
-				"topic", pkt.Topic, "max", b.opts.maxRetainedTopics)
-			b.metrics.IncMessagesDropped("retained_limit")
-			return
-		}
-		b.retainedMu.Unlock()
-	}
-
 	b.retainedMu.Lock()
 	defer b.retainedMu.Unlock()
 
@@ -941,6 +953,17 @@ func (b *Broker) handleRetainedMessage(pkt *protocol.PublishPacket) {
 			b.metrics.IncErrors("retained_store")
 			return
 		}
+	}
+
+	// Enforce the retained-message count limit for NEW topics. The check and
+	// the store write share one lock, so concurrent publishers cannot both
+	// pass the limit and exceed maxRetainedTopics (NEW-5).
+	if len(pkt.Payload) > 0 && !existed && b.opts.maxRetainedTopics > 0 &&
+		int(b.retainedCount.Load()) >= b.opts.maxRetainedTopics {
+		b.logger.Debug("retained message limit reached, dropping",
+			"topic", pkt.Topic, "max", b.opts.maxRetainedTopics)
+		b.metrics.IncMessagesDropped("retained_limit")
+		return
 	}
 
 	if len(pkt.Payload) == 0 {
@@ -1373,7 +1396,9 @@ func (b *Broker) deliverRetainedMessages(clientID string, sess *Session, topicFi
 	}
 
 	for _, msg := range retained {
-		matches, subQoS, subOpts := sess.MatchesSubscription(msg.Topic)
+		// Use the sys-topic-protected matcher so a $SYS retained message is
+		// never delivered to a bare '#' or '+' subscription (P3-4).
+		matches, subQoS, subOpts := sess.MatchesRetainedSubscription(msg.Topic)
 		if !matches {
 			continue
 		}
