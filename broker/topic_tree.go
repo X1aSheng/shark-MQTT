@@ -2,6 +2,7 @@
 package broker
 
 import (
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -24,9 +25,10 @@ type TopicTree struct {
 
 	// sharedSubs tracks shared subscriptions keyed as:
 	// shareName -> topicFilter -> clientID -> QoS
-	sharedSubs     map[string]map[string]map[string]uint8
-	sharedCounters map[string]*atomic.Uint64 // shareName -> round-robin counter
-	sharedSubsMu   sync.RWMutex
+	sharedSubs   map[string]map[string]map[string]uint8
+	sharedLast   map[string]string // shareName -> last round-robin selected clientID (R7)
+	sharedLastMu sync.Mutex
+	sharedSubsMu sync.RWMutex
 }
 
 // NewTopicTree creates a new TopicTree.
@@ -36,8 +38,8 @@ func NewTopicTree() *TopicTree {
 			children:    make(map[string]*TopicNode),
 			subscribers: make(map[string]uint8),
 		},
-		sharedSubs:     make(map[string]map[string]map[string]uint8),
-		sharedCounters: make(map[string]*atomic.Uint64),
+		sharedSubs: make(map[string]map[string]map[string]uint8),
+		sharedLast: make(map[string]string),
 	}
 }
 
@@ -226,11 +228,6 @@ func (tt *TopicTree) SubscribeShared(shareName, topicFilter, clientID string, qo
 		tt.totalSubs.Add(1)
 	}
 	tt.sharedSubs[shareName][topicFilter][clientID] = qos
-
-	// Ensure round-robin counter exists
-	if tt.sharedCounters[shareName] == nil {
-		tt.sharedCounters[shareName] = new(atomic.Uint64)
-	}
 }
 
 // UnsubscribeShared removes a client from a shared subscription group.
@@ -255,7 +252,9 @@ func (tt *TopicTree) UnsubscribeShared(shareName, topicFilter, clientID string) 
 	}
 	if len(tt.sharedSubs[shareName]) == 0 {
 		delete(tt.sharedSubs, shareName)
-		delete(tt.sharedCounters, shareName)
+		tt.sharedLastMu.Lock()
+		delete(tt.sharedLast, shareName)
+		tt.sharedLastMu.Unlock()
 	}
 }
 
@@ -315,6 +314,11 @@ func (tt *TopicTree) matchShared(topic string, isOnline func(string) bool) []Sha
 			}
 		}
 
+		// Deterministic ordering so the round-robin is stable: map iteration is
+		// randomized, so an unsorted members slice would make the selection
+		// effectively random rather than round-robin (R7).
+		sort.Slice(members, func(i, j int) bool { return members[i].clientID < members[j].clientID })
+
 		// Skip members that are not online (if an online check is provided).
 		if isOnline != nil {
 			online := members[:0]
@@ -330,12 +334,35 @@ func (tt *TopicTree) matchShared(topic string, isOnline func(string) bool) []Sha
 			continue
 		}
 
-		// Round-robin select one member
-		counter := tt.sharedCounters[shareName]
-		idx := int(counter.Add(1)-1) % len(members)
+		// Round-robin select the member that follows the last-selected one in the
+		// stable ordering. Because the ordering never changes, a member leaving or
+		// going offline cannot skew the distribution the way counter % len(online)
+		// did (R7): the next selection simply picks the next member after the last
+		// one still present, so no member is double-selected or starved by the
+		// membership change.
+		sel := members[0].clientID
+		tt.sharedLastMu.Lock()
+		last := tt.sharedLast[shareName]
+		if last != "" {
+			if i := sort.Search(len(members), func(i int) bool { return members[i].clientID >= last }); i < len(members) && members[i].clientID == last {
+				sel = members[(i+1)%len(members)].clientID
+			}
+			// The last-selected member left or went offline: fall back to the
+			// first remaining member.
+		}
+		tt.sharedLast[shareName] = sel
+		tt.sharedLastMu.Unlock()
+
+		qos := uint8(0)
+		for _, m := range members {
+			if m.clientID == sel {
+				qos = m.qos
+				break
+			}
+		}
 		results = append(results, SharedSubscriber{
-			ClientID:  members[idx].clientID,
-			QoS:       members[idx].qos,
+			ClientID:  sel,
+			QoS:       qos,
 			ShareName: shareName,
 		})
 	}

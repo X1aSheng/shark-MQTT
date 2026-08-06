@@ -670,3 +670,44 @@ func TestTopicTree_MatchSharedOnline(t *testing.T) {
 		t.Errorf("expected no selection when all members are offline, got %+v", res)
 	}
 }
+
+// TestTopicTree_SharedRoundRobinFairnessAcrossMembershipChange verifies shared
+// subscriptions are selected in a deterministic round-robin that stays fair when
+// membership changes (R7): previously the selection used counter % len(online)
+// over a map-iteration-randomized member list, which skewed when a member left.
+func TestTopicTree_SharedRoundRobinFairnessAcrossMembershipChange(t *testing.T) {
+	tt := NewTopicTree()
+	for _, cid := range []string{"a", "b", "c"} {
+		tt.SubscribeShared("grp", "x/y", cid, 1)
+	}
+
+	online := func(string) bool { return true }
+	counts := map[string]int{}
+	for i := 0; i < 6; i++ {
+		res := tt.MatchSharedOnline("x/y", online)
+		if len(res) != 1 {
+			t.Fatalf("expected 1 selection, got %d", len(res))
+		}
+		counts[res[0].ClientID]++
+	}
+	for _, cid := range []string{"a", "b", "c"} {
+		if counts[cid] != 2 {
+			t.Errorf("round-robin over 6 messages: %s selected %d times, want 2", cid, counts[cid])
+		}
+	}
+
+	// "b" leaves the group. The remaining members must share subsequent
+	// messages evenly, with no member double-selected because of the change.
+	tt.UnsubscribeShared("grp", "x/y", "b")
+	counts = map[string]int{}
+	for i := 0; i < 4; i++ {
+		res := tt.MatchSharedOnline("x/y", online)
+		if len(res) != 1 {
+			t.Fatalf("expected 1 selection, got %d", len(res))
+		}
+		counts[res[0].ClientID]++
+	}
+	if counts["a"] != 2 || counts["c"] != 2 {
+		t.Errorf("after b left, over 4 messages got a=%d c=%d, want 2 each", counts["a"], counts["c"])
+	}
+}

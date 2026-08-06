@@ -29,10 +29,15 @@ Details in `docs/reports/PROJECT-REVIEW-260806-143527.md`.
   buffer (no copy); MQTT 5.0 bodies use the buffer pool for the intermediate
   buffer. `BenchmarkCodec_DecodePublish`: 10→8 allocs/op, 758→455 B/op,
   454→328 ns/op; `RoundTripPublish`: 16→14 allocs.
-- **R3-R5, R7, R8 noted:** O(1) topic-match, dependency footprint (11.5 MB
-  binary / 61 modules vs. reference <4 MB), WebSocket transport, shared-sub
-  round-robin fairness, and `$SYS` status topics are catalogued as improvement
-  items.
+- **R7 fixed:** shared-subscription round-robin is now deterministic and stays
+  fair across membership changes. Members are ordered stably (previously the
+  selection ran over a map-iteration-randomized slice with `counter % len`, so
+  it was not a real round-robin and skewed when a member left/went offline).
+  Selection now tracks the last-selected client per share and picks the next
+  member after it, so no member is double-selected or starved by a change.
+- **R3-R5, R8 noted:** O(1) topic-match, dependency footprint (11.5 MB binary /
+  61 modules vs. reference <4 MB), WebSocket transport, and `$SYS` status topics
+  are catalogued as improvement items.
 
 ### V6 Fix Round (2026-08-06)
 
