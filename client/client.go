@@ -39,7 +39,7 @@ type MQTTClient struct {
 	cancel         context.CancelFunc
 	wg             sync.WaitGroup
 	connected      bool
-	connecting     bool // guards against concurrent Connect calls
+	connecting     bool         // guards against concurrent Connect calls
 	lastRead       atomic.Int64 // unix nanos of last received packet
 	onMessage      func(topic string, qos byte, payload []byte)
 	msgMu          sync.RWMutex

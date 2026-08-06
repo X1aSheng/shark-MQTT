@@ -397,12 +397,12 @@ func TestPersistentSession_OfflineQueue(t *testing.T) {
 	conn := dialTestBroker(t, broker)
 	codec := protocol.NewCodec(0)
 	connectPkt := &protocol.ConnectPacket{
-		FixedHeader:    protocol.FixedHeader{PacketType: protocol.PacketTypeConnect},
-		ProtocolName:   protocol.ProtocolNameMQTT,
+		FixedHeader:     protocol.FixedHeader{PacketType: protocol.PacketTypeConnect},
+		ProtocolName:    protocol.ProtocolNameMQTT,
 		ProtocolVersion: protocol.Version50,
-		Flags:          protocol.ConnectFlags{CleanSession: false},
-		KeepAlive:      30,
-		ClientID:       clientID,
+		Flags:           protocol.ConnectFlags{CleanSession: false},
+		KeepAlive:       30,
+		ClientID:        clientID,
 	}
 	conn.SetDeadline(time.Now().Add(2 * time.Second))
 	if err := codec.Encode(conn, connectPkt); err != nil {
@@ -449,12 +449,12 @@ func TestPersistentSession_OfflineQueue(t *testing.T) {
 	conn2 := dialTestBroker(t, broker)
 	codec2 := protocol.NewCodec(0)
 	connectPkt2 := &protocol.ConnectPacket{
-		FixedHeader:    protocol.FixedHeader{PacketType: protocol.PacketTypeConnect},
-		ProtocolName:   protocol.ProtocolNameMQTT,
+		FixedHeader:     protocol.FixedHeader{PacketType: protocol.PacketTypeConnect},
+		ProtocolName:    protocol.ProtocolNameMQTT,
 		ProtocolVersion: protocol.Version50,
-		Flags:          protocol.ConnectFlags{CleanSession: false},
-		KeepAlive:      30,
-		ClientID:       clientID,
+		Flags:           protocol.ConnectFlags{CleanSession: false},
+		KeepAlive:       30,
+		ClientID:        clientID,
 	}
 	conn2.SetDeadline(time.Now().Add(2 * time.Second))
 	if err := codec2.Encode(conn2, connectPkt2); err != nil {
