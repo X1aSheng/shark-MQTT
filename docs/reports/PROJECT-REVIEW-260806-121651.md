@@ -87,6 +87,7 @@
 | NEW-17 | P3 | Client receivedQoS2 仅 handlePubRel 清理, Disconnect/readLoop 错误路径不清理 (低水位泄漏) | client/client.go:44, 499-515 |
 | NEW-18 | P3 | MQTT5 CONNACK/DISCONNECT/AUTH 属性解析后不校验 reader.Len()==0, 尾随字节被静默忽略 | protocol/connect.go:304-338, subscribe.go:399-488 |
 | NEW-19 | P3 | v3.1.1 下 SUBSCRIBE 接受 MQTT5 选项位 (NoLocal/RetainAsPublished/RetainHandling 应为 0) | protocol/subscribe.go:53-54 |
+| NEW-20 | P2 | 默认部署 /metrics 404: metrics.Default() 返回 noopMetrics (无 Handler), api.go 仅在有 HTTPHandler 时挂 /metrics; 而 prometheus.yml/DEPLOY 文档都指向 :18999/metrics -> 默认监控失效 | api/api.go:305-308, pkg/metrics/metrics.go:38-40 (云服务器 docker 实测确认) |
 
 ## 3. 改进计划 (优先级排序)
 
@@ -130,7 +131,8 @@
 27. **NEW-17**: Client Disconnect/readLoop 错误路径清理 receivedQoS2.
 28. **NEW-18**: CONNACK/DISCONNECT/AUTH 属性解析后校验 reader 无剩余字节.
 29. **NEW-19**: v3.1.1 下 SUBSCRIBE 拒绝 MQTT5 选项位.
-30. **P3-7**: 保持现状 (环境问题), 文档注明 Windows 下建议 -p=1.
+30. **NEW-20**: cmd/main.go 默认挂载 Prometheus metrics (WithMetrics(metrics.NewPrometheusMetrics(nil))), 使 :18999/metrics 在默认部署可用; 或文档明确"需显式配置 WithMetrics".
+31. **P3-7**: 保持现状 (环境问题), 文档注明 Windows 下建议 -p=1.
 
 每个缺陷修复均附回归测试, 修复后全量测试 + race 验证, 逐个提交, 并触发 GitHub Actions 检查。
 
@@ -154,6 +156,6 @@
 ## 6. 结论
 
 - 测试基线全部通过; 无编译/vet/gofmt 问题.
-- 上轮 31 项中 11 项已修复 (含停机优化), 18 项仍存在 + 1 项部分修复 (P3-3), 其中 P3-7 为环境问题; 本轮另新发现 19 项.
+- 上轮 31 项中 11 项已修复 (含停机优化), 18 项仍存在 + 1 项部分修复 (P3-3), 其中 P3-7 为环境问题; 本轮另新发现 20 项.
 - 剩余缺陷集中在: 离线持久会话队列 (P1-5), 出站 QoS 重试 (NEW-1), will 延迟/接管语义 (P2-5/P2-10), 会话持久化接线 (P2-3), 订阅泄漏 (P2-13/NEW-3), 流控边角 (P2-14/16, NEW-4), 以及一批 P3 健壮性项.
 - 本报告仅确认+出计划, 未改动生产代码; 改进按第 3 节优先级逐个实现并提交.
