@@ -488,6 +488,13 @@ func (b *Broker) cleanupExpiredSessions() {
 			if err := b.sessionStore.DeleteSession(b.ctx, clientID); err != nil {
 				b.logger.Debug("failed to delete expired session", "clientID", clientID, "error", err)
 			} else {
+				// Release the expired session's topic-tree subscriptions so
+				// they do not leak after the session is gone (P2-13).
+				topics := make([]string, 0, len(data.Subscriptions))
+				for _, sub := range data.Subscriptions {
+					topics = append(topics, sub.Topic)
+				}
+				b.unsubscribeTopics(clientID, topics)
 				b.logger.Debug("expired session cleaned up", "clientID", clientID)
 			}
 		}
@@ -579,6 +586,32 @@ func (b *Broker) dispatch(hook plugin.Hook, data *plugin.Context) {
 	}
 }
 
+// unsubscribeTopics removes a set of topic filters (regular or $share shared)
+// from the topic tree for a client.
+func (b *Broker) unsubscribeTopics(clientID string, topics []string) {
+	for _, topic := range topics {
+		if IsSharedSubscription(topic) {
+			shareName, realFilter, ok := ParseSharedFilter(topic)
+			if ok {
+				b.topics.UnsubscribeShared(shareName, realFilter, clientID)
+			}
+			continue
+		}
+		b.topics.Unsubscribe(topic, clientID)
+	}
+}
+
+// unsubscribeSessionTopics releases all of a session's topic-tree entries.
+func (b *Broker) unsubscribeSessionTopics(sess *Session) {
+	sess.mu.RLock()
+	topics := make([]string, 0, len(sess.Subscriptions))
+	for topic := range sess.Subscriptions {
+		topics = append(topics, topic)
+	}
+	sess.mu.RUnlock()
+	b.unsubscribeTopics(sess.ClientID, topics)
+}
+
 func (b *Broker) disconnect(clientID string, conn net.Conn) {
 	// The will is NOT touched here. gracefulDisconnect removes it and
 	// abnormalDisconnect triggers it; calling RemoveWill here cancelled a
@@ -604,9 +637,16 @@ func (b *Broker) disconnect(clientID string, conn net.Conn) {
 		return
 	}
 
-	// Reset flow control counter before removing session
+	// Reset flow control counter before removing session. A clean session
+	// also releases its topic-tree subscriptions so stale entries do not
+	// accumulate across disconnect/reconnect cycles (P2-13, NEW-3).
+	// Persistent sessions keep theirs for offline queueing and are
+	// re-subscribed on reconnect.
 	if sess, ok := b.sessions.GetSession(clientID); ok {
 		sess.ResetOutboundUnacked()
+		if sess.IsClean {
+			b.unsubscribeSessionTopics(sess)
+		}
 	}
 
 	b.sessions.RemoveSession(clientID)

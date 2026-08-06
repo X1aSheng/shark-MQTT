@@ -345,6 +345,70 @@ func TestBroker_SubscribeAndUnsubscribe(t *testing.T) {
 	}
 }
 
+// TestBroker_CleanSessionUnsubscribesOnDisconnect verifies a clean session
+// releases its topic-tree subscriptions on disconnect so entries do not leak
+// across reconnect cycles (P2-13). Persistent sessions keep theirs so offline
+// queueing can still match them.
+func TestBroker_CleanSessionUnsubscribesOnDisconnect(t *testing.T) {
+	b := New(WithAuth(AllowAllAuth{}))
+
+	// Clean session: subscribe, disconnect, expect the topic entry removed.
+	cleanSess := &Session{
+		ClientID:      "leak-clean",
+		IsClean:       true,
+		Subscriptions: make(map[string]uint8),
+		SubOptions:    make(map[string]SubscriptionOptions),
+		Inflight:      make(map[uint16]*InflightMsg),
+	}
+	cleanConn, _ := net.Pipe()
+	defer cleanConn.Close()
+	b.mu.Lock()
+	b.connections["leak-clean"] = &clientState{conn: cleanConn, codec: protocol.NewCodec(0)}
+	b.mu.Unlock()
+	b.sessions.mu.Lock()
+	b.sessions.sessions["leak-clean"] = cleanSess
+	b.sessions.mu.Unlock()
+
+	b.handleSubscribe("leak-clean", cleanSess, &protocol.SubscribePacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe},
+		Topics:      []protocol.TopicFilter{{Topic: "leak/topic", QoS: 1}},
+	})
+	if got := b.topics.SubscriberCount(); got != 1 {
+		t.Fatalf("expected 1 subscription after subscribe, got %d", got)
+	}
+
+	b.disconnect("leak-clean", cleanConn)
+	if got := b.topics.SubscriberCount(); got != 0 {
+		t.Errorf("expected 0 subscriptions after clean-session disconnect, got %d (leak)", got)
+	}
+
+	// Persistent session: subscribe, disconnect, expect the entry KEPT.
+	persistSess := &Session{
+		ClientID:      "leak-persist",
+		IsClean:       false,
+		Subscriptions: make(map[string]uint8),
+		SubOptions:    make(map[string]SubscriptionOptions),
+		Inflight:      make(map[uint16]*InflightMsg),
+	}
+	persistConn, _ := net.Pipe()
+	defer persistConn.Close()
+	b.mu.Lock()
+	b.connections["leak-persist"] = &clientState{conn: persistConn, codec: protocol.NewCodec(0)}
+	b.mu.Unlock()
+	b.sessions.mu.Lock()
+	b.sessions.sessions["leak-persist"] = persistSess
+	b.sessions.mu.Unlock()
+
+	b.handleSubscribe("leak-persist", persistSess, &protocol.SubscribePacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe},
+		Topics:      []protocol.TopicFilter{{Topic: "persist/keep", QoS: 1}},
+	})
+	b.disconnect("leak-persist", persistConn)
+	if got := b.topics.SubscriberCount(); got != 1 {
+		t.Errorf("expected persistent session subscription to be kept, got count %d", got)
+	}
+}
+
 func TestBroker_SessionTakeover(t *testing.T) {
 	b := New(WithAuth(AllowAllAuth{}))
 	if err := b.Start(); err != nil {
