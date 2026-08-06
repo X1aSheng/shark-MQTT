@@ -141,26 +141,35 @@ func TestRetainedMessage_Delete(t *testing.T) {
 	pubCodec := protocol.NewCodec(0)
 	connectClient(t, pubConn, pubCodec, "retain-del-pub")
 
-	// Set retained
+	// Set retained (QoS 1 so the PUBACK confirms the broker processed it).
 	retain := &protocol.PublishPacket{
-		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, Retain: true},
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 1, Retain: true},
 		Topic:       "device/status",
 		Payload:     []byte("online"),
+		PacketID:    1,
 	}
 	pubConn.SetDeadline(time.Now().Add(2 * time.Second))
 	if err := pubCodec.Encode(pubConn, retain); err != nil {
 		t.Fatalf("PUBLISH retained: %v", err)
 	}
+	if _, err := pubCodec.Decode(pubConn); err != nil { // PUBACK
+		t.Fatalf("retain PUBACK: %v", err)
+	}
 
-	// Delete retained with empty payload
+	// Delete retained with empty payload (QoS 1: the PUBACK confirms the
+	// deletion was processed before the subscriber subscribes).
 	delRetain := &protocol.PublishPacket{
-		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, Retain: true},
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 1, Retain: true},
 		Topic:       "device/status",
 		Payload:     []byte{},
+		PacketID:    2,
 	}
 	pubConn.SetDeadline(time.Now().Add(2 * time.Second))
 	if err := pubCodec.Encode(pubConn, delRetain); err != nil {
 		t.Fatalf("PUBLISH delete retained: %v", err)
+	}
+	if _, err := pubCodec.Decode(pubConn); err != nil { // PUBACK
+		t.Fatalf("delete PUBACK: %v", err)
 	}
 
 	// New subscriber should NOT receive any retained message
