@@ -45,8 +45,14 @@ Details in `docs/reports/PROJECT-REVIEW-260806-143527.md`.
   a no-op metrics backend. Note: badger/redis were *not* actually linked into
   the broker binary (only go.mod modules for the opt-in store packages); the
   measured binary bloat was Prometheus, which this addresses.
-- **R5, R8 noted:** WebSocket transport and `$SYS` status topics are catalogued
-  as improvement items.
+- **R8 fixed:** the broker publishes periodic $SYS status topics
+  (`$SYS/broker/version`, `uptime`, `connections`, `retained`, `subscriptions`)
+  for ops, configurable via `sys_interval` (default 30s, 0 disables). MQTT $SYS
+  topic protection applies, so only explicit $SYS subscriptions receive them.
+- **R5 deferred:** WebSocket MQTT transport remains an open improvement item —
+  it needs a new WebSocket dependency (gorilla/websocket or coder/websocket),
+  which would grow the binary that R4 just trimmed, so it is parked pending a
+  dependency decision.
 
 ### V6 Fix Round (2026-08-06)
 
