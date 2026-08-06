@@ -24,9 +24,9 @@
 
 | ID | 描述 | 位置 | 严重等级 | 状态 |
 |----|------|------|----------|------|
-| DEF-001 | `$SYS/#`、`$SYS/+` 这类显式系统主题订阅无法匹配 `$SYS/...`，而普通 `#` 又需要继续禁止匹配系统主题。违反 MQTT 3.1.1 §4.7.2 系统主题通配规则。 | `broker/topic_tree.go` | High | 已修复 |
-| DEF-002 | Will Retain 置位时，异常断开触发的遗嘱只投递给在线订阅者，未写入 retained store。违反 MQTT 3.1.1 §3.1.2.7 对 Will Retain 的语义要求。 | `broker/broker.go` | High | 已修复 |
-| DEF-003 | CONNECT 校验只分别检查协议名与协议级别，未强制 `MQTT` 对应 3.1.1/5.0、`MQIsdp` 对应 3.1。违反 MQTT 3.1.1 §3.1.2.1/§3.1.2.2。 | `protocol/connect.go` | High | 已修复 |
+| DEF-001 | `$SYS/#`、`$SYS/+` 这类显式系统主题订阅无法匹配 `$SYS/...`，而普通 `#` 又需要继续禁止匹配系统主题。违反 MQTT 3.1.1 4.7.2 系统主题通配规则。 | `broker/topic_tree.go` | High | 已修复 |
+| DEF-002 | Will Retain 置位时，异常断开触发的遗嘱只投递给在线订阅者，未写入 retained store。违反 MQTT 3.1.1 3.1.2.7 对 Will Retain 的语义要求。 | `broker/broker.go` | High | 已修复 |
+| DEF-003 | CONNECT 校验只分别检查协议名与协议级别，未强制 `MQTT` 对应 3.1.1/5.0、`MQIsdp` 对应 3.1。违反 MQTT 3.1.1 3.1.2.1/3.1.2.2。 | `protocol/connect.go` | High | 已修复 |
 | RISK-001 | `go test -race` 未能在当前机器执行，缺少 CGO 所需 C 编译器。 | 本地验证环境 | Medium | 待环境补齐 |
 | RISK-002 | protocol 包整体覆盖率 28.1%，远低于审核目标 95%；MQTT 5 Properties 与 ACK 类报文缺少充分回归。 | `protocol/` | Medium | 待改进 |
 | RISK-003 | metrics 包覆盖率 2.2%，且 `/metrics` 暴露端点缺失。 | `pkg/metrics/`, `api/api.go` | Medium | 待改进 |
@@ -47,12 +47,12 @@
 
 ## 6. 协议合规性检查明细
 
-- MQTT 3.1.1 §3.1.2.1/§3.1.2.2：CONNECT 协议名与协议级别配对校验已补齐。
-- MQTT 3.1.1 §3.1.2.3：CONNECT reserved flag 校验已存在。
-- MQTT 3.1.1 §3.1.2.5：PasswordFlag 置位时 UsernameFlag 必须置位，校验已存在。
-- MQTT 3.1.1 §3.1.2.6：WillQoS 必须为 0/1/2，且 WillFlag=false 时 WillQoS/WillRetain 必须为 0，校验已存在。
-- MQTT 3.1.1 §3.1.2.7：Will Retain 已修复为写入 retained store。
-- MQTT 3.1.1 §4.7.2：普通通配符不匹配 `$` 开头主题，显式 `$SYS/#`/`$SYS/+` 可匹配系统主题，已修复。
+- MQTT 3.1.1 3.1.2.1/3.1.2.2：CONNECT 协议名与协议级别配对校验已补齐。
+- MQTT 3.1.1 3.1.2.3：CONNECT reserved flag 校验已存在。
+- MQTT 3.1.1 3.1.2.5：PasswordFlag 置位时 UsernameFlag 必须置位，校验已存在。
+- MQTT 3.1.1 3.1.2.6：WillQoS 必须为 0/1/2，且 WillFlag=false 时 WillQoS/WillRetain 必须为 0，校验已存在。
+- MQTT 3.1.1 3.1.2.7：Will Retain 已修复为写入 retained store。
+- MQTT 3.1.1 4.7.2：普通通配符不匹配 `$` 开头主题，显式 `$SYS/#`/`$SYS/+` 可匹配系统主题，已修复。
 - MQTT 5.0：CONNACK properties、UNSUBACK reason codes、AUTH 等路径存在实现，但测试覆盖不足，建议继续补充。
 
 ## 7. 修复与验证记录

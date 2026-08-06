@@ -7,6 +7,22 @@ This project uses semantic versioning. Pre-release tags use the form
 
 ## Unreleased
 
+### Review Round (2026-08-06)
+- Full project review + test run: 326 unit PASS (13 Redis skips), 92 integration
+  PASS, 65 benchmarks PASS; build/vet/gofmt clean. Details in
+  `docs/reports/PROJECT-REVIEW-260806-121651.md`.
+- Re-confirmed 11 prior fixes; 19 defects still open (incl. P1-5 offline
+  persistent-session queue, P1-6 client keepalive, P2-3 inflight persistence
+  wiring, P2-5 delayed-will never fires, P2-9 shared-sub offline member,
+  P2-10 takeover will race, P2-13 subscription leak, P2-16 flow-control
+  counter). 20 new findings recorded (notably NEW-1 outbound QoS has no retry,
+  NEW-2 publish-rate race on takeover, NEW-20 default deployment /metrics 404).
+- Cloud server 120.76.44.233 fully cleaned (shark-socket residue, all docker
+  containers/images/volumes, 7.3GB reclaimed); native build/vet/test PASS;
+  docker image build + healthz + MQTT smoke + QoS1/QoS2 round-trip PASS; k8s
+  manifests + helm chart render PASS. See
+  `docs/reports/DEPLOYMENT-VALIDATION-260806-124906.md`.
+
 ### V5 Audit Fixes (2026-08-06)
 
 #### QoS / Protocol Correctness
@@ -23,7 +39,7 @@ This project uses semantic versioning. Pre-release tags use the form
 
 #### Broker
 - **Clean session SessionPresent:** A clean-session reconnect of an existing
-  client returns SessionPresent=0 (MQTT 5.0 §3.2.2.2).
+  client returns SessionPresent=0 (MQTT 5.0 3.2.2.2).
 - **Restart support:** `Broker.Start` and `QoSEngine.Start` rebuild their context,
   so cleanup and retry loops work after a Stop->Start cycle.
 - **SUBSCRIBE limit:** A request exceeding `maxTopicFiltersPerSub` returns

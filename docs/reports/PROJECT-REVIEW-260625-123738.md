@@ -1,7 +1,7 @@
 # Shark-MQTT 全栈集成验证报告
 
 **日期:** 2026-06-25  
-**方法:** Full-Stack Software Integration & Validation Engineer Skill — 6 步骤  
+**方法:** Full-Stack Software Integration & Validation Engineer Skill - 6 步骤  
 **项目:** shark-mqtt (Go 1.26+, MQTT 3.1.1/5.0 Broker)
 
 ---
@@ -60,10 +60,10 @@ shark-mqtt 项目全部 6 个 skill 步骤已完成。代码库经过深度审�
 
 | 模式 | 结果 | 日志文件 |
 |------|------|---------|
-| 单元测试 | ✅ PASS | `20260625_123514_unit.log` (56K) |
-| 集成测试 | ✅ 90 PASS | `20260625_123514_integration.log` (8.2K) |
-| 基准测试 | ✅ 65 benchmarks | `20260625_123514_benchmark.log` (14K) |
-| 覆盖率 | ✅ 48% (broker) — 55% threshold met | — |
+| 单元测试 | [x] PASS | `20260625_123514_unit.log` (56K) |
+| 集成测试 | [x] 90 PASS | `20260625_123514_integration.log` (8.2K) |
+| 基准测试 | [x] 65 benchmarks | `20260625_123514_benchmark.log` (14K) |
+| 覆盖率 | [x] 48% (broker) - 55% threshold met | - |
 
 ### 噪音检查
 
@@ -87,14 +87,14 @@ ERROR: 0  WARN: 0  FAIL: 0  JSON: 0 (默认不生成)
 
 | Job | 状态 |
 |-----|------|
-| test-unit (6 configs) | ✅ success |
-| test-plugin | ✅ success |
-| test-scripts | ✅ success |
-| lint | ✅ success |
-| build (6 configs) | ✅ success |
-| docker | ✅ success |
+| test-unit (6 configs) | [x] success |
+| test-plugin | [x] success |
+| test-scripts | [x] success |
+| lint | [x] success |
+| build (6 configs) | [x] success |
+| docker | [x] success |
 
-修复: `61bee91` — 移除 Redis service container (破坏 macOS/Windows runner)
+修复: `61bee91` - 移除 Redis service container (破坏 macOS/Windows runner)
 
 ---
 
@@ -102,14 +102,14 @@ ERROR: 0  WARN: 0  FAIL: 0  JSON: 0 (默认不生成)
 
 | 文档 | 状态 |
 |------|------|
-| `docs/README.md` | ✅ 目录索引 |
-| `docs/architecture/ARCHITECTURE.md` | ✅ |
-| `docs/architecture/SECURITY.md` | ✅ bcrypt, TLS, rate limiting |
-| `docs/architecture/DEPLOY.md` | ✅ |
-| `docs/guides/API.md` | ✅ 全部新选项 |
-| `docs/guides/CONFIGURATION.md` | ✅ TLS 选项 |
-| `docs/reports/PROTOCOL-AUDIT-*.md` | ✅ 全部标记已实现 |
-| `docs/reports/DEPLOYMENT-VALIDATION-*.md` | ✅ 云端验证 |
+| `docs/README.md` | [x] 目录索引 |
+| `docs/architecture/ARCHITECTURE.md` | [x] |
+| `docs/architecture/SECURITY.md` | [x] bcrypt, TLS, rate limiting |
+| `docs/architecture/DEPLOY.md` | [x] |
+| `docs/guides/API.md` | [x] 全部新选项 |
+| `docs/guides/CONFIGURATION.md` | [x] TLS 选项 |
+| `docs/reports/PROTOCOL-AUDIT-*.md` | [x] 全部标记已实现 |
+| `docs/reports/DEPLOYMENT-VALIDATION-*.md` | [x] 云端验证 |
 
 文档结构: 5 维度 (`architecture/` `decisions/` `guides/` `planning/` `reports/`)
 
@@ -119,10 +119,10 @@ ERROR: 0  WARN: 0  FAIL: 0  JSON: 0 (默认不生成)
 
 | 测试 | 服务器 | 结果 |
 |------|--------|------|
-| `go test ./...` (21 包) | 120.76.44.233 (Ubuntu 26.04) | ✅ 全部通过 |
-| Docker build | 同上 | ✅ 镜像 24.2MB |
-| 容器运行 | 同上 | ✅ 端口 18983 |
-| E2E pub/sub (Windows→Cloud) | local→120.76.44.233 | ✅ topic+payload 逐字节验证 |
+| `go test ./...` (21 包) | 120.76.44.233 (Ubuntu 26.04) | [x] 全部通过 |
+| Docker build | 同上 | [x] 镜像 24.2MB |
+| 容器运行 | 同上 | [x] 端口 18983 |
+| E2E pub/sub (Windows->Cloud) | local->120.76.44.233 | [x] topic+payload 逐字节验证 |
 
 记录: `docs/reports/DEPLOYMENT-VALIDATION-260614.md`
 

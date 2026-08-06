@@ -59,7 +59,7 @@
 | P3-1 | FixedHeader.HeaderSize 从未赋值, maxPacketSize 校验偏差 1-5 字节 | protocol/packets.go:11, codec.go:165-170 | 全库 grep 无 HeaderSize 赋值; 校验退化为 RemainingLength > maxPacketSize |
 | P3-2 | 剩余长度非最小字节数编码被接受 (违反 MQTT-1.5.5-1) | protocol/codec.go:172-187 | 解码循环无最小编码校验, [0x80,0x00] 表示 0 会被接受 |
 | P3-3 | v3.1.1 CONNACK 仍接受多余字节 (PUBACK/UNSUBACK/DISCONNECT 已修) | protocol/connect.go:325 | decodeConnAck 无 version!=5 且 RemainingLength!=2 的严格校验; 部分修复 |
-| P3-4 | retained 存储无 $ 系统主题保护, retained 投递绕过 §4.7.2 | store/{memory,redis,badger}/retained, broker.go:824 | 三个 SaveRetained 均无 $ 检查; deliverRetainedMessages 走 store.MatchRetained 绕过 TopicTree |
+| P3-4 | retained 存储无 $ 系统主题保护, retained 投递绕过 4.7.2 | store/{memory,redis,badger}/retained, broker.go:824 | 三个 SaveRetained 均无 $ 检查; deliverRetainedMessages 走 store.MatchRetained 绕过 TopicTree |
 | P3-5 | Retained TTL 重启后失效 (retainedExpirations 仅内存) | broker/broker.go:58, 78, 884 | 重启后空, 过期 retained 永不清理 |
 | P3-6 | cmd 无 Version 变量, build.sh -X main.Version 无效 | cmd/main.go:56, scripts/build.sh:5 | 版本硬编码 v1.0.0, ldflags 被静默忽略 |
 | P3-7 | Windows 全量并行偶发 WSAEADDRINUSE | tests (环境问题) | 所有测试均绑定 :0 且清理正确; 属 TIME_WAIT 端口耗尽, 非代码缺陷 |
@@ -104,11 +104,11 @@
    - 方案: disconnect 增加参数区分 graceful/abnormal + 接管身份判定.
    - 验证: will_handler 延迟触发测试 + 接管场景 race 测试.
 4. **P2-5 (a)**: maxWillDelay 默认值设为合理上限 (如 60s), 且显式配置 0 时仍应设安全上限或文档化.
-5. **P2-3**: 接线会话持久化 — doDeliver 调用 sess.AddInflight, handlePubAck/PubComp 调用 RemoveInflight; sessionStore 与 messageStore 在 api.NewBroker 中真正注入.
+5. **P2-3**: 接线会话持久化 - doDeliver 调用 sess.AddInflight, handlePubAck/PubComp 调用 RemoveInflight; sessionStore 与 messageStore 在 api.NewBroker 中真正注入.
 6. **P2-9**: MatchShared 轮询跳过离线成员 (查 sessions 在线状态), 或对离线成员的消息回退到队列.
 7. **P2-13 + NEW-3**: disconnect 时按会话订阅列表批量 Unsubscribe/UnsubscribeShared.
 8. **P2-16**: DecOutboundUnacked 下限保护 (仅当对应 inflight 存在才减).
-9. **P2-14**: ReceiveMax 满时不再静默丢弃 — 排队或降级, 至少 QoS1 不丢.
+9. **P2-14**: ReceiveMax 满时不再静默丢弃 - 排队或降级, 至少 QoS1 不丢.
 10. **P2-15**: receivedQoS2 表加每客户端上限并与 maxInflight 对齐, 增加陈旧条目清理.
 11. **P2-11**: Connect 重建 ctx/cancel, 支持 Disconnect 后重连.
 12. **P2-12**: client nextPacketID 检查 in-flight 占用 (参考 broker Session.NextPacketID 的查找法).
@@ -119,7 +119,7 @@
 
 ### 优先级 3 - 边界 / 健壮性 (P3)
 17. **P3-1/P3-2/P3-3**: 修正 FixedHeader.HeaderSize 赋值, 剩余长度最小字节校验, v3.1.1 严格剩余长度检查.
-18. **P3-4**: retained 存储层加 $ 前缀保护 (与 TopicTree §4.7.2 对齐), deliverRetainedMessages 使用系统主题感知的匹配.
+18. **P3-4**: retained 存储层加 $ 前缀保护 (与 TopicTree 4.7.2 对齐), deliverRetainedMessages 使用系统主题感知的匹配.
 19. **P3-5**: retained TTL 持久化到 store (或重启后按存储时间戳重算).
 20. **P3-6**: cmd 增加 `var Version = "dev"` 并由 build.sh 注入; banner 使用该变量.
 21. **NEW-7/8/9**: config 校验 ListenAddr 非空、LogLevel 合法值, env 整数解析改 strconv.

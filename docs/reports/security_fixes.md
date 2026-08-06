@@ -1,4 +1,4 @@
-# 安全审查 — shark-mqtt
+# 安全审查 - shark-mqtt
 
 **日期**: 2026-05-15
 
@@ -15,33 +15,33 @@
 
 | 检查项 | 状态 | 备注 |
 |--------|------|------|
-| 密码常量时间比较 | ✓ | `crypto/subtle.ConstantTimeCompare` 用于 StaticAuth 和 FileAuth |
-| 无硬编码凭据 | ✓ | 所有凭据来自配置或 API |
-| 密码不记录日志 | ✓ | grep 确认全代码库无密码泄露 |
-| noop auth 标记为仅开发 | ✓ | NoopAuth 文档明确标注 "development-only pass-through" |
-| 认证器链支持 | ✓ | ChainAuth 支持多认证器组合 |
+| 密码常量时间比较 | [x] | `crypto/subtle.ConstantTimeCompare` 用于 StaticAuth 和 FileAuth |
+| 无硬编码凭据 | [x] | 所有凭据来自配置或 API |
+| 密码不记录日志 | [x] | grep 确认全代码库无密码泄露 |
+| noop auth 标记为仅开发 | [x] | NoopAuth 文档明确标注 "development-only pass-through" |
+| 认证器链支持 | [x] | ChainAuth 支持多认证器组合 |
 
 ### 输入验证
 
 | 检查项 | 状态 | 备注 |
 |--------|------|------|
-| CONNECT 包验证 | ✓ | `ValidateConnect()` 检查协议名、版本、标志一致性 |
-| PUBLISH topic 验证 | ✓ | 拒绝通配符 topic，拒绝空 topic |
-| Topic filter 验证 | ✓ | `ValidateTopicFilter()` 检查格式 |
-| 包大小限制 | ✓ | MaxPacketSize 默认 256KB，Codec 强制 |
-| 连接数限制 | ✓ | MaxConnections 可配置 |
+| CONNECT 包验证 | [x] | `ValidateConnect()` 检查协议名、版本、标志一致性 |
+| PUBLISH topic 验证 | [x] | 拒绝通配符 topic，拒绝空 topic |
+| Topic filter 验证 | [x] | `ValidateTopicFilter()` 检查格式 |
+| 包大小限制 | [x] | MaxPacketSize 默认 256KB，Codec 强制 |
+| 连接数限制 | [x] | MaxConnections 可配置 |
 
 ### DoS 防护
 
 | 检查项 | 状态 |
 |--------|------|
-| 最大连接数限制 | ✓ |
-| 最大包大小限制 | ✓ |
-| Keep-alive 超时 | ✓ (1.5x KeepAlive) |
-| 写队列大小限制 | ✓ (WriteQueueSize: 256) |
-| CONNECT 超时 | ✓ (10 秒) |
-| 最大 inflight 限制 | ✓ (MaxInflight: 100) |
-| QoS 重试次数限制 | ✓ (MaxRetries: 3) |
+| 最大连接数限制 | [x] |
+| 最大包大小限制 | [x] |
+| Keep-alive 超时 | [x] (1.5x KeepAlive) |
+| 写队列大小限制 | [x] (WriteQueueSize: 256) |
+| CONNECT 超时 | [x] (10 秒) |
+| 最大 inflight 限制 | [x] (MaxInflight: 100) |
+| QoS 重试次数限制 | [x] (MaxRetries: 3) |
 
 ### 依赖安全
 
@@ -66,5 +66,5 @@ SECURITY.md 建议最低 TLS 1.2，推荐 TLS 1.3。
 
 ## 结论
 
-**安全等级**: A- — 认证框架完善（常量时间比较、ACL、链式认证），
+**安全等级**: A- - 认证框架完善（常量时间比较、ACL、链式认证），
 DoS 防护层层到位，输入验证全面。主要关注点是密码明文存储和 TLS 最低版本未显式设置。

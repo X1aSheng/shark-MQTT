@@ -201,8 +201,8 @@ keep_alive: 60
 
 **Recommended Setup**:
 ```
-Internet → Load Balancer (TLS termination) → Shark-MQTT
-                                     ↓
+Internet -> Load Balancer (TLS termination) -> Shark-MQTT
+                                     v
                               Internal Network (18983)
 ```
 

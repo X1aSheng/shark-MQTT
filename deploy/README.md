@@ -94,16 +94,16 @@ helm upgrade shark-mqtt deploy/k8s/helm/shark-mqtt/ \
 指标地址: `http://<host>:18999/metrics`
 
 主要指标:
-- `shark_mqtt_connections_total` — 连接总数
-- `shark_mqtt_messages_total` — 消息总数
-- `shark_mqtt_subscriptions_total` — 订阅总数
-- `shark_mqtt_bytes_total` — 传输字节总数
-- `shark_mqtt_errors_total` — 错误总数
+- `shark_mqtt_connections_total` - 连接总数
+- `shark_mqtt_messages_total` - 消息总数
+- `shark_mqtt_subscriptions_total` - 订阅总数
+- `shark_mqtt_bytes_total` - 传输字节总数
+- `shark_mqtt_errors_total` - 错误总数
 
 ### 健康检查
 
-- `/healthz` — 存活检查（返回 200 表示服务运行中）
-- `/readyz` — 就绪检查（返回 200 表示可接收请求）
+- `/healthz` - 存活检查（返回 200 表示服务运行中）
+- `/readyz` - 就绪检查（返回 200 表示可接收请求）
 
 ---
 

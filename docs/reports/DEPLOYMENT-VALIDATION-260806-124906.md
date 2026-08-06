@@ -57,7 +57,7 @@
 | kubectl kustomize deploy/k8s/app/ | PASS (渲染 250 行 YAML) |
 | kubectl kustomize deploy/k8s/infra/prometheus/ | PASS (渲染 108 行) |
 | helm template shark-mqtt deploy/k8s/helm/shark-mqtt/ | PASS (渲染 5 个 kind) |
-| kubectl apply --dry-run=client | 不可用 (需 API server, localhost:8080 拒绝连接) — 无集群属预期 |
+| kubectl apply --dry-run=client | 不可用 (需 API server, localhost:8080 拒绝连接) - 无集群属预期 |
 
 说明: k8s 达到"清单渲染 + helm 模板"验证级别; 真实集群部署需在有控制面的集群执行 `kubectl apply -k deploy/k8s/app/`。
 

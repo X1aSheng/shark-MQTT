@@ -112,7 +112,7 @@ docker compose -f deploy/docker/docker-compose.yml up -d
 ```
 
 The standalone `mqtt` and Redis-backed `mqtt-redis` services cannot run at the same
-time on port 18983 — comment out the one you don't need.
+time on port 18983 - comment out the one you don't need.
 
 ### Smoke Test (CI)
 
@@ -132,18 +132,18 @@ infrastructure lives in `deploy/k8s/infra/prometheus/`.
 
 ```
 deploy/k8s/
-├── app/
-│   ├── kustomization.yaml
-│   ├── namespace.yaml         # shark-mqtt namespace
-│   ├── configmap.yaml         # broker configuration
-│   ├── deployment.yaml        # replicas: 2, health probes on :18999
-│   └── service.yaml           # ClusterIP (MQTT + health ports)
-└── infra/
-    └── prometheus/
-        ├── kustomization.yaml
-        ├── configmap.yaml
-        ├── deployment.yaml
-        └── service.yaml
++-- app/
+|   +-- kustomization.yaml
+|   +-- namespace.yaml         # shark-mqtt namespace
+|   +-- configmap.yaml         # broker configuration
+|   +-- deployment.yaml        # replicas: 2, health probes on :18999
+|   +-- service.yaml           # ClusterIP (MQTT + health ports)
++-- infra/
+    +-- prometheus/
+        +-- kustomization.yaml
+        +-- configmap.yaml
+        +-- deployment.yaml
+        +-- service.yaml
 ```
 
 ### Deploy

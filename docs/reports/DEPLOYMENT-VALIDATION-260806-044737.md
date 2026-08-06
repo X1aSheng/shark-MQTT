@@ -41,9 +41,9 @@
 对 shark-socket `deploy/k8s/` 与 shark-mqtt `deploy/k8s/app/` 全部 YAML 做语法解析:
 
 - shark-socket: namespace, serviceaccount, configmap, networkpolicy, pdb, hpa,
-  kustomization, deployment, service —— 全部 `OK`
+  kustomization, deployment, service -- 全部 `OK`
 - shark-mqtt: namespace, configmap, deployment, service, hpa, networkpolicy,
-  ingress, kustomization —— 全部 `OK`
+  ingress, kustomization -- 全部 `OK`
 
 ### Helm chart 校验
 shark-socket `deploy/helm/shark-socket/` 与 shark-mqtt `deploy/k8s/helm/shark-mqtt/`

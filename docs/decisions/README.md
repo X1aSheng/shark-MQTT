@@ -12,7 +12,7 @@ ADRs follow the standard template:
 
 ## ADRs
 
-_(No ADRs yet — add as significant design decisions are made.)_
+_(No ADRs yet - add as significant design decisions are made.)_
 
 ---
 

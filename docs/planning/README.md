@@ -13,5 +13,5 @@ _(Add planning documents here as the project evolves.)_
 
 ## See Also
 
-- [Project Reviews](../reports/) — Historical reviews and defect tracking
-- [Architecture](../architecture/ARCHITECTURE.md) — System design
+- [Project Reviews](../reports/) - Historical reviews and defect tracking
+- [Architecture](../architecture/ARCHITECTURE.md) - System design

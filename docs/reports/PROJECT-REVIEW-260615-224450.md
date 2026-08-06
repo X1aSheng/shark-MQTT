@@ -2,17 +2,17 @@
 
 **日期:** 2026-06-15  
 **范围:** 全量源码审查 (21 Go 包, ~13,000 行)  
-**方法:** Full-Stack Software Integration & Validation Engineer Skill — 步骤 1-3
+**方法:** Full-Stack Software Integration & Validation Engineer Skill - 步骤 1-3
 
 ---
 
 ## 执行摘要
 
 对 shark-mqtt 项目全部 Go 源文件进行深度审查，从架构设计、并发安全、协议合规、资源管理和 Go 语言惯用法五个维度共发现 **19 项缺陷**，其中：
-- 🔴 严重 (Critical): 2 项
-- 🟠 高级 (High): 6 项  
-- 🟡 中级 (Medium): 11 项
-- 🔵 低级 (Low): 5 项
+-  严重 (Critical): 2 项
+-  高级 (High): 6 项  
+-  中级 (Medium): 11 项
+-  低级 (Low): 5 项
 
 ---
 
@@ -21,14 +21,14 @@
 ### C-01: Session Takeover 竞态导致 Inflight 消息和订阅丢失
 
 - **位置:** `broker/broker.go:330-337` (HandleConnection + disconnect)
-- **描述:** 当同 ClientID 重连 (session takeover) 时，broker 先关闭旧连接释放 `b.mu`(L332 释放)，再注册新连接(L337)。在 L332-L337 的窗口期，旧的 `readLoop` 检测到关闭错误后调用 `abnormalDisconnect()` → `disconnect()`，后者在 L563 调用 `sessions.RemoveSession()` 并删除连接映射。当新连接注册时，session 已被销毁，`isResuming` 标志丢失。
+- **描述:** 当同 ClientID 重连 (session takeover) 时，broker 先关闭旧连接释放 `b.mu`(L332 释放)，再注册新连接(L337)。在 L332-L337 的窗口期，旧的 `readLoop` 检测到关闭错误后调用 `abnormalDisconnect()` -> `disconnect()`，后者在 L563 调用 `sessions.RemoveSession()` 并删除连接映射。当新连接注册时，session 已被销毁，`isResuming` 标志丢失。
 - **影响:** 持久 session 的 inflight QoS 1/2 消息和订阅全部丢失，客户端需要重新订阅。
 - **根因:** 释放锁后未原子性地完成 "踢旧+注册新" 操作。
 
 ### C-02: `$SYS` 主题保护被 ACL 和共享订阅绕过
 
 - **位置:** `broker/auth.go:140-156` (CanPublish/CanSubscribe), `broker/topic_tree.go:283` (MatchShared)
-- **描述:** MQTT 规范 §4.7.2 要求 `$SYS` 系统主题不被通配符订阅匹配。`TopicTree.Match()` 正确实现了此保护，但 `StaticAuth.CanPublish/CanSubscribe` 和 `TopicTree.MatchShared()` 直接调用 `protocol.MatchTopic()`，后者无 `$` 前缀感知。
+- **描述:** MQTT 规范 4.7.2 要求 `$SYS` 系统主题不被通配符订阅匹配。`TopicTree.Match()` 正确实现了此保护，但 `StaticAuth.CanPublish/CanSubscribe` 和 `TopicTree.MatchShared()` 直接调用 `protocol.MatchTopic()`，后者无 `$` 前缀感知。
 - **影响:** ACL 通配符模式 `#` 可匹配 `$SYS/...` 主题，共享订阅也可接收系统消息。
 - **修复方向:** 在 `StaticAuth` 的 topic 匹配中增加 `$SYS` 保护；`MatchShared` 改用 `TopicTree.Match` 或接受独立的 `$` 保护参数。
 
@@ -39,7 +39,7 @@
 ### H-01: TLS 配置失败时静默降级为明文
 
 - **位置:** `broker/server.go:63-67` (NewMQTTServer)
-- **描述:** `cfg.TLSEnabled=true` 但 `cfg.TLSConfig()` 返回错误时（如证书文件缺失），仅打印一个 Warn 日志，`s.tlsConfig` 保持 nil——服务器在**明文 TCP** 上运行。
+- **描述:** `cfg.TLSEnabled=true` 但 `cfg.TLSConfig()` 返回错误时（如证书文件缺失），仅打印一个 Warn 日志，`s.tlsConfig` 保持 nil--服务器在**明文 TCP** 上运行。
 - **影响:** 运维人员收到的唯一提示是一条日志；所有连接未经加密。这是严重安全风险。
 - **修复方向:** TLS 配置失败时应返回 error 并阻止服务器启动，或使用自签名临时证书并明确警告。
 
@@ -67,7 +67,7 @@
 ### H-05: 最大包大小检查偏离 5 字节
 
 - **位置:** `protocol/codec.go:50`
-- **描述:** `fh.RemainingLength+5 > c.maxPacketSize` 假定固定头始终 5 字节。MQTT 规范 §2.2.3 规定最小固定头为 2 字节（RemainingLength<128 时）。剩余长度 <128 的包会被错误拒绝。
+- **描述:** `fh.RemainingLength+5 > c.maxPacketSize` 假定固定头始终 5 字节。MQTT 规范 2.2.3 规定最小固定头为 2 字节（RemainingLength<128 时）。剩余长度 <128 的包会被错误拒绝。
 - **影响:** maxPacketSize=100 时，95 字节剩余长度 + 2 字节固定头 = 97 字节的合法包被拒绝 (95+5=100)。
 - **修复方向:** 用 `fh.RemainingLength + actualHeaderSize` 替代硬编码 5。
 
@@ -141,7 +141,7 @@
 ### M-10: Redis ClearMessages 非原子
 
 - **位置:** `store/redis/message_store.go:110-130`
-- **描述:** SCAN → DEL 之间新消息可以到达。这是 Redis SCAN 的固有限制但未在文档或接口语义中说明。
+- **描述:** SCAN -> DEL 之间新消息可以到达。这是 Redis SCAN 的固有限制但未在文档或接口语义中说明。
 - **修复方向:** 文档记录或使用事务（Lua script）。
 
 ### M-11: 连接 handler 错误静默记录后忽略
@@ -175,7 +175,7 @@
 ### L-04: 缓冲池死代码分支
 
 - **位置:** `pkg/bufferpool/pool.go:30-38`
-- **描述:** `Get()` 中的 `case []byte` 分支永远不会执行——池始终存储 `*[]byte`。
+- **描述:** `Get()` 中的 `case []byte` 分支永远不会执行--池始终存储 `*[]byte`。
 - **修复方向:** 删除死代码。
 
 ### L-05: Client 缺少自动重连
@@ -190,12 +190,12 @@
 
 | 维度 | 评估 |
 |------|------|
-| **并发安全** | 3 项缺陷（C-01, H-02, H-03, M-02, M-03）— session takeover 和 shutdown 路径需加固 |
+| **并发安全** | 3 项缺陷（C-01, H-02, H-03, M-02, M-03）- session takeover 和 shutdown 路径需加固 |
 | **安全** | H-01（TLS 静默降级）严重；C-02（$SYS 泄漏）中等 |
 | **协议合规** | H-05（包大小检查偏移）+ C-02（$SYS 保护） |
 | **资源管理** | M-05（UserProperties 无上限）；M-06（连接语义） |
-| **错误处理** | M-01, M-04, M-07 — 多处错误被静默吞掉 |
-| **Go 惯用法** | L-01, L-02, L-04 — 小优化和清理 |
+| **错误处理** | M-01, M-04, M-07 - 多处错误被静默吞掉 |
+| **Go 惯用法** | L-01, L-02, L-04 - 小优化和清理 |
 
 ---
 
@@ -203,27 +203,27 @@
 
 ```
 P0 (立即修复):
-  ├── C-01: Session takeover race
-  ├── C-02: $SYS topic protection bypass  
-  └── H-01: TLS silent downgrade
+  +-- C-01: Session takeover race
+  +-- C-02: $SYS topic protection bypass  
+  +-- H-01: TLS silent downgrade
 
 P1 (高优先级):
-  ├── H-04: doRetry retry count race
-  ├── H-05: Packet size check off-by-5
-  ├── M-01: writePacket error swallowing
-  └── M-05: UserProperties unbounded
+  +-- H-04: doRetry retry count race
+  +-- H-05: Packet size check off-by-5
+  +-- M-01: writePacket error swallowing
+  +-- M-05: UserProperties unbounded
 
 P2 (中优先级):
-  ├── H-02: Start() idempotency
-  ├── H-03: publishRateTracker concurrency
-  ├── H-06: Codec version residue
-  ├── M-06: maxConnections=0 ambiguity
-  ├── M-07: Health server silent failure
-  └── M-08: FileAuth duplicate detection
+  +-- H-02: Start() idempotency
+  +-- H-03: publishRateTracker concurrency
+  +-- H-06: Codec version residue
+  +-- M-06: maxConnections=0 ambiguity
+  +-- M-07: Health server silent failure
+  +-- M-08: FileAuth duplicate detection
 
 P3 (低优先级):
-  ├── M-02 through M-04, M-09 through M-11
-  └── L-01 through L-05
+  +-- M-02 through M-04, M-09 through M-11
+  +-- L-01 through L-05
 ```
 
 ---
@@ -231,8 +231,8 @@ P3 (低优先级):
 ## 七、验证计划
 
 每项修复后:
-1. `go vet ./...` — 无警告
-2. `go build ./...` — 编译通过
-3. `go test -count=1 ./...` — 全部测试通过
-4. `gofmt -d .` — 无格式差异
+1. `go vet ./...` - 无警告
+2. `go build ./...` - 编译通过
+3. `go test -count=1 ./...` - 全部测试通过
+4. `gofmt -d .` - 无格式差异
 5. 针对性测试: 修复涉及路径的集成/单元测试

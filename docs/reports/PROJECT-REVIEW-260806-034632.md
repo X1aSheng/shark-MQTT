@@ -25,9 +25,9 @@
 | # | 缺陷 | 位置 | 实证 |
 | --- | --- | --- | --- |
 | P1-1 | 每条 QoS1 入站消息被重试 republish 向订阅者重复投递 (默认最多 4 次) | broker/qos_engine.go:328-393, broker.go:807 | 已复现: 1 次发布收到 3 次 (maxRetries=2) |
-| P1-2 | QoS2 消息在 PUBREL 握手完成前被 doRetry 提前转发 → 双重投递, 恰好一次被破坏 | broker/qos_engine.go:328-393 | 代码级确认 |
+| P1-2 | QoS2 消息在 PUBREL 握手完成前被 doRetry 提前转发 -> 双重投递, 恰好一次被破坏 | broker/qos_engine.go:328-393 | 代码级确认 |
 | P1-3 | MQTT 5.0 Topic Alias 完全不可用: 空 TopicName PUBLISH 被 codec 拒绝, broker 别名分支是僵尸代码 | protocol/publish.go:14, topic.go:7-9 | 已复现 |
-| P1-4 | Client 端 QoS2 接收残缺: readLoop 无 PubRel 分支, receivedQoS2 只增不删 → QoS2 消息黑洞 + 泄漏 | client/client.go:472-553 | 代码级确认 |
+| P1-4 | Client 端 QoS2 接收残缺: readLoop 无 PubRel 分支, receivedQoS2 只增不删 -> QoS2 消息黑洞 + 泄漏 | client/client.go:472-553 | 代码级确认 |
 | P1-5 | 离线持久会话 QoS1/2 消息直接丢弃 (无离线队列); 出站 QoS 无重传; messageStore 形同虚设 | broker/broker.go:1027-1112 | 代码级确认 |
 | P1-6 | 客户端无 PINGREQ 协程, 空闲超过 1.5x KeepAlive 被 broker 断连 | client/client.go:72-163 | 代码级确认 |
 
@@ -43,7 +43,7 @@
 | P2-6 | ChainAuth 认证链 fail-open: 权威认证器拒绝凭证后被宽松兜底放行 | broker/auth_chain.go:30-45 |
 | P2-7 | 超过 maxTopicFiltersPerSub 时 SUBACK 全发成功码 (谎报订阅成功) | broker/broker.go:887-900 |
 | P2-8 | Retained 消息从不投递给 $share 共享订阅者 | broker/broker.go:950-963, 1137-1144 |
-| P2-9 | 共享订阅轮询可能选中离线成员 → 消息丢失 | broker/topic_tree.go:273-323 |
+| P2-9 | 共享订阅轮询可能选中离线成员 -> 消息丢失 | broker/topic_tree.go:273-323 |
 | P2-10 | 会话接管竞态: 旧连接清理删掉新连接注册的 Will | broker/broker.go:542-561 |
 | P2-11 | Client Disconnect 后无法重新 Connect (ctx 一次性) | client/client.go:57-66, 364-403, 440-445 |
 | P2-12 | Client nextPacketID 不查 ID 占用, 回绕后 ACK 错配 | client/client.go:569-586 |

@@ -11,44 +11,44 @@
 
 | Step | Status | Details |
 |------|--------|---------|
-| `go build ./...` | ✅ | All packages compile cleanly |
-| `go vet ./...` | ✅ | No warnings |
-| `go test -count=1 ./...` (21 packages) | ✅ | All pass (incl. integration tests) |
+| `go build ./...` | [x] | All packages compile cleanly |
+| `go vet ./...` | [x] | No warnings |
+| `go test -count=1 ./...` (21 packages) | [x] | All pass (incl. integration tests) |
 
 ## 2. Docker Build & Deployment
 
 | Step | Status | Details |
 |------|--------|---------|
-| `docker build -f deploy/docker/Dockerfile` | ✅ | Image built: 24.2 MB |
-| Container start with default config | ✅ | Server listening on :18983 |
-| Container healthcheck | ✅ | Status: healthy |
+| `docker build -f deploy/docker/Dockerfile` | [x] | Image built: 24.2 MB |
+| Container start with default config | [x] | Server listening on :18983 |
+| Container healthcheck | [x] | Status: healthy |
 
-## 3. End-to-End Pub/Sub Verification (Local → Cloud)
+## 3. End-to-End Pub/Sub Verification (Local -> Cloud)
 
 Test: Raw TCP MQTT 3.1.1 connection from Windows client to cloud broker.
 
 | Test | Status | Details |
 |------|--------|---------|
-| TCP connect to 120.76.44.233:18983 | ✅ | Connected |
-| MQTT CONNECT (Clean Session) | ✅ | CONNACK reason=0 (accepted) |
-| SUBSCRIBE to `verify/cloud/test` | ✅ | QoS 0 |
-| PUBLISH QoS 0 to `verify/cloud/test` | ✅ | Payload: "hello-from-windows" |
-| Message delivery to subscriber | ✅ | Topic + payload verified byte-for-byte |
+| TCP connect to 120.76.44.233:18983 | [x] | Connected |
+| MQTT CONNECT (Clean Session) | [x] | CONNACK reason=0 (accepted) |
+| SUBSCRIBE to `verify/cloud/test` | [x] | QoS 0 |
+| PUBLISH QoS 0 to `verify/cloud/test` | [x] | Payload: "hello-from-windows" |
+| Message delivery to subscriber | [x] | Topic + payload verified byte-for-byte |
 
 ## 4. Verified Changes (Audit Items)
 
 | ID | Feature | Status |
 |----|---------|--------|
-| P0-1 | ReceiveMaximum flow control | ✅ |
-| P0-2 | AUTH packet handling | ✅ |
-| P1-3 | bcrypt password hashing | ✅ |
-| P1-4 | Rate limiting (connection + publish) | ✅ |
-| P1-5 | Resource limits (ClientID, topic filters, retained) | ✅ |
-| P2-6 | Shared subscriptions ($share/) | ✅ |
-| P2-7 | TLS hardening (cipher suites, mTLS) | ✅ |
-| P2-8 | Will Delay cap | ✅ |
-| P3-9 | Subscription Identifier routing | ✅ |
-| P3-10 | Retained message TTL | ✅ |
+| P0-1 | ReceiveMaximum flow control | [x] |
+| P0-2 | AUTH packet handling | [x] |
+| P1-3 | bcrypt password hashing | [x] |
+| P1-4 | Rate limiting (connection + publish) | [x] |
+| P1-5 | Resource limits (ClientID, topic filters, retained) | [x] |
+| P2-6 | Shared subscriptions ($share/) | [x] |
+| P2-7 | TLS hardening (cipher suites, mTLS) | [x] |
+| P2-8 | Will Delay cap | [x] |
+| P3-9 | Subscription Identifier routing | [x] |
+| P3-10 | Retained message TTL | [x] |
 
 ---
 

@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-Comprehensive review of the shark-mqtt codebase — a Go-based MQTT 3.1.1/5.0 broker. All 509 tests pass (419 unit + 90 integration), 64 benchmarks complete, coverage at 50.1%. The codebase is well-structured with good test coverage and solid protocol implementation. Below are findings categorized by severity.
+Comprehensive review of the shark-mqtt codebase - a Go-based MQTT 3.1.1/5.0 broker. All 509 tests pass (419 unit + 90 integration), 64 benchmarks complete, coverage at 50.1%. The codebase is well-structured with good test coverage and solid protocol implementation. Below are findings categorized by severity.
 
 ---
 
@@ -12,12 +12,12 @@ Comprehensive review of the shark-mqtt codebase — a Go-based MQTT 3.1.1/5.0 br
 
 **Severity:** Medium  
 **Location:** `api/api.go:140-176` vs `config/config.go:30-32`  
-**Impact:** Users who configure `qos_max_inflight`, `qos_retry_interval`, or `qos_max_retries` via YAML/ENV/toml see no effect — the broker always uses hardcoded defaults (100, 10s, 3).
+**Impact:** Users who configure `qos_max_inflight`, `qos_retry_interval`, or `qos_max_retries` via YAML/ENV/toml see no effect - the broker always uses hardcoded defaults (100, 10s, 3).
 
 **Root cause:** `api.NewBroker()` builds broker options from config, but only propagates `MaxPacketSize` and `SessionExpiryInterval`. The QoS fields are never read.
 
 ```go
-// api/api.go — only these are propagated:
+// api/api.go - only these are propagated:
 if o.cfg.MaxPacketSize > 0 {
     bopts = append(bopts, broker.WithBrokerMaxPacketSize(o.cfg.MaxPacketSize))
 }
@@ -98,7 +98,7 @@ LABEL org.opencontainers.image.description="High-performance MQTT 3.1.1 broker w
 ### 4.1 TOCTOU in disconnect() is Correctly Handled
 
 **Location:** `broker/broker.go:395-439`  
-**Status:** Verified correct — the identity check (`cs.conn != conn`) prevents stale cleanup.
+**Status:** Verified correct - the identity check (`cs.conn != conn`) prevents stale cleanup.
 
 ### 4.2 Client nextPacketID() Fallback Edge Case
 
@@ -108,7 +108,7 @@ LABEL org.opencontainers.image.description="High-performance MQTT 3.1.1 broker w
 ### 4.3 WillHandler Goroutine Lifecycle
 
 **Location:** `broker/will_handler.go:80-113`  
-**Status:** Verified safe — the goroutine in `TriggerWill()` captures `will` by value and the `Stop()` method properly cancels contexts and waits with `wg.Wait()`. The broker's `publishWill()` callback handles stopped-state gracefully.
+**Status:** Verified safe - the goroutine in `TriggerWill()` captures `will` by value and the `Stop()` method properly cancels contexts and waits with `wg.Wait()`. The broker's `publishWill()` callback handles stopped-state gracefully.
 
 ---
 
@@ -130,7 +130,7 @@ LABEL org.opencontainers.image.description="High-performance MQTT 3.1.1 broker w
 ## 6. Architecture Assessment
 
 ### Strengths
-- Clean separation of concerns: protocol ↔ broker ↔ store ↔ network
+- Clean separation of concerns: protocol <-> broker <-> store <-> network
 - MQTT 3.1.1 and 5.0 dual protocol support with version-aware codec
 - Trie-based topic matching with proper system topic ($SYS) protection
 - QoS 1/2 state machine with retry, inflight tracking, and duplicate detection
@@ -150,13 +150,13 @@ LABEL org.opencontainers.image.description="High-performance MQTT 3.1.1 broker w
 
 | # | Action | Priority | Effort | Status |
 |---|--------|----------|--------|--------|
-| 1 | Fix QoS config propagation (`api/api.go`) | High | 5 min | ✅ Fixed (f30eba2) |
-| 2 | Fix MaxConnections config propagation | High | 5 min | ✅ Fixed (f30eba2) |
-| 3 | Raise CI coverage threshold 30→50 | Medium | 1 min | ✅ Fixed (bb361c1) |
-| 4 | Fix Dockerfile label description | Low | 1 min | ✅ Fixed (8f04587) |
-| 5 | Add `go mod tidy -diff` to CI | Low | 2 min | ✅ Fixed (bb361c1) |
-| 6 | Fix stale go.sum entries | Low | 2 min | ✅ Fixed (efa3730) |
-| 7 | Add production security warnings | Low | 10 min | ✅ Fixed (735a3cf) |
+| 1 | Fix QoS config propagation (`api/api.go`) | High | 5 min | [x] Fixed (f30eba2) |
+| 2 | Fix MaxConnections config propagation | High | 5 min | [x] Fixed (f30eba2) |
+| 3 | Raise CI coverage threshold 30->50 | Medium | 1 min | [x] Fixed (bb361c1) |
+| 4 | Fix Dockerfile label description | Low | 1 min | [x] Fixed (8f04587) |
+| 5 | Add `go mod tidy -diff` to CI | Low | 2 min | [x] Fixed (bb361c1) |
+| 6 | Fix stale go.sum entries | Low | 2 min | [x] Fixed (efa3730) |
+| 7 | Add production security warnings | Low | 10 min | [x] Fixed (735a3cf) |
 | 8 | Add golangci-lint to CI | Low | 5 min | Deferred |
 
 ### Fix Verification
@@ -197,15 +197,15 @@ efa3730 fix: add missing transitive dependency to go.sum
 
 | Step | Description | Result |
 |------|-------------|--------|
-| 1 | Project synced to cloud | ✅ tar+ssh transfer successful |
-| 2 | Go binary compiled (CGO_ENABLED=0, static) | ✅ 15.9MB ELF x86-64 statically linked |
-| 3 | Binary runs on cloud | ✅ Broker starts, health endpoint responds "ok" |
-| 4 | Local client → Cloud broker (binary) | ✅ Connect, subscribe, publish, disconnect all PASS |
-| 5 | Docker image built (Alpine 3.21) | ✅ shark-mqtt:cloud |
-| 6 | Docker container runs | ✅ HEALTHCHECK passes (healthy), broker responds |
-| 7 | Local client → Dockerized cloud broker | ✅ Connect, subscribe, publish, disconnect all PASS |
-| 8 | Helm chart lint | ✅ 0 errors, 1 info (icon recommended) |
-| 9 | K8s manifest validation | ⚠️ No active cluster (2GB server cannot support K8s + broker simultaneously) |
+| 1 | Project synced to cloud | [x] tar+ssh transfer successful |
+| 2 | Go binary compiled (CGO_ENABLED=0, static) | [x] 15.9MB ELF x86-64 statically linked |
+| 3 | Binary runs on cloud | [x] Broker starts, health endpoint responds "ok" |
+| 4 | Local client -> Cloud broker (binary) | [x] Connect, subscribe, publish, disconnect all PASS |
+| 5 | Docker image built (Alpine 3.21) | [x] shark-mqtt:cloud |
+| 6 | Docker container runs | [x] HEALTHCHECK passes (healthy), broker responds |
+| 7 | Local client -> Dockerized cloud broker | [x] Connect, subscribe, publish, disconnect all PASS |
+| 8 | Helm chart lint | [x] 0 errors, 1 info (icon recommended) |
+| 9 | K8s manifest validation | [!] No active cluster (2GB server cannot support K8s + broker simultaneously) |
 
 ### Docker Deployment Commands (Verified)
 ```bash
@@ -224,6 +224,6 @@ curl -s http://localhost:18999/healthz  # returns "ok"
 ```
 
 ### Notes
-- The 2GB server cannot simultaneously run a Kind/K8s cluster and the broker — the K8s manifests and Helm chart are validated statically and are ready for deployment on a larger node or managed cluster.
+- The 2GB server cannot simultaneously run a Kind/K8s cluster and the broker - the K8s manifests and Helm chart are validated statically and are ready for deployment on a larger node or managed cluster.
 - Use `CGO_ENABLED=0` for static linking when targeting Alpine-based Docker images.
-- The `.dockerignore` excludes `bin/` — pass the binary via Dockerfile COPY from a build context directory, or use the multi-stage build from `deploy/docker/Dockerfile`.
+- The `.dockerignore` excludes `bin/` - pass the binary via Dockerfile COPY from a build context directory, or use the multi-stage build from `deploy/docker/Dockerfile`.

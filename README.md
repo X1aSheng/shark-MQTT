@@ -9,12 +9,12 @@ A high-performance MQTT Broker written in Go, supporting both **MQTT 3.1.1** and
 - **Protocol Support**: Full MQTT 3.1.1 & 5.0 with 15 packet types, complete property encoding/decoding
 - **QoS Levels**: QoS 0, 1, 2 with automatic retry, inflight tracking, and state machine
 - **Persistent Sessions**: Cross-connection session persistence (`CleanSession=false`) with MQTT 5.0 Session Expiry Interval support
-- **Session Takeover**: Safe client ID takeover — new connection kicks old, old cleanup does not corrupt new state
+- **Session Takeover**: Safe client ID takeover - new connection kicks old, old cleanup does not corrupt new state
 - **Topic Wildcards**: Full `+` and `#` wildcard support with spec-compliant `$SYS` system topic protection
 - **Retained Messages**: Store-and-forward last message per topic with wildcard delivery, QoS downgrade, and MQTT 5.0 Retain Handling
 - **Will Messages**: Automatic last-will delivery on abnormal disconnect, with MQTT 5.0 Will Delay Interval support
-- **Pluggable Auth**: Chain authentication — `AllowAll`, `DenyAll`, `StaticAuth` (credentials + ACL), `FileAuth` (YAML), `ChainAuth`, or custom `Authenticator`/`Authorizer` interfaces
-- **Plugin System**: Extensible hooks for `OnAccept`, `OnConnected`, `OnMessage`, `OnClose` — continues dispatching after plugin errors
+- **Pluggable Auth**: Chain authentication - `AllowAll`, `DenyAll`, `StaticAuth` (credentials + ACL), `FileAuth` (YAML), `ChainAuth`, or custom `Authenticator`/`Authorizer` interfaces
+- **Plugin System**: Extensible hooks for `OnAccept`, `OnConnected`, `OnMessage`, `OnClose` - continues dispatching after plugin errors
 - **Multiple Storage Backends**: In-memory (default), Redis, BadgerDB for sessions, messages, and retained messages
 - **Connection Limit**: Configurable max connections with pre-auth enforcement
 - **TLS Support**: Secure connections with configurable TLS (min TLS 1.2)
@@ -28,41 +28,41 @@ A high-performance MQTT Broker written in Go, supporting both **MQTT 3.1.1** and
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                       cmd/main.go                        │
-│                   CLI Entry Point                        │
-└────────────────────────┬─────────────────────────────────┘
-                         │
-                         ▼
-┌──────────────────────────────────────────────────────────┐
-│                      api/api.go                          │
-│             Unified Public API & Factory                 │
-│            (Start / Stop / Addr / ConnCount)             │
-│            + Health Server (/healthz, /readyz)           │
-└────────────────────────┬─────────────────────────────────┘
-                         │
-                         ▼
-┌──────────────────────────────────────────────────────────┐
-│                        broker/                           │
-│               Network + Business Logic                   │
-│  ┌─────────────────┐  ┌──────────────────────────────┐  │
-│  │  MQTTServer      │  │  Broker                      │  │
-│  │  TCP/TLS Accept  │◄─┤  TopicTree (wildcard match)  │  │
-│  │  Connection Mgmt │  │  QoSEngine (retry + inflight)│  │
-│  │  Per-conn Mutex  │  │  WillHandler (delay support) │  │
-│  └─────────────────┘  │  Manager (sessions)           │  │
-│                        │  Authenticator + Authorizer   │  │
-│                        │  Connection Limiter           │  │
-│                        └──────────────────────────────┘  │
-└──────────────────────────────────────────────────────────┘
-              │              │              │
-              ▼              ▼              ▼
-┌────────────────┐ ┌──────────────┐ ┌──────────────┐
-│   protocol/    │ │   store/     │ │    pkg/      │
-│  MQTT Codec    │ │  Memory      │ │  Logger      │
-│  15 Packets    │ │  Redis       │ │  Metrics     │
-│  MQTT 5.0 Props│ │  BadgerDB    │ │  BufferPool  │
-└────────────────┘ └──────────────┘ └──────────────┘
++----------------------------------------------------------+
+|                       cmd/main.go                        |
+|                   CLI Entry Point                        |
++------------------------+---------------------------------+
+                         |
+                         v
++----------------------------------------------------------+
+|                      api/api.go                          |
+|             Unified Public API & Factory                 |
+|            (Start / Stop / Addr / ConnCount)             |
+|            + Health Server (/healthz, /readyz)           |
++------------------------+---------------------------------+
+                         |
+                         v
++----------------------------------------------------------+
+|                        broker/                           |
+|               Network + Business Logic                   |
+|  +-----------------+  +------------------------------+  |
+|  |  MQTTServer      |  |  Broker                      |  |
+|  |  TCP/TLS Accept  |<-+  TopicTree (wildcard match)  |  |
+|  |  Connection Mgmt |  |  QoSEngine (retry + inflight)|  |
+|  |  Per-conn Mutex  |  |  WillHandler (delay support) |  |
+|  +-----------------+  |  Manager (sessions)           |  |
+|                        |  Authenticator + Authorizer   |  |
+|                        |  Connection Limiter           |  |
+|                        +------------------------------+  |
++----------------------------------------------------------+
+              |              |              |
+              v              v              v
++----------------+ +--------------+ +--------------+
+|   protocol/    | |   store/     | |    pkg/      |
+|  MQTT Codec    | |  Memory      | |  Logger      |
+|  15 Packets    | |  Redis       | |  Metrics     |
+|  MQTT 5.0 Props| |  BadgerDB    | |  BufferPool  |
++----------------+ +--------------+ +--------------+
 ```
 
 ### Directory Structure
@@ -72,15 +72,15 @@ A high-performance MQTT Broker written in Go, supporting both **MQTT 3.1.1** and
 | `cmd/` | CLI entry point with signal handling and flag parsing |
 | `api/` | Unified public API, broker factory, health endpoints |
 | `broker/` | Core: MQTTServer, Broker, TopicTree, QoSEngine, WillHandler, Session, Auth |
-| `protocol/` | MQTT 3.1.1 & 5.0 codec — 15 packet types with property support |
+| `protocol/` | MQTT 3.1.1 & 5.0 codec - 15 packet types with property support |
 | `store/` | Storage interfaces + memory / redis / badger implementations |
 | `pkg/` | Infrastructure: logger (slog), metrics (Prometheus), bufferpool |
 | `config/` | Configuration loading (YAML / ENV) with validation |
 | `plugin/` | Plugin system with hook-based architecture |
 | `client/` | MQTT client implementation |
 | `errs/` | Centralized error definitions |
-| `tests/integration/` | 90 end-to-end integration tests including MQTT workflows and deploy verification |
-| `tests/bench/` | 64 executed benchmarks on Windows (broker + E2E data verify + micro + store; 3 churn benchmarks skipped) |
+| `tests/integration/` | 92 end-to-end integration tests including MQTT workflows and deploy verification |
+| `tests/bench/` | 65 executed benchmarks on Windows (broker + E2E data verify + micro + store) |
 | `examples/` | Runnable example programs (standalone, TLS, custom auth) |
 | `deploy/` | Docker, docker-compose, k8s, Helm chart deployment assets |
 | `docs/` | Architecture, deployment, performance, testing, and project status docs |
@@ -321,13 +321,13 @@ Full results: `make bench` or see `docs/performance.md`.
 
 | Type | Count | Status |
 |------|-------|--------|
-| Unit Tests | 419 passed runs / 13 Redis skips | All pass |
-| Integration Tests | 90 passed runs | All pass |
-| Benchmarks | 64 executed / 3 Windows skips | All pass |
-| **Latest scripted run** | `logs/20260521_215054_*` | **0 failures** |
+| Unit Tests | 326 passed runs / 13 Redis skips | All pass |
+| Integration Tests | 92 passed runs | All pass |
+| Benchmarks | 65 executed | All pass |
+| **Latest scripted run** | `logs/20260806_120538_*` | **0 failures** |
 
 > 13 Redis tests skipped when `MQTT_REDIS_ADDR` is not set.
-> Latest full run: `logs/20260521_215054_*`; unit log reports 419 passed and 13 Redis tests skipped when Redis is not configured. Race detector passed after adding `D:\Programs\w64devkit\bin` to `PATH`.
+> Latest full run: `logs/20260806_120538_*`; unit log reports 326 passed and 13 Redis tests skipped when Redis is not configured. Race detector passed after adding `D:\Programs\w64devkit\bin` to `PATH`.
 
 ### Integration Test Coverage
 
@@ -393,13 +393,13 @@ The `all` mode produces:
 
 ```
 logs/
-├── 20260428_190627_unit.json
-├── 20260428_190627_unit.log
-├── 20260428_190635_integration.json
-├── 20260428_190635_integration.log
-├── 20260428_190642_benchmark.json
-└── 20260428_190642_benchmark.log
-└── 20260426_194205_summary.log
++-- 20260428_190627_unit.json
++-- 20260428_190627_unit.log
++-- 20260428_190635_integration.json
++-- 20260428_190635_integration.log
++-- 20260428_190642_benchmark.json
++-- 20260428_190642_benchmark.log
++-- 20260426_194205_summary.log
 ```
 
 #### Makefile Targets
@@ -438,7 +438,7 @@ GitHub Actions CI runs on every push/PR:
 - **Scripted Tests**: `scripts/run_tests.go` unit and integration entrypoints
 - **Lint**: `go vet` + `gofmt` formatting check
 - **Build**: Cross-platform build verification
-- **Coverage**: 30% minimum threshold with Codecov upload
+- **Coverage**: 55% minimum threshold with Codecov upload (checked on Ubuntu + Redis)
 
 See `.github/workflows/ci.yml` for details.
 

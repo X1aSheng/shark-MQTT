@@ -1,4 +1,4 @@
-# 项目审查报告 — shark-mqtt
+# 项目审查报告 - shark-mqtt
 
 **日期**: 2026-05-15
 **审查人**: Claude (general-service-review skill)
@@ -23,27 +23,27 @@
 
 ## 2. 架构评估
 
-**等级: A** — 分层清晰，依赖方向严格自上而下，无循环依赖。
+**等级: A** - 分层清晰，依赖方向严格自上而下，无循环依赖。
 
 ### 分层结构
 ```
 api (入口层)
-  └── broker (核心业务层)
-        ├── store (→ errs)      — 存储抽象
-        ├── protocol (→ errs)   — MQTT 协议编解码
-        ├── plugin              — 插件系统
-        ├── pkg/logger          — 结构化日志
-        ├── pkg/metrics         — 指标收集
-        ├── config              — 配置管理
-        └── errs                — 错误定义
+  +-- broker (核心业务层)
+        +-- store (-> errs)      - 存储抽象
+        +-- protocol (-> errs)   - MQTT 协议编解码
+        +-- plugin              - 插件系统
+        +-- pkg/logger          - 结构化日志
+        +-- pkg/metrics         - 指标收集
+        +-- config              - 配置管理
+        +-- errs                - 错误定义
 ```
 
 ### 架构决策记录 (ADR)
 6 个 ADR 覆盖了所有关键架构决策（独立仓库、网络与业务分离、会话状态机、broker 包聚合、TopicTree 系统主题保护、函数选项模式）。
 
 ### 设计原则
-- P1: 网络层与业务层分离 (MQTTServer ↔ Broker)
-- P2: 连接与会话分离 (Connection lifecycle ⊆ Session lifecycle)
+- P1: 网络层与业务层分离 (MQTTServer <-> Broker)
+- P2: 连接与会话分离 (Connection lifecycle subset Session lifecycle)
 - P3: 存储与运行时分离 (接口驱动存储)
 - P4: QoS 状态机封装
 - P5: 可观测性优先
@@ -60,14 +60,14 @@ api (入口层)
 | SEC-001 | 安全 | Medium | [broker/auth.go:33](broker/auth.go#L33) | 内置认证器密码明文存储在内存中 | 添加可选的 bcrypt/argon2 哈希支持 |
 | SEC-002 | 安全 | Low | [config/config.go:1](config/config.go) | TLS MinVersion 未显式设置 | 在 TLSConfig() 中设置 `tls.VersionTLS12` |
 | OBS-001 | 可观测性 | High | [api/api.go:258](api/api.go#L258) | `/metrics` 端点未暴露，Prometheus 指标不可被抓取 | 添加 `promhttp.Handler()` 到健康检查 mux |
-| OBS-002 | 可观测性 | Medium | — | 无 OpenTelemetry 分布式追踪集成 | 在关键路径添加 otel span |
-| OBS-003 | 可观测性 | Medium | — | 无消息处理延迟直方图 | 添加 MessagesLatency Prometheus histogram |
-| TST-001 | 测试 | High | broker/ | broker 包覆盖率 52.8%，核心模块需 ≥80% | 补充异常路径、session takeover、conn limit 测试 |
+| OBS-002 | 可观测性 | Medium | - | 无 OpenTelemetry 分布式追踪集成 | 在关键路径添加 otel span |
+| OBS-003 | 可观测性 | Medium | - | 无消息处理延迟直方图 | 添加 MessagesLatency Prometheus histogram |
+| TST-001 | 测试 | High | broker/ | broker 包覆盖率 52.8%，核心模块需 >=80% | 补充异常路径、session takeover、conn limit 测试 |
 | TST-002 | 测试 | High | protocol/ | protocol 包覆盖率 49.1%，安全关键路径 | 补充 MQTT 5.0 属性、畸形包拒收、fuzz 测试 |
 | TST-003 | 测试 | Medium | store/redis/ | Redis store 覆盖率 0% | 添加 miniredis/testcontainers 单元测试 |
 | TST-004 | 测试 | Low | pkg/metrics/ | Prometheus impl 覆盖率 2.2% | 添加 Prometheus 指标单元测试 |
 | PRF-001 | 性能 | Medium | [broker/broker.go:576](broker/broker.go#L576) | 高 fan-out 场景串行投递 | 对订阅者数量超过阈值时使用 worker pool 并行投递 |
-| PRF-002 | 性能 | Low | — | BufferPool 未在生产路径使用 | 在 broker 读取路径集成 BufferPool |
+| PRF-002 | 性能 | Low | - | BufferPool 未在生产路径使用 | 在 broker 读取路径集成 BufferPool |
 
 ## 4. 安全风险
 
@@ -125,7 +125,7 @@ api (入口层)
 
 ### 亮点
 - 热路径零分配（TopicTree Subscribe/Unsubscribe）
-- 微秒级端到端延迟（QoS 0 ~29µs）
+- 微秒级端到端延迟（QoS 0 ~29us）
 - 写操作在客户端级别隔离（per-connection write mutex），无全局锁竞争
 - retryLoop 在锁外收集重试消息，避免锁顺序死锁
 
@@ -172,8 +172,8 @@ api (入口层)
 |---|-----|------|
 | L1 | TST-004 | metrics Prometheus 实现单元测试 |
 | L2 | PRF-002 | 生产路径集成 BufferPool |
-| L3 | — | 提供 Grafana 面板 JSON |
-| L4 | — | 添加 protocol fuzz 测试 |
+| L3 | - | 提供 Grafana 面板 JSON |
+| L4 | - | 添加 protocol fuzz 测试 |
 
 ---
 
@@ -188,4 +188,4 @@ shark-mqtt 是一个**架构设计良好、代码质量高、文档齐全**的 M
 - **文档**: ~5,000 行文档，覆盖所有方面
 - **性能**: 纳秒级 codec，零分配热路径，微秒级端到端延迟
 
-主要改进方向：**测试覆盖率提升**（核心模块从 ~50% → 80%）、**可观测性完善**（/metrics 端点 + 追踪）、**文档修正**（3 个链接错误）。
+主要改进方向：**测试覆盖率提升**（核心模块从 ~50% -> 80%）、**可观测性完善**（/metrics 端点 + 追踪）、**文档修正**（3 个链接错误）。

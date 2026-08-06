@@ -1,6 +1,6 @@
 # Testing Guide
 
-Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。最新完整脚本运行为 `logs/20260521_215054_*`：419 个单元测试运行通过、13 个 Redis 测试跳过、90 个集成测试运行通过、64 个基准测试执行通过、3 个 Windows 连接 churn 基准跳过。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
+Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。最新完整脚本运行为 `logs/20260806_120538_*`：326 个单元测试运行通过、13 个 Redis 测试跳过（本地无 Redis）、92 个集成测试运行通过、65 个基准测试执行通过。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
 
 ---
 
@@ -23,39 +23,39 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 ## 测试架构
 
 ```
-┌────────────────────────────────────────────────────────────┐
-│  Benchmark Tests (64 executed / 3 Windows skips)          │
-│  tests/bench/                                             │
-│  ├── broker_bench_test.go    — 全栈 TCP 基准              │
-│  ├── data_delivery_bench_test.go — E2E 数据验证基准       │
-│  └── micro_bench_test.go     — 组件级微基准               │
-├────────────────────────────────────────────────────────────┤
-│  Integration Tests (90 latest passed runs)                 │
-│  tests/integration/                                        │
-│  ├── connect_test.go         — 连接与会话                 │
-│  ├── pubsub_test.go          — 发布订阅                   │
-│  ├── delivery_test.go        — 多订阅者消息投递           │
-│  ├── qos_test.go             — QoS 0/1/2 完整流程         │
-│  ├── persistent_session_test.go — 持久会话               │
-│  ├── will_test.go            — 遗嘱消息                   │
-│  ├── topic_wildcard_test.go  — 通配符匹配                 │
-│  ├── unsubscribe_test.go     — 取消订阅                   │
-│  ├── retained_test.go        — 保留消息                   │
-│  └── edge_case_test.go       — 边界与异常                 │
-├────────────────────────────────────────────────────────────┤
-│  Defect Regression Tests (tests/defects + package tests)   │
-│  tests/defects/                                            │
-│  ├── api_default_auth_test.go — 默认认证拒绝回归           │
-│  ├── broker_lifecycle_test.go — 服务生命周期回归          │
-│  ├── properties_defect_test.go — MQTT 5.0 属性边界         │
-│  ├── topic_filter_defect_test.go — topic filter 边界       │
-│  └── windows_benchmark_test.go — Windows benchmark 隔离    │
-├────────────────────────────────────────────────────────────┤
-│  Unit Tests (210 top-level / 307 passed runs)              │
-│  各包内 *_test.go 文件                                     │
-│  broker/ protocol/ store/ pkg/ api/ client/ config/       │
-│  plugin/ errs/                                             │
-└────────────────────────────────────────────────────────────┘
++------------------------------------------------------------+
+|  Benchmark Tests (65 executed)                            |
+|  tests/bench/                                             |
+|  +-- broker_bench_test.go    - 全栈 TCP 基准              |
+|  +-- data_delivery_bench_test.go - E2E 数据验证基准       |
+|  +-- micro_bench_test.go     - 组件级微基准               |
++------------------------------------------------------------+
+|  Integration Tests (92 latest passed runs)                 |
+|  tests/integration/                                        |
+|  +-- connect_test.go         - 连接与会话                 |
+|  +-- pubsub_test.go          - 发布订阅                   |
+|  +-- delivery_test.go        - 多订阅者消息投递           |
+|  +-- qos_test.go             - QoS 0/1/2 完整流程         |
+|  +-- persistent_session_test.go - 持久会话               |
+|  +-- will_test.go            - 遗嘱消息                   |
+|  +-- topic_wildcard_test.go  - 通配符匹配                 |
+|  +-- unsubscribe_test.go     - 取消订阅                   |
+|  +-- retained_test.go        - 保留消息                   |
+|  +-- edge_case_test.go       - 边界与异常                 |
++------------------------------------------------------------+
+|  Defect Regression Tests (tests/defects + package tests)   |
+|  tests/defects/                                            |
+|  +-- api_default_auth_test.go - 默认认证拒绝回归           |
+|  +-- broker_lifecycle_test.go - 服务生命周期回归          |
+|  +-- properties_defect_test.go - MQTT 5.0 属性边界         |
+|  +-- topic_filter_defect_test.go - topic filter 边界       |
+|  +-- windows_benchmark_test.go - Windows benchmark 隔离    |
++------------------------------------------------------------+
+|  Unit Tests (326 top-level passed runs)                    |
+|  各包内 *_test.go 文件                                     |
+|  broker/ protocol/ store/ pkg/ api/ client/ config/       |
+|  plugin/ errs/                                             |
++------------------------------------------------------------+
 ```
 
 ---
@@ -64,11 +64,11 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 
 | 类型 | 数量 | 位置 |
 |------|------|------|
-| 单元测试 | 210 top-level / 307 passed runs | 各包 `*_test.go` |
-| 集成测试 | 90 latest passed runs | `tests/integration/` |
+| 单元测试 | 326 top-level passed runs | 各包 `*_test.go` |
+| 集成测试 | 92 latest passed runs | `tests/integration/` |
 | 缺陷回归测试 | `tests/defects` + package-level regressions | `tests/defects/`, `broker/`, `client/` |
-| 基准测试 | 64 executed / 3 skipped | `tests/bench/`, `store/redis/`, `plugin/` |
-| **最新脚本运行** | **419 unit passed, 90 integration passed, 64 benchmarks passed, 50.1% coverage** | `logs/20260602_*` (review bb361c1) |
+| 基准测试 | 65 executed | `tests/bench/`, `store/redis/`, `plugin/` |
+| **最新脚本运行** | **326 unit passed, 92 integration passed, 65 benchmarks passed** | `logs/20260806_120538_*` |
 
 ### 各包测试明细
 
@@ -157,7 +157,7 @@ func TestTopicTree_Subscribe(t *testing.T) {
 |----------|------|
 | `TestQoS0` | QoS 0 消息投递 |
 | `TestQoS1` | QoS 1 完整 PUBACK 流程 |
-| `TestQoS2` | QoS 2 四报文握手（PUBLISH→PUBREC→PUBREL→PUBCOMP） |
+| `TestQoS2` | QoS 2 四报文握手（PUBLISH->PUBREC->PUBREL->PUBCOMP） |
 | `TestPubSub` | 基础发布-订阅消息验证 |
 | `TestSelfPublishDeliveredByDefault` | 默认允许发布者收到自己的匹配订阅消息 |
 | `TestNoLocalSuppressesSelfPublish` | MQTT 5.0 No Local 抑制自发布投递 |
@@ -285,7 +285,7 @@ go test -v -run TestQoS2 ./tests/integration/...
 
 基准测试分为三层：全栈 TCP 基准、E2E 数据验证基准、组件微基准。
 
-### 全栈 TCP 基准（18 项）— `broker_bench_test.go`
+### 全栈 TCP 基准（18 项）- `broker_bench_test.go`
 
 通过真实 TCP 连接测量完整 MQTT 协议栈性能。
 
@@ -310,9 +310,9 @@ go test -v -run TestQoS2 ./tests/integration/...
 | `BenchmarkFanOut_10Subs` | 10 订阅者扇出 |
 | `BenchmarkFanOut_50Subs` | 50 订阅者扇出 |
 
-### E2E 数据验证基准（12 项）— `data_delivery_bench_test.go`
+### E2E 数据验证基准（12 项）- `data_delivery_bench_test.go`
 
-与全栈基准不同，每个基准读取并 **验证** 订阅者收到的 PUBLISH 报文（topic + payload），测量完整的 publish→broker→subscribe→verify 往返。
+与全栈基准不同，每个基准读取并 **验证** 订阅者收到的 PUBLISH 报文（topic + payload），测量完整的 publish->broker->subscribe->verify 往返。
 
 | 基准函数 | 说明 |
 |----------|------|
@@ -329,7 +329,7 @@ go test -v -run TestQoS2 ./tests/integration/...
 | `BenchmarkE2E_Payload_Empty` | 空负载验证 |
 | `BenchmarkE2E_Payload_64KB` | 64KB 负载验证 |
 
-### 组件微基准（27 项）— `micro_bench_test.go`
+### 组件微基准（27 项）- `micro_bench_test.go`
 
 隔离测量单个组件性能，排除网络 I/O 干扰。
 
@@ -440,12 +440,12 @@ go run scripts/run_tests.go -mode cover -timeout 10m
 
 ```
 logs/
-├── 20260428_190627_unit.json
-├── 20260428_190627_unit.log
-├── 20260428_190635_integration.json
-├── 20260428_190635_integration.log
-├── 20260428_190642_benchmark.json
-└── 20260428_190642_benchmark.log
++-- 20260428_190627_unit.json
++-- 20260428_190627_unit.log
++-- 20260428_190635_integration.json
++-- 20260428_190635_integration.log
++-- 20260428_190642_benchmark.json
++-- 20260428_190642_benchmark.log
 ```
 
 ---
@@ -528,7 +528,7 @@ go run scripts/run_tests.go -mode cover
 
 ### 覆盖率阈值
 
-当前 CI 硬性门槛为总覆盖率 30%。下表是项目质量目标，不是当前 CI 硬性门槛；2026-05-20 复审实测总覆盖率为 49.2%，后续应优先补齐 `client`、`pkg/metrics` 和 Redis store 覆盖。
+当前 CI 硬性门槛为总覆盖率 55%（`.github/workflows/ci.yml`，仅 Ubuntu + Redis 上校验）。下表是项目质量目标，不是当前 CI 硬性门槛；2026-08-06 本地实测各包覆盖率为 broker 49.0%、protocol 65.2%、client 84.5%、api 83.2%、store/memory 91.4%、store/badger 88.5%、plugin 90.6%、pkg/metrics 98.0%、pkg/bufferpool 100%（Redis store 与 cmd 未计入，详见 `docs/reports/PROJECT-REVIEW-260806-121651.md`），后续应优先补齐 `broker`、`protocol` 与 Redis store 覆盖。
 
 | 模块 | 最低覆盖率 |
 |------|-----------|

@@ -57,7 +57,7 @@ Located in `tests/bench/broker_bench_test.go`. These tests start a real broker o
 | `BenchmarkConcurrentPublish` | Parallel publishers with shared subscriber |
 | `BenchmarkTopicWildcardMatch` | Single-level wildcard (+) topic matching |
 | `BenchmarkPersistentSession` | CleanSession=false reconnect cycle |
-| `BenchmarkPayload_*` | Publish with varying payload sizes (64B–128KB) |
+| `BenchmarkPayload_*` | Publish with varying payload sizes (64B-128KB) |
 | `BenchmarkFanOut_*` | 1 publisher to N subscribers (1/5/10/50) |
 
 ### Micro-Benchmarks
@@ -122,10 +122,10 @@ go tool pprof cpu.prof
 ```
 
 Common pprof commands:
-- `top10` — Show top 10 functions by CPU time
-- `web` — Generate call graph visualization
-- `list FuncName` — Show per-line CPU usage for a function
-- `png` — Export call graph as PNG
+- `top10` - Show top 10 functions by CPU time
+- `web` - Generate call graph visualization
+- `list FuncName` - Show per-line CPU usage for a function
+- `png` - Export call graph as PNG
 
 ### Memory Profiling
 
@@ -164,11 +164,11 @@ BenchmarkPublishQos0-16    10000    21387 ns/op    1342 B/op    20 allocs/op
 These are indicative values from the latest Ryzen 7 8845HS run, not targets:
 
 **End-to-End:**
-- QoS 0 publish: ~24 µs/op, 27 allocs
-- QoS 1 publish: ~74 µs/op, 37 allocs
-- QoS 2 publish: ~201 µs/op, 52 allocs
-- MQTT CONNECT: ~408 µs/op, 123 allocs
-- Persistent session round-trip: ~820 µs/op, 179 allocs
+- QoS 0 publish: ~24 us/op, 27 allocs
+- QoS 1 publish: ~74 us/op, 37 allocs
+- QoS 2 publish: ~201 us/op, 52 allocs
+- MQTT CONNECT: ~408 us/op, 123 allocs
+- Persistent session round-trip: ~820 us/op, 179 allocs
 
 **Micro-components:**
 - TopicTree.Subscribe: ~132 ns/op, 0 allocs

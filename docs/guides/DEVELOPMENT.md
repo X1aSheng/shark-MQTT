@@ -18,30 +18,30 @@ This guide helps developers understand the Shark-MQTT codebase and get started w
 
 ```
 shark-mqtt/
-├── api/              # Unified public API and factory methods
-├── broker/           # Core broker: MQTTServer, Broker, TopicTree, QoSEngine,
-│                     #   WillHandler, Session (Manager), Auth, Authorizer
-├── protocol/         # MQTT 3.1.1 & 5.0 codec (packets, properties)
-├── store/            # Storage interfaces + Memory/Redis/BadgerDB implementations
-│   ├── memory/       # In-memory store (default)
-│   ├── redis/        # Redis store (distributed)
-│   └── badger/       # BadgerDB store (embedded)
-├── pkg/              # Infrastructure (logger, metrics, bufferpool)
-│   ├── logger/       # Structured logging (slog)
-│   ├── metrics/      # Prometheus metrics interface (17 methods)
-│   └── bufferpool/   # Buffer pool for GC reduction
-├── config/           # Configuration loading (YAML/ENV) with validation
-├── plugin/           # Plugin system (hook-based architecture, error-collecting dispatch)
-├── client/           # MQTT client implementation
-├── errs/             # Centralized error definitions
-├── tests/            # Integration and benchmark tests
-│   ├── integration/  # End-to-end MQTT workflow tests + deploy verification
-│   └── bench/        # Performance benchmarks (64 executed on Windows, 3 churn benchmarks skipped)
-├── examples/         # Usage examples (standalone, TLS, custom_auth)
-├── cmd/              # Command-line tools
-├── scripts/          # Test runner and build scripts
-├── testutils/        # Test utilities (mock connections, mock stores, helpers)
-└── docs/             # Documentation
++-- api/              # Unified public API and factory methods
++-- broker/           # Core broker: MQTTServer, Broker, TopicTree, QoSEngine,
+|                     #   WillHandler, Session (Manager), Auth, Authorizer
++-- protocol/         # MQTT 3.1.1 & 5.0 codec (packets, properties)
++-- store/            # Storage interfaces + Memory/Redis/BadgerDB implementations
+|   +-- memory/       # In-memory store (default)
+|   +-- redis/        # Redis store (distributed)
+|   +-- badger/       # BadgerDB store (embedded)
++-- pkg/              # Infrastructure (logger, metrics, bufferpool)
+|   +-- logger/       # Structured logging (slog)
+|   +-- metrics/      # Prometheus metrics interface (17 methods)
+|   +-- bufferpool/   # Buffer pool for GC reduction
++-- config/           # Configuration loading (YAML/ENV) with validation
++-- plugin/           # Plugin system (hook-based architecture, error-collecting dispatch)
++-- client/           # MQTT client implementation
++-- errs/             # Centralized error definitions
++-- tests/            # Integration and benchmark tests
+|   +-- integration/  # End-to-end MQTT workflow tests + deploy verification
+|   +-- bench/        # Performance benchmarks (64 executed on Windows, 3 churn benchmarks skipped)
++-- examples/         # Usage examples (standalone, TLS, custom_auth)
++-- cmd/              # Command-line tools
++-- scripts/          # Test runner and build scripts
++-- testutils/        # Test utilities (mock connections, mock stores, helpers)
++-- docs/             # Documentation
 ```
 
 ---
@@ -53,21 +53,21 @@ shark-mqtt/
 Shark-MQTT maintains a clear separation between the network layer and business logic, both within the `broker/` package:
 
 ```
-┌─────────────────────────────────────────────────┐
-│                  api.Broker                     │
-│         (unified entry point)                   │
-└─────────────────────┬───────────────────────────┘
-                      │
-         ┌────────────┴────────────┐
-         ▼                         ▼
-┌──────────────────┐    ┌────────────────────┐
-│broker.MQTTServer │    │ broker.Broker      │
-│                  │    │                    │
-│ - TCP/TLS        │    │ - TopicTree        │
-│ - Accept loop    │◄──►│ - QoSEngine        │
-│ - Connection mgmt│    │ - WillHandler      │
-│ - Codec          │    │ - Manager          │
-└──────────────────┘    └────────────────────┘
++-------------------------------------------------+
+|                  api.Broker                     |
+|         (unified entry point)                   |
++---------------------+---------------------------+
+                      |
+         +------------+------------+
+         v                         v
++------------------+    +--------------------+
+|broker.MQTTServer |    | broker.Broker      |
+|                  |    |                    |
+| - TCP/TLS        |    | - TopicTree        |
+| - Accept loop    |<-->| - QoSEngine        |
+| - Connection mgmt|    | - WillHandler      |
+| - Codec          |    | - Manager          |
++------------------+    +--------------------+
 ```
 
 - **MQTTServer**: Handles network I/O, TLS, connection lifecycle
@@ -79,20 +79,20 @@ MQTT sessions can persist across connections using the Attach/Detach pattern:
 
 ```
 Client connects (CONNECT, CleanSession=false)
-    │
-    ▼
+    |
+    v
 Session created and stored
-    │
-    ▼
+    |
+    v
 Client disconnects abnormally
-    │
-    ▼
+    |
+    v
 Session remains (waiting for reconnect)
-    │
-    ▼
+    |
+    v
 Same client reconnects (same ClientID)
-    │
-    ▼
+    |
+    v
 Session resumed, subscriptions restored
 ```
 
@@ -105,9 +105,9 @@ Topic: "home/living-room/temperature"
 
 Tree:
 root
-└── home
-    └── living-room
-        └── temperature
++-- home
+    +-- living-room
+        +-- temperature
 
 Subscription: "home/+/temperature" matches
 Subscription: "home/living-room/#" matches

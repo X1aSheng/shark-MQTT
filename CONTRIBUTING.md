@@ -92,7 +92,7 @@ This runs:
 
 - **All new features must have unit tests**
 - **Bug fixes must include regression tests**
-- Maintain test coverage ≥ 70% for core modules
+- Maintain test coverage >= 70% for core modules
 - Use table-driven tests where appropriate
 - Mock external dependencies in unit tests
 
@@ -251,8 +251,8 @@ See [docs/performance.md](../docs/performance.md) for detailed profiling workflo
 
 ### Coverage Requirements
 
-- Overall coverage ≥ 60%
-- Core modules (broker/, protocol/, store/) ≥ 70%
+- Overall coverage >= 60%
+- Core modules (broker/, protocol/, store/) >= 70%
 
 Generate coverage report:
 ```bash
