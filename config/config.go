@@ -19,6 +19,7 @@ const (
 type Config struct {
 	// Server settings
 	ListenAddr    string `yaml:"listen_addr" toml:"listen_addr" env:"MQTT_LISTEN_ADDR"`
+	WSListenAddr  string `yaml:"ws_listen_addr" toml:"ws_listen_addr" env:"MQTT_WS_LISTEN_ADDR"` // MQTT-over-WebSocket, empty disables (R5)
 	TLSEnabled    bool   `yaml:"tls_enabled" toml:"tls_enabled" env:"MQTT_TLS_ENABLED"`
 	TLSCertFile   string `yaml:"tls_cert_file" toml:"tls_cert_file" env:"MQTT_TLS_CERT_FILE"`
 	TLSKeyFile    string `yaml:"tls_key_file" toml:"tls_key_file" env:"MQTT_TLS_KEY_FILE"`

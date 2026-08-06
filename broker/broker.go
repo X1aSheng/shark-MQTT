@@ -1573,6 +1573,13 @@ func (cs *clientState) writeLoop() {
 			if err := cs.codec.Encode(cs.conn, pkt); err != nil {
 				return
 			}
+			// Transports that frame packets (WebSocket) flush the buffered
+			// packet as one message after each Encode (R5).
+			if f, ok := cs.conn.(packetFlusher); ok {
+				if err := f.FlushPacket(); err != nil {
+					return
+				}
+			}
 		case <-cs.stopWrites:
 			return
 		}

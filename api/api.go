@@ -296,6 +296,15 @@ func (b *Broker) Addr() string {
 	return ""
 }
 
+// WSAddr returns the MQTT-over-WebSocket address, or "" when disabled (R5).
+func (b *Broker) WSAddr() string {
+	addr := b.srv.WSAddr()
+	if addr != nil {
+		return addr.String()
+	}
+	return ""
+}
+
 // ConnCount returns active connection count.
 func (b *Broker) ConnCount() int64 {
 	return b.srv.ConnCount()

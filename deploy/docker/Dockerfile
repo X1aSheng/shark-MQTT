@@ -17,7 +17,7 @@ COPY --from=builder /shark-mqtt /usr/local/bin/shark-mqtt
 
 USER shark
 
-EXPOSE 18983/tcp 18993/tcp 18999/tcp
+EXPOSE 18983/tcp 18984/tcp 18993/tcp 18999/tcp
 
 HEALTHCHECK --interval=15s --timeout=3s --retries=3 \
   CMD wget -qO- http://localhost:18999/healthz || exit 1

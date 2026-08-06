@@ -40,6 +40,7 @@ real authentication and ACLs before exposing the broker in production.
 | 端口 | 协议 | 说明 |
 |------|------|------|
 | 18983 | TCP | MQTT 默认端口 |
+| 18984 | WS | MQTT-over-WebSocket（需配置 `ws_listen_addr` / `MQTT_WS_LISTEN_ADDR`） |
 | 18993 | TCP | MQTT TLS 端口 |
 | 18999 | TCP | Metrics/Health/Ready（/metrics, /healthz, /readyz） |
 

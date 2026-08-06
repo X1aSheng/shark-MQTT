@@ -345,6 +345,8 @@ Recommended metrics to monitor:
 | `MQTT_MAX_CONNECTIONS` | Max concurrent connections | `10000` |
 | `MQTT_MAX_PACKET_SIZE` | Max packet size | `262144` |
 | `MQTT_WRITE_QUEUE_SIZE` | Per-connection write queue size | `256` |
+| `MQTT_WS_LISTEN_ADDR` | MQTT-over-WebSocket listen address (empty = disabled) | - |
+| `MQTT_SYS_INTERVAL` | $SYS status topic publish interval | `30s` |
 | `MQTT_QOS_RETRY_INTERVAL` | QoS retry interval | `10s` |
 | `MQTT_QOS_MAX_RETRIES` | Max QoS retry attempts | `3` |
 | `MQTT_QOS_MAX_INFLIGHT` | Max in-flight messages | `100` |

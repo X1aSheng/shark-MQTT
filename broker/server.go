@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -15,9 +16,11 @@ import (
 	"github.com/X1aSheng/shark-mqtt/config"
 	"github.com/X1aSheng/shark-mqtt/pkg/logger"
 	"github.com/X1aSheng/shark-mqtt/protocol"
+	"github.com/gorilla/websocket"
 )
 
-// MQTTServer handles incoming MQTT connections over TCP.
+// MQTTServer handles incoming MQTT connections over TCP and, when configured,
+// MQTT-over-WebSocket (R5).
 type MQTTServer struct {
 	cfg        *config.Config
 	listener   net.Listener
@@ -33,6 +36,8 @@ type MQTTServer struct {
 	wg         sync.WaitGroup
 	mu         sync.Mutex
 	conns      map[net.Conn]struct{}
+	wsListener net.Listener // WebSocket listener (nil when WS disabled, R5)
+	wsServer   *http.Server // WebSocket HTTP server (R5)
 }
 
 // ConnectionHandler is called when a new connection is accepted.
@@ -122,6 +127,13 @@ func (s *MQTTServer) Start() error {
 	ln := s.listener
 	s.wg.Add(1)
 	go s.acceptLoop(ln)
+
+	if s.cfg.WSListenAddr != "" {
+		if err := s.startWS(s.cfg.WSListenAddr); err != nil {
+			s.listener.Close()
+			return fmt.Errorf("server: failed to listen on ws %s: %w", s.cfg.WSListenAddr, err)
+		}
+	}
 	return nil
 }
 
@@ -130,6 +142,14 @@ func (s *MQTTServer) Stop() {
 	s.cancel()
 	if s.listener != nil {
 		s.listener.Close()
+	}
+	// Stop the WebSocket listener/server; its accepted connections are closed
+	// below via s.conns (R5).
+	if s.wsListener != nil {
+		s.wsListener.Close()
+	}
+	if s.wsServer != nil {
+		s.wsServer.Close()
 	}
 	// Close connections BEFORE waiting on the WaitGroup: connection
 	// goroutines block in the read loop (bounded by the keep-alive read
@@ -155,6 +175,14 @@ func (s *MQTTServer) Stop() {
 func (s *MQTTServer) Addr() net.Addr {
 	if s.listener != nil {
 		return s.listener.Addr()
+	}
+	return nil
+}
+
+// WSAddr returns the WebSocket listener address, or nil when WS is disabled (R5).
+func (s *MQTTServer) WSAddr() net.Addr {
+	if s.wsListener != nil {
+		return s.wsListener.Addr()
 	}
 	return nil
 }
@@ -233,4 +261,66 @@ func isEarlyClose(err error) bool {
 		return true
 	}
 	return false
+}
+
+// wsUpgrader negotiates MQTT-over-WebSocket connections (R5). The "mqtt"
+// subprotocol is offered per the MQTT WebSocket binding; any Origin is
+// accepted since MQTT clients are not browsers.
+var wsUpgrader = websocket.Upgrader{
+	ReadBufferSize:  4096,
+	WriteBufferSize: 4096,
+	Subprotocols:    []string{"mqtt"},
+	CheckOrigin:     func(*http.Request) bool { return true },
+}
+
+// startWS starts an HTTP/WebSocket listener for MQTT-over-WebSocket on addr (R5).
+func (s *MQTTServer) startWS(addr string) error {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	s.wsListener = ln
+	mux := http.NewServeMux()
+	mux.HandleFunc("/mqtt", s.wsHandler)
+	mux.HandleFunc("/", s.wsHandler)
+	s.wsServer = &http.Server{Handler: mux}
+	s.logr.Info("ws listening", "addr", addr)
+	go func() {
+		if err := s.wsServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			s.logr.Debug("ws server error", "error", err)
+		}
+	}()
+	return nil
+}
+
+// wsHandler upgrades an HTTP request to WebSocket and hands the connection to
+// the broker's HandleConnection, which runs the normal MQTT read loop.
+func (s *MQTTServer) wsHandler(w http.ResponseWriter, r *http.Request) {
+	ws, err := wsUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		s.logr.Debug("ws upgrade failed", "error", err)
+		return
+	}
+	conn := newWSConn(ws)
+	s.connCount.Add(1)
+	s.mu.Lock()
+	s.conns[conn] = struct{}{}
+	s.mu.Unlock()
+
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		defer func() {
+			conn.Close()
+			s.connCount.Add(-1)
+			s.mu.Lock()
+			delete(s.conns, conn)
+			s.mu.Unlock()
+		}()
+		if s.handler != nil {
+			if err := s.handler.HandleConnection(s.ctx, conn, nil); err != nil {
+				s.logr.Debug("ws connection handler error", "error", err)
+			}
+		}
+	}()
 }
