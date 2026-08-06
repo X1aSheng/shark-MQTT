@@ -321,11 +321,20 @@ func (c *Codec) decodeConnAck(r io.Reader, fh *FixedHeader) (*ConnAckPacket, err
 	}
 
 	var props *Properties
-	// If remaining length > 2, there are properties
-	if fh.RemainingLength > 2 {
+	// MQTT 3.1.1 CONNACK has exactly 2 payload bytes (session present + reason
+	// code); anything else is malformed (P3-3).
+	if c.protocolVersion != Version50 && fh.RemainingLength != 2 {
+		return nil, ErrMalformedPacket
+	}
+	// MQTT 5.0: remaining bytes (if any) are properties, and all of them must
+	// be consumed (NEW-18).
+	if c.protocolVersion == Version50 && fh.RemainingLength > 2 {
 		props, err = c.decodeProperties(reader)
 		if err != nil {
 			return nil, err
+		}
+		if reader.Len() != 0 {
+			return nil, ErrMalformedPacket
 		}
 	}
 

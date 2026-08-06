@@ -167,18 +167,29 @@ func (c *Codec) decodeFixedHeader(r io.Reader) (*FixedHeader, error) {
 		Dup:        (buf[0] & 0x08) != 0,
 		QoS:        (buf[0] >> 1) & 0x03,
 		Retain:     (buf[0] & 0x01) != 0,
+		HeaderSize: 1, // first byte always read
 	}
 
-	// Decode remaining length (variable length encoding)
+	// Decode remaining length (variable length encoding). HeaderSize is set so
+	// maxPacketSize checks account for the full wire size (P3-1).
 	multiplier := 1
+	remLenBytes := 0
 	for {
 		if _, err := io.ReadFull(r, buf[:1]); err != nil {
 			return nil, err
 		}
 		encodedByte := buf[0]
+		remLenBytes++
 		fh.RemainingLength += int(encodedByte&0x7F) * multiplier
 		multiplier *= 128
+		fh.HeaderSize++
 		if (encodedByte & 0x80) == 0 {
+			// MQTT-1.5.5-1: the encoding must use the minimum number of bytes.
+			// A multi-byte encoding whose final byte contributes zero is
+			// non-minimal (e.g. [0x81, 0x00] encodes 1 in two bytes) (P3-2).
+			if remLenBytes > 1 && (encodedByte&0x7F) == 0 {
+				return nil, ErrInvalidPacket
+			}
 			break
 		}
 		if multiplier > 128*128*128 { // Max 4 bytes for remaining length

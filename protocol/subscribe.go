@@ -50,6 +50,11 @@ func (c *Codec) decodeSubscribe(r io.Reader, fh *FixedHeader) (*SubscribePacket,
 		if err != nil {
 			return nil, err
 		}
+		// MQTT 3.1.1: bits 2-7 (NoLocal / RetainAsPublished / RetainHandling)
+		// are reserved and must be zero (NEW-19).
+		if c.protocolVersion != Version50 && optsByte&0xFC != 0 {
+			return nil, ErrMalformedPacket
+		}
 		if optsByte&0xC0 != 0 || optsByte&0x03 == 3 || (optsByte>>4)&0x03 == 3 {
 			return nil, ErrMalformedPacket
 		}
@@ -401,10 +406,16 @@ func (c *Codec) decodeDisconnect(r io.Reader, fh *FixedHeader) (*DisconnectPacke
 		return nil, ErrMalformedPacket
 	}
 
+	buf := make([]byte, fh.RemainingLength)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		return nil, err
+	}
+	reader := bytes.NewReader(buf)
+
 	var reasonCode byte
 	if fh.RemainingLength > 0 {
 		var err error
-		reasonCode, err = readByte(r)
+		reasonCode, err = reader.ReadByte()
 		if err != nil {
 			return nil, err
 		}
@@ -413,9 +424,13 @@ func (c *Codec) decodeDisconnect(r io.Reader, fh *FixedHeader) (*DisconnectPacke
 	var props *Properties
 	if fh.RemainingLength > 1 {
 		var err error
-		props, err = c.decodeProperties(r)
+		props, err = c.decodeProperties(reader)
 		if err != nil {
 			return nil, err
+		}
+		// All bytes after the properties must be consumed (NEW-18).
+		if reader.Len() != 0 {
+			return nil, ErrMalformedPacket
 		}
 	}
 
@@ -459,10 +474,16 @@ func (c *Codec) decodeAuth(r io.Reader, fh *FixedHeader) (*AuthPacket, error) {
 		return nil, ErrInvalidPacket
 	}
 
+	buf := make([]byte, fh.RemainingLength)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		return nil, err
+	}
+	reader := bytes.NewReader(buf)
+
 	var reasonCode byte
 	if fh.RemainingLength > 0 {
 		var err error
-		reasonCode, err = readByte(r)
+		reasonCode, err = reader.ReadByte()
 		if err != nil {
 			return nil, err
 		}
@@ -474,9 +495,13 @@ func (c *Codec) decodeAuth(r io.Reader, fh *FixedHeader) (*AuthPacket, error) {
 	var props *Properties
 	if fh.RemainingLength > 1 {
 		var err error
-		props, err = c.decodeProperties(r)
+		props, err = c.decodeProperties(reader)
 		if err != nil {
 			return nil, err
+		}
+		// All bytes after the properties must be consumed (NEW-18).
+		if reader.Len() != 0 {
+			return nil, ErrMalformedPacket
 		}
 	}
 
