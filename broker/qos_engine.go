@@ -31,6 +31,12 @@ type InflightMessage struct {
 	Payload []byte
 	QoS     uint8
 	Retain  bool
+
+	// IsOutbound marks a broker->client delivery (tracked via
+	// TrackOutboundQoS1/2). Retry re-sends the PUBLISH (or PUBREL once the
+	// QoS 2 handshake reached the PUBREC/PUBCOMP phase) instead of the
+	// inbound PUBREC behavior.
+	IsOutbound bool
 }
 
 // QoSMessage represents a message to be delivered with QoS.
@@ -168,37 +174,31 @@ func (q *QoSEngine) Stop() {
 	q.wg.Wait()
 }
 
-// TrackQoS1 tracks a QoS 1 publish for acknowledgment.
+// TrackQoS1 tracks an inbound QoS 1 publish for acknowledgment.
 // Returns an error if the client has exceeded maxInflight.
 func (q *QoSEngine) TrackQoS1(clientID string, packetID uint16, topic string, payload []byte, retain bool) error {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	if _, ok := q.inflight[clientID]; !ok {
-		q.inflight[clientID] = make(map[uint16]*InflightMessage)
-	}
-
-	if q.maxInflight > 0 && len(q.inflight[clientID]) >= q.maxInflight {
-		return errs.ErrInflightFull
-	}
-
-	q.inflight[clientID][packetID] = &InflightMessage{
-		PacketID:   packetID,
-		ClientID:   clientID,
-		State:      StateSent,
-		SentAt:     time.Now(),
-		MaxRetries: q.maxRetries,
-		Topic:      topic,
-		Payload:    payload,
-		QoS:        1,
-		Retain:     retain,
-	}
-	return nil
+	return q.track(clientID, packetID, topic, payload, retain, 1, false)
 }
 
-// TrackQoS2 tracks a QoS 2 publish for PUBREC/PUBREL/PUBCOMP sequence.
+// TrackQoS2 tracks an inbound QoS 2 publish for PUBREC/PUBREL/PUBCOMP sequence.
 // Returns an error if the client has exceeded maxInflight.
 func (q *QoSEngine) TrackQoS2(clientID string, packetID uint16, topic string, payload []byte, retain bool) error {
+	return q.track(clientID, packetID, topic, payload, retain, 2, false)
+}
+
+// TrackOutboundQoS1 tracks a QoS 1 message delivered to a client so the retry
+// loop can re-send it (with DUP) until the client acknowledges it.
+func (q *QoSEngine) TrackOutboundQoS1(clientID string, packetID uint16, topic string, payload []byte, retain bool) error {
+	return q.track(clientID, packetID, topic, payload, retain, 1, true)
+}
+
+// TrackOutboundQoS2 tracks a QoS 2 message delivered to a client so the retry
+// loop can re-send the PUBLISH (or PUBREL after PUBREC) until it is complete.
+func (q *QoSEngine) TrackOutboundQoS2(clientID string, packetID uint16, topic string, payload []byte, retain bool) error {
+	return q.track(clientID, packetID, topic, payload, retain, 2, true)
+}
+
+func (q *QoSEngine) track(clientID string, packetID uint16, topic string, payload []byte, retain bool, qos uint8, outbound bool) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -218,8 +218,9 @@ func (q *QoSEngine) TrackQoS2(clientID string, packetID uint16, topic string, pa
 		MaxRetries: q.maxRetries,
 		Topic:      topic,
 		Payload:    payload,
-		QoS:        2,
+		QoS:        qos,
 		Retain:     retain,
+		IsOutbound: outbound,
 	}
 	return nil
 }
@@ -241,15 +242,18 @@ func (q *QoSEngine) AckPubRec(clientID string, packetID uint16) {
 	q.mu.RUnlock()
 
 	q.mu.Lock()
+	found := false
 	if clientInflight, ok := q.inflight[clientID]; ok {
 		if msg, exists := clientInflight[packetID]; exists {
 			msg.State = StateAcked
+			found = true
 		}
 	}
 	q.mu.Unlock()
 
-	// Send PUBREL
-	if sendPubRel != nil {
+	// Send PUBREL only for a tracked message so a spurious PUBREC does not
+	// produce an unsolicited PUBREL.
+	if found && sendPubRel != nil {
 		if err := sendPubRel(clientID, packetID); err != nil {
 			q.reportError(clientID, packetID, err)
 		}
@@ -377,6 +381,7 @@ func (q *QoSEngine) doRetry() {
 		}
 	}
 	republish := q.republish
+	sendPubRel := q.sendPubRel
 	onError := q.onError
 	q.mu.Unlock()
 
@@ -387,10 +392,21 @@ func (q *QoSEngine) doRetry() {
 	}
 
 	for _, item := range toRetry {
+		msg := item.msg
+		// An outbound QoS 2 message that already reached the PUBREC phase must
+		// re-send PUBREL, not the original PUBLISH.
+		if msg.IsOutbound && msg.QoS == 2 && msg.State == StateAcked {
+			if sendPubRel != nil {
+				if err := sendPubRel(item.clientID, msg.PacketID); err != nil && onError != nil {
+					onError(item.clientID, msg.PacketID, err)
+				}
+			}
+			continue
+		}
 		if republish != nil {
-			if err := republish(item.clientID, item.msg.PacketID, item.msg.Topic, item.msg.Payload, item.msg.QoS, item.msg.Retain); err != nil {
+			if err := republish(item.clientID, msg.PacketID, msg.Topic, msg.Payload, msg.QoS, msg.Retain); err != nil {
 				if onError != nil {
-					onError(item.clientID, item.msg.PacketID, err)
+					onError(item.clientID, msg.PacketID, err)
 				}
 			}
 		}

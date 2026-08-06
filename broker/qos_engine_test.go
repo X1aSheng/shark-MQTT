@@ -481,7 +481,8 @@ func TestQoSEngine_Retry_QoS2_AckedState(t *testing.T) {
 	q.Start()
 	defer q.Stop()
 
-	q.TrackQoS2("client1", 1, "home/temp", []byte("data"), false)
+	// Outbound QoS 2 (broker->client): after PUBREC, retry re-sends PUBREL.
+	q.TrackOutboundQoS2("client1", 1, "home/temp", []byte("data"), false)
 	// Move to StateAcked (simulating PUBREC received)
 	q.AckPubRec("client1", 1)
 
@@ -489,7 +490,7 @@ func TestQoSEngine_Retry_QoS2_AckedState(t *testing.T) {
 
 	mu.Lock()
 	if !sendPubRelCalled {
-		t.Error("expected sendPubRel callback on retry for QoS 2 Acked state")
+		t.Error("expected sendPubRel callback on retry for outbound QoS 2 Acked state")
 	}
 	mu.Unlock()
 }

@@ -249,10 +249,12 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 					b.topics.Subscribe(topic, connectPkt.ClientID, qos)
 				}
 				for _, msg := range restored.Inflight {
+					// Restored inflight entries are outbound deliveries that were
+					// never acknowledged; retry them as outbound.
 					if msg.QoS == 2 {
-						_ = b.qos.TrackQoS2(connectPkt.ClientID, msg.PacketID, msg.Topic, msg.Payload, msg.Retain)
+						_ = b.qos.TrackOutboundQoS2(connectPkt.ClientID, msg.PacketID, msg.Topic, msg.Payload, msg.Retain)
 					} else {
-						_ = b.qos.TrackQoS1(connectPkt.ClientID, msg.PacketID, msg.Topic, msg.Payload, msg.Retain)
+						_ = b.qos.TrackOutboundQoS1(connectPkt.ClientID, msg.PacketID, msg.Topic, msg.Payload, msg.Retain)
 					}
 				}
 			}
@@ -1109,6 +1111,21 @@ func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliver
 
 	if deliverQoS > 0 {
 		pubPkt.PacketID = sess.NextPacketID()
+		// Track the outbound delivery so it can be retried until the client
+		// acknowledges it (NEW-1) and persisted across a disconnect (P2-3).
+		sess.AddInflight(&InflightMsg{
+			PacketID: pubPkt.PacketID,
+			QoS:      deliverQoS,
+			Topic:    pkt.Topic,
+			Payload:  pkt.Payload,
+			Retain:   pkt.Retain,
+			SentAt:   time.Now(),
+		})
+		if deliverQoS == 1 {
+			_ = b.qos.TrackOutboundQoS1(clientID, pubPkt.PacketID, pkt.Topic, pkt.Payload, pkt.Retain)
+		} else {
+			_ = b.qos.TrackOutboundQoS2(clientID, pubPkt.PacketID, pkt.Topic, pkt.Payload, pkt.Retain)
+		}
 	}
 
 	sess.TrackSent(len(pkt.Topic) + len(pkt.Payload))
@@ -1288,7 +1305,11 @@ func (b *Broker) sendConnAckRaw(conn net.Conn, codec *protocol.Codec, reasonCode
 func (b *Broker) handlePubAck(clientID string, packetID uint16) {
 	b.qos.AckQoS1(clientID, packetID)
 	if sess, ok := b.sessions.GetSession(clientID); ok {
-		sess.DecOutboundUnacked()
+		// Only count a real outbound message as acknowledged; a spurious
+		// PUBACK must not drive the flow-control counter below zero (P2-16).
+		if sess.RemoveInflight(packetID) {
+			sess.DecOutboundUnacked()
+		}
 	}
 }
 
@@ -1322,7 +1343,11 @@ func (b *Broker) handlePubRel(clientID string, packetID uint16) {
 func (b *Broker) handlePubComp(clientID string, packetID uint16) {
 	b.qos.AckPubComp(clientID, packetID)
 	if sess, ok := b.sessions.GetSession(clientID); ok {
-		sess.DecOutboundUnacked()
+		// Only count a real outbound message as acknowledged; an inbound QoS 2
+		// PUBCOMP has no outbound inflight entry (P2-16).
+		if sess.RemoveInflight(packetID) {
+			sess.DecOutboundUnacked()
+		}
 	}
 	b.receivedQoS2Mu.Lock()
 	if clientDups := b.receivedQoS2[clientID]; clientDups != nil {
@@ -1366,11 +1391,27 @@ func (b *Broker) sendPubComp(clientID string, packetID uint16) error {
 }
 
 func (b *Broker) republish(clientID string, packetID uint16, topic string, payload []byte, qos uint8, retain bool) error {
-	// This is the QoS engine's retry callback for an incoming message whose
-	// handshake has not completed. For QoS 2 the client is waiting on our
-	// PUBREC; re-send it (the original may have been lost) instead of
-	// re-routing the message to subscribers, which would duplicate delivery
-	// and violate at-most-once / exactly-once semantics.
+	// The QoS engine's retry callback fires for both directions. An outbound
+	// delivery (broker->subscriber, tracked in the session's Inflight) is
+	// re-sent as a PUBLISH with the DUP flag. An inbound QoS 2 publish has the
+	// client waiting on our PUBREC, so re-send the PUBREC.
+	if sess, ok := b.sessions.GetSession(clientID); ok {
+		if msg, found := sess.GetInflight(packetID); found && msg.QoS == qos {
+			pub := &protocol.PublishPacket{
+				FixedHeader: protocol.FixedHeader{
+					PacketType: protocol.PacketTypePublish,
+					QoS:        qos,
+					Dup:        true,
+					Retain:     retain,
+				},
+				PacketID: packetID,
+				Topic:    topic,
+				Payload:  payload,
+			}
+			b.writePacket(clientID, pub)
+			return nil
+		}
+	}
 	pubRec := &protocol.PubRecPacket{
 		FixedHeader: protocol.FixedHeader{
 			PacketType: protocol.PacketTypePubRec,

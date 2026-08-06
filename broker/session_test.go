@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -193,6 +194,37 @@ func TestSessionInflight(t *testing.T) {
 	_, ok = sess.GetInflight(1)
 	if ok {
 		t.Error("inflight message should be removed")
+	}
+
+	// RemoveInflight reports whether an entry was present (P2-16 guard).
+	if sess.RemoveInflight(1) {
+		t.Error("expected RemoveInflight to report false for a missing entry")
+	}
+}
+
+// TestOutboundUnackedFloor verifies spurious acknowledgments cannot drive the
+// flow-control counter below zero (P2-16).
+func TestOutboundUnackedFloor(t *testing.T) {
+	sess := &Session{ReceiveMax: 5}
+	sess.IncOutboundUnacked()
+	sess.IncOutboundUnacked()
+
+	// Spurious PUBACK for a packet never sent: RemoveInflight reports false and
+	// the counter must not drop.
+	if sess.RemoveInflight(999) {
+		t.Error("expected RemoveInflight(999) to report false")
+	}
+	if got := atomic.LoadInt32(&sess.outboundUnacked); got != 2 {
+		t.Errorf("expected outboundUnacked=2 after spurious ack, got %d", got)
+	}
+
+	// Floor: repeated decrements stop at zero.
+	sess.DecOutboundUnacked()
+	sess.DecOutboundUnacked()
+	sess.DecOutboundUnacked()
+	sess.DecOutboundUnacked()
+	if got := atomic.LoadInt32(&sess.outboundUnacked); got != 0 {
+		t.Errorf("expected outboundUnacked floor at 0, got %d", got)
 	}
 }
 

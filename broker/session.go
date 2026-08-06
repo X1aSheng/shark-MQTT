@@ -356,11 +356,17 @@ func (s *Session) AddInflight(msg *InflightMsg) {
 	s.Inflight[msg.PacketID] = msg
 }
 
-// RemoveInflight removes an in-flight message.
-func (s *Session) RemoveInflight(packetID uint16) {
+// RemoveInflight removes an in-flight message and reports whether an entry was
+// actually present. Callers use the result to avoid decrementing the outbound
+// flow-control counter for spurious acknowledgments (P2-16).
+func (s *Session) RemoveInflight(packetID uint16) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, ok := s.Inflight[packetID]; !ok {
+		return false
+	}
 	delete(s.Inflight, packetID)
+	return true
 }
 
 // GetInflight returns an in-flight message.
@@ -599,8 +605,18 @@ func (s *Session) IncOutboundUnacked() {
 
 // DecOutboundUnacked decrements the outbound unacknowledged counter.
 // Called when a PUBACK (QoS 1) or PUBCOMP (QoS 2) is received from this client.
+// The counter never goes below zero, so spurious acknowledgments cannot bypass
+// flow control by driving it negative (P2-16).
 func (s *Session) DecOutboundUnacked() {
-	atomic.AddInt32(&s.outboundUnacked, -1)
+	for {
+		cur := atomic.LoadInt32(&s.outboundUnacked)
+		if cur <= 0 {
+			return
+		}
+		if atomic.CompareAndSwapInt32(&s.outboundUnacked, cur, cur-1) {
+			return
+		}
+	}
 }
 
 // ResetOutboundUnacked resets the outbound unacknowledged counter to zero.

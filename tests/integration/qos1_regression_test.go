@@ -69,22 +69,26 @@ func TestQoS1NoDuplicateDelivery(t *testing.T) {
 		t.Fatalf("expected PUBACK got %T", pkt)
 	}
 
-	// Wait well past several retry intervals.
-	time.Sleep(1 * time.Second)
-
-	sub.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	// Read for well past several retry intervals. The subscriber acknowledges
+	// every QoS 1 delivery promptly, so the at-least-once retry loop must not
+	// re-send: a single well-behaved subscriber receives exactly one copy.
+	sub.SetReadDeadline(time.Now().Add(1400 * time.Millisecond))
 	count := 0
 	for {
 		pkt, err := subCodec.Decode(sub)
 		if err != nil {
 			break
 		}
-		if _, ok := pkt.(*protocol.PublishPacket); ok {
+		if pub, ok := pkt.(*protocol.PublishPacket); ok {
 			count++
+			_ = subCodec.Encode(sub, &protocol.PubAckPacket{
+				FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePubAck},
+				PacketID:    pub.PacketID,
+			})
 		}
 	}
 	if count != 1 {
-		t.Fatalf("subscriber received %d PUBLISH messages, want exactly 1", count)
+		t.Fatalf("subscriber received %d PUBLISH messages, want exactly 1 (acked promptly)", count)
 	}
 }
 
