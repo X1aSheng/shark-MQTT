@@ -61,10 +61,29 @@
 
 说明: k8s 达到"清单渲染 + helm 模板"验证级别; 真实集群部署需在有控制面的集群执行 `kubectl apply -k deploy/k8s/app/`。
 
-## 5. 结论
+## 5. V6 Fix Round 云服务器复验 (2026-08-06, 修复后)
+
+修复完成后再部署到同一云服务器复验 (120.76.44.233):
+
+| 检查项 | 结果 |
+| --- | --- |
+| 源码替换为修复后版本, go build ./... | PASS |
+| go build ./examples/... + go vet | PASS |
+| go test -count=1 ./... (全部包) | 全部 PASS |
+| docker build -f deploy/docker/Dockerfile | PASS |
+| 容器启动 + /healthz | 1 秒内 ok |
+| **/metrics (NEW-20 修复验证)** | **HTTP 200** (修复前 404) |
+| MQTT 冒烟 (scripts/mqtt_smoke.go) | connect/subscribe/publish/disconnect 全 PASS |
+| QoS1/QoS2 端到端 round-trip (临时客户端) | QoS1 PUBACK+投递 PASS, QoS2 PUBCOMP+投递 PASS |
+| 复验后清理 | 移除测试容器与镜像, 服务器保持整洁 |
+
+验证后 344 单元 + 96 集成全绿, CI 全矩阵 (3 OS x 2 Go) 通过。
+
+## 6. 结论
 
 - 云服务器清理完成: 所有 shark-socket/mqtt 残留进程、旧配置、旧镜像、docker 进程全清, 回收 7.3GB.
 - 源码原生编译 + vet + 全量测试在云服务器全部通过.
 - Docker 镜像构建/运行/健康检查/MQTT 冒烟/QoS1+QoS2 端到端全部通过.
 - 实测发现默认部署 /metrics 404 (Prometheus 监控失效), 记为 NEW-20 缺陷.
+- V6 Fix Round 后复验: /metrics 修复为 200, QoS 端到端验证通过.
 - K8s 清单 + Helm chart 渲染验证通过; 真实集群部署留待具备控制面的环境.
