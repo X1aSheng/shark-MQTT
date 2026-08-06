@@ -1270,12 +1270,19 @@ func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliver
 	// MQTT 5.0 flow control (ReceiveMaximum). When the client's receive window
 	// is full, buffer the QoS 1/2 message instead of silently dropping it
 	// (P2-14); it is flushed once the client acknowledges earlier deliveries.
+	// The buffer is bounded (R6): if a client never acknowledges and the buffer
+	// is full, the new message is dropped rather than exhausting memory.
 	if deliverQoS > 0 && !sess.CanSendOutbound() {
 		var opts SubscriptionOptions
 		if len(subOpts) > 0 {
 			opts = subOpts[0]
 		}
-		sess.BufferOutbound(pkt, deliverQoS, opts)
+		if !sess.BufferOutbound(pkt, deliverQoS, opts) {
+			b.metrics.IncMessagesDropped("receive_max_buffered_overflow")
+			b.metrics.IncErrors("flow_control")
+			b.logger.Debug("outbound flow-control buffer full, dropping message",
+				"clientID", clientID, "max", maxBufferedOutbound)
+		}
 		return
 	}
 

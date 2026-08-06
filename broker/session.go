@@ -84,6 +84,11 @@ type outboundMsg struct {
 	subOpts    SubscriptionOptions
 }
 
+// maxBufferedOutbound caps the number of QoS 1/2 deliveries buffered per
+// session while the client's receive window is full, so a client that never
+// acknowledges cannot exhaust broker memory (R6).
+const maxBufferedOutbound = 1000
+
 // InflightMsg tracks an in-flight QoS message.
 type InflightMsg struct {
 	PacketID uint16
@@ -667,11 +672,17 @@ func (s *Session) ResetOutboundUnacked() {
 }
 
 // BufferOutbound queues a QoS 1/2 delivery for when the client's receive
-// window opens (P2-14).
-func (s *Session) BufferOutbound(pkt *protocol.PublishPacket, deliverQoS uint8, subOpts SubscriptionOptions) {
+// window opens (P2-14). It reports whether the message was accepted; the queue
+// is bounded by maxBufferedOutbound so a client that never acknowledges cannot
+// exhaust memory (R6).
+func (s *Session) BufferOutbound(pkt *protocol.PublishPacket, deliverQoS uint8, subOpts SubscriptionOptions) bool {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.outboundQueue) >= maxBufferedOutbound {
+		return false
+	}
 	s.outboundQueue = append(s.outboundQueue, outboundMsg{pkt: pkt, deliverQoS: deliverQoS, subOpts: subOpts})
-	s.mu.Unlock()
+	return true
 }
 
 // PopOutbound returns and removes the oldest buffered delivery.

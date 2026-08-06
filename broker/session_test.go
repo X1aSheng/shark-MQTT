@@ -239,6 +239,34 @@ func TestSessionOutboundBuffer(t *testing.T) {
 	}
 }
 
+// TestOutboundBufferBounded verifies the flow-control buffer rejects new
+// messages once maxBufferedOutbound is reached, so a client that never
+// acknowledges cannot exhaust broker memory (R6).
+func TestOutboundBufferBounded(t *testing.T) {
+	sess := &Session{ReceiveMax: 1}
+	sess.IncOutboundUnacked() // window full
+	pkt := &protocol.PublishPacket{}
+	pkt.FixedHeader.PacketType = protocol.PacketTypePublish
+	pkt.FixedHeader.QoS = 1
+	pkt.Topic = "buf/bounded"
+	pkt.Payload = []byte("x")
+
+	for i := 0; i < maxBufferedOutbound; i++ {
+		if !sess.BufferOutbound(pkt, 1, SubscriptionOptions{QoS: 1}) {
+			t.Fatalf("buffer should accept message %d", i)
+		}
+	}
+	if got := sess.OutboundQueueLen(); got != maxBufferedOutbound {
+		t.Fatalf("expected buffer at %d, got %d", maxBufferedOutbound, got)
+	}
+	if sess.BufferOutbound(pkt, 1, SubscriptionOptions{QoS: 1}) {
+		t.Error("buffer should reject messages beyond maxBufferedOutbound")
+	}
+	if got := sess.OutboundQueueLen(); got != maxBufferedOutbound {
+		t.Errorf("buffer size must not grow past the bound, got %d", got)
+	}
+}
+
 // TestOutboundUnackedFloor verifies spurious acknowledgments cannot drive the
 // flow-control counter below zero (P2-16).
 func TestOutboundUnackedFloor(t *testing.T) {
