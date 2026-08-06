@@ -15,6 +15,11 @@ build:
 build-production:
 	$(GO) build -ldflags="-s -w" -o bin/shark-mqtt ./cmd/
 
+# build-minimal builds a smaller binary without the Prometheus metrics backend
+# (nometrics build tag, R4). Roughly 11.5MB -> 7MB; no /metrics endpoint.
+build-minimal:
+	$(GO) build -tags=nometrics -ldflags="-s -w" -o bin/shark-mqtt ./cmd/
+
 # ─── Test ──────────────────────────────────────────────────
 
 test: test-unit
@@ -107,6 +112,7 @@ help:
 	@echo "Build:"
 	@echo "  build              Build all packages"
 	@echo "  build-production    Build optimized binary"
+	@echo "  build-minimal       Build smaller binary without Prometheus metrics (R4)"
 	@echo ""
 	@echo "Test:"
 	@echo "  test               Run unit tests"

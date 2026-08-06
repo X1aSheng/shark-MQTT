@@ -139,9 +139,11 @@ func NewBroker(opts ...Option) *Broker {
 	}
 
 	// Default to Prometheus metrics so the /metrics endpoint is served out of
-	// the box (NEW-20); an explicit WithMetrics overrides this.
+	// the box (NEW-20); an explicit WithMetrics overrides this. With the
+	// `nometrics` build tag, DefaultMetrics is a no-op so a minimal binary does
+	// not link prometheus/client_golang (R4).
 	if o.metrics == nil {
-		o.metrics = metrics.NewPrometheusMetrics(nil)
+		o.metrics = metrics.DefaultMetrics()
 	}
 
 	// Build broker options. Preserve broker package defaults unless the API

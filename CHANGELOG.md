@@ -39,8 +39,13 @@ Details in `docs/reports/PROJECT-REVIEW-260806-143527.md`.
   results slice for the common fanout case; pooling the dedup map and replacing
   the trie with a bitmap/bloom index were measured to give no further benefit at
   this scale (the report already judged the trie sufficient for normal load).
-- **R4, R5, R8 noted:** dependency footprint (11.5 MB binary / 61 modules vs.
-  reference <4 MB), WebSocket transport, and `$SYS` status topics are catalogued
+- **R4 fixed:** a `nometrics` build tag drops the Prometheus metrics backend
+  from the binary — **11.5 MB → 7.0 MB (-37%)** (`make build-minimal`). The
+  default build is unchanged and still serves `/metrics`; the minimal build uses
+  a no-op metrics backend. Note: badger/redis were *not* actually linked into
+  the broker binary (only go.mod modules for the opt-in store packages); the
+  measured binary bloat was Prometheus, which this addresses.
+- **R5, R8 noted:** WebSocket transport and `$SYS` status topics are catalogued
   as improvement items.
 
 ### V6 Fix Round (2026-08-06)

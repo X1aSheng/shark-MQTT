@@ -1,3 +1,5 @@
+//go:build !nometrics
+
 package metrics
 
 import (

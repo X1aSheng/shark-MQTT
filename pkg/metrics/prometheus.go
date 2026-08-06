@@ -1,3 +1,5 @@
+//go:build !nometrics
+
 package metrics
 
 import (
@@ -46,6 +48,13 @@ func registerOrReuse[T prometheus.Collector](reg prometheus.Registerer, c T) T {
 		panic(err)
 	}
 	return c
+}
+
+// DefaultMetrics returns the default metrics implementation. In the default
+// build this is Prometheus-backed (R4); with the `nometrics` build tag it is a
+// no-op so a minimal binary does not link prometheus/client_golang.
+func DefaultMetrics() Metrics {
+	return NewPrometheusMetrics(nil)
 }
 
 // NewPrometheusMetrics creates a new Prometheus-backed Metrics implementation.

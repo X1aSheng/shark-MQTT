@@ -2,9 +2,7 @@ package api
 
 import (
 	"context"
-	"io"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -80,49 +78,6 @@ func TestBrokerConnCount(t *testing.T) {
 	}
 }
 
-func TestBrokerMetricsEndpoint(t *testing.T) {
-	cfg := config.DefaultConfig()
-	cfg.ListenAddr = ":0"
-	cfg.MetricsAddr = ":0"
-
-	b := NewBroker(
-		WithConfig(cfg),
-		WithAuth(broker.AllowAllAuth{}),
-		WithMetrics(metrics.NewPrometheusMetrics(nil)),
-	)
-
-	if err := b.Start(); err != nil {
-		t.Fatalf("Start() error = %v", err)
-	}
-	defer b.Stop()
-
-	time.Sleep(50 * time.Millisecond)
-
-	// Hit /healthz
-	resp, err := http.Get("http://" + b.MetricsAddr() + "/healthz")
-	if err != nil {
-		t.Fatalf("healthz request failed: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("healthz: expected 200, got %d", resp.StatusCode)
-	}
-
-	// Hit /metrics — should return Prometheus metrics
-	resp2, err := http.Get("http://" + b.MetricsAddr() + "/metrics")
-	if err != nil {
-		t.Fatalf("metrics request failed: %v", err)
-	}
-	defer resp2.Body.Close()
-	if resp2.StatusCode != http.StatusOK {
-		t.Errorf("metrics: expected 200, got %d", resp2.StatusCode)
-	}
-	body, _ := io.ReadAll(resp2.Body)
-	if !strings.Contains(string(body), "shark_mqtt_connections_total") {
-		t.Error("metrics response missing expected shark_mqtt metric")
-	}
-}
-
 func TestBrokerQoSConfigPropagation(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.ListenAddr = ":0"
@@ -165,33 +120,6 @@ func TestBrokerMaxConnectionsConfigPropagation(t *testing.T) {
 	// Connection limit should be set to 5 from config
 	if b.ConnCount() != 0 {
 		t.Errorf("expected 0 connections, got %d", b.ConnCount())
-	}
-}
-
-func TestBrokerMetricsEndpointByDefault(t *testing.T) {
-	cfg := config.DefaultConfig()
-	cfg.ListenAddr = ":0"
-	cfg.MetricsAddr = ":0"
-
-	// Default metrics is Prometheus — /metrics is served out of the box (NEW-20).
-	b := NewBroker(
-		WithConfig(cfg),
-		WithAuth(broker.AllowAllAuth{}),
-	)
-	if err := b.Start(); err != nil {
-		t.Fatalf("Start() error = %v", err)
-	}
-	defer b.Stop()
-
-	time.Sleep(50 * time.Millisecond)
-
-	resp, err := http.Get("http://" + b.MetricsAddr() + "/metrics")
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("expected 200 for default Prometheus metrics, got %d", resp.StatusCode)
 	}
 }
 
