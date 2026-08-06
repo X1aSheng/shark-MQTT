@@ -24,10 +24,15 @@ Details in `docs/reports/PROJECT-REVIEW-260806-143527.md`.
   and control packets apply backpressure because the protocol requires them to
   reach the client. Regression tests cover drop, backpressure release, and
   tiny-queue delivery.
-- **R2-R5, R7, R8 noted:** decode payload pooling, O(1) topic-match, dependency
-  footprint (11.5 MB binary / 61 modules vs. reference <4 MB), WebSocket
-  transport, shared-sub round-robin fairness, and `$SYS` status topics are
-  catalogued as improvement items.
+- **R2 fixed:** `decodePublish` no longer allocates a transient body buffer plus
+  a payload copy. MQTT 3.1.1 payloads are read straight into the packet-owned
+  buffer (no copy); MQTT 5.0 bodies use the buffer pool for the intermediate
+  buffer. `BenchmarkCodec_DecodePublish`: 10→8 allocs/op, 758→455 B/op,
+  454→328 ns/op; `RoundTripPublish`: 16→14 allocs.
+- **R3-R5, R7, R8 noted:** O(1) topic-match, dependency footprint (11.5 MB
+  binary / 61 modules vs. reference <4 MB), WebSocket transport, shared-sub
+  round-robin fairness, and `$SYS` status topics are catalogued as improvement
+  items.
 
 ### V6 Fix Round (2026-08-06)
 

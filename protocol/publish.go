@@ -23,8 +23,7 @@ func (c *Codec) decodePublish(r io.Reader, fh *FixedHeader) (*PublishPacket, err
 		}
 	}
 
-	// Read remaining bytes into a buffer so both protocol versions use the
-	// same parsing path. For 5.0: properties + payload. For 3.1.1: payload only.
+	// remaining = body bytes after the topic (and packet ID).
 	headerBytes := 2 + len(topic) // topic length prefix + topic string
 	if fh.QoS > 0 {
 		headerBytes += 2 // packet ID
@@ -34,19 +33,43 @@ func (c *Codec) decodePublish(r io.Reader, fh *FixedHeader) (*PublishPacket, err
 		return nil, ErrMalformedPacket
 	}
 
-	data := make([]byte, remaining)
-	if remaining > 0 {
-		if _, err := io.ReadFull(r, data); err != nil {
-			return nil, err
-		}
-	}
-	reader := bytes.NewReader(data)
-
 	var props *Properties
+	var payload []byte
+
 	if c.protocolVersion == Version50 {
+		// MQTT 5.0: the body is properties + payload. Read it into a pooled
+		// transient buffer, parse properties, then copy the packet-owned
+		// payload out of it. data only feeds the parser and the copy, so it can
+		// be returned to the pool on return (R2).
+		var data []byte
+		if remaining > 0 {
+			if c.pool != nil && remaining <= c.pool.BufSize() {
+				data = c.pool.Get()[:remaining]
+				defer c.pool.Put(data)
+			} else {
+				data = make([]byte, remaining)
+			}
+			if _, err := io.ReadFull(r, data); err != nil {
+				return nil, err
+			}
+		}
+		reader := bytes.NewReader(data)
 		props, err = c.decodeProperties(reader)
 		if err != nil {
 			return nil, fmt.Errorf("decode properties: %w", err)
+		}
+		if pl := reader.Len(); pl > 0 {
+			payload = make([]byte, pl)
+			if _, err := reader.Read(payload); err != nil {
+				return nil, err
+			}
+		}
+	} else if remaining > 0 {
+		// MQTT 3.1.1: the body is the payload directly — read it straight into
+		// the packet-owned buffer with no transient copy (R2).
+		payload = make([]byte, remaining)
+		if _, err := io.ReadFull(r, payload); err != nil {
+			return nil, err
 		}
 	}
 
@@ -59,16 +82,6 @@ func (c *Codec) decodePublish(r io.Reader, fh *FixedHeader) (*PublishPacket, err
 		}
 	} else if !ValidatePublishTopic(topic) {
 		return nil, ErrMalformedPacket
-	}
-
-	// Whatever remains is the payload
-	payloadLen := reader.Len()
-	var payload []byte
-	if payloadLen > 0 {
-		payload = make([]byte, payloadLen)
-		if _, err := reader.Read(payload); err != nil {
-			return nil, err
-		}
 	}
 
 	return &PublishPacket{
