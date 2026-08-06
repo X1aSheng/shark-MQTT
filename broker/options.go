@@ -42,6 +42,8 @@ type brokerOptions struct {
 	retainedExpiry          time.Duration
 	retainedCleanupInterval time.Duration
 	connectionRateWindow    time.Duration
+	sysInterval             time.Duration // $SYS status topic publish interval (0 = off, R8)
+	version                 string        // broker version published to $SYS/broker/version
 }
 
 func defaultBrokerOptions() brokerOptions {
@@ -69,6 +71,8 @@ func defaultBrokerOptions() brokerOptions {
 		retainedExpiry:          0,
 		retainedCleanupInterval: 10 * time.Minute,
 		connectionRateWindow:    time.Second,
+		sysInterval:             30 * time.Second,
+		version:                 "dev",
 	}
 }
 
@@ -250,5 +254,20 @@ func WithRetainedCleanupInterval(d time.Duration) Option {
 func WithWriteQueueSize(n int) Option {
 	return func(o *brokerOptions) {
 		o.writeQueueSize = n
+	}
+}
+
+// WithSysInterval sets how often the broker publishes $SYS status topics
+// (R8). Zero disables the status loop.
+func WithSysInterval(d time.Duration) Option {
+	return func(o *brokerOptions) {
+		o.sysInterval = d
+	}
+}
+
+// WithVersion sets the broker version published to $SYS/broker/version (R8).
+func WithVersion(v string) Option {
+	return func(o *brokerOptions) {
+		o.version = v
 	}
 }

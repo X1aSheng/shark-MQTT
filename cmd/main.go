@@ -73,6 +73,7 @@ func main() {
 
 	var brokerOpts []api.Option
 	brokerOpts = append(brokerOpts, api.WithConfig(cfg))
+	brokerOpts = append(brokerOpts, api.WithVersion(Version))
 
 	if allowAllAuth {
 		fmt.Fprintln(os.Stderr, "WARNING: --allow-all enabled — all connections accepted without authentication. Do NOT use in production.")

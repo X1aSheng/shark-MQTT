@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -73,6 +74,8 @@ type Broker struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	opts    brokerOptions
+
+	startedAt time.Time // broker start time, for $SYS/broker/uptime (R8)
 }
 
 // New creates a new Broker with the given options.
@@ -455,6 +458,7 @@ func (b *Broker) Start() error {
 	// Rebuild the context so cleanup loops actually run after a Stop->Start
 	// cycle (Stop cancels the previous context).
 	b.ctx, b.cancel = context.WithCancel(context.Background())
+	b.startedAt = time.Now()
 	b.qos.Start()
 	go b.sessionCleanupLoop()
 	if b.opts.retainedExpiry > 0 {
@@ -462,6 +466,9 @@ func (b *Broker) Start() error {
 		// TTL cleanup survives a restart (P3-5).
 		b.rebuildRetainedExpirations()
 		go b.retainedCleanupLoop()
+	}
+	if b.opts.sysInterval > 0 {
+		go b.sysStatusLoop()
 	}
 	return nil
 }
@@ -593,6 +600,49 @@ func (b *Broker) cleanupExpiredRetained() {
 		}
 	}
 	b.metrics.SetRetainedMessages(int(b.retainedCount.Load()))
+}
+
+// sysStatusLoop periodically publishes $SYS broker status topics (R8).
+func (b *Broker) sysStatusLoop() {
+	b.publishSystemStatus()
+	ticker := time.NewTicker(b.opts.sysInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-b.ctx.Done():
+			return
+		case <-ticker.C:
+			b.publishSystemStatus()
+		}
+	}
+}
+
+// publishSystemStatus publishes current broker state to $SYS topics (R8).
+// $SYS topic protection is enforced by the topic trie, so only clients with an
+// explicit $SYS subscription (e.g. $SYS/#) receive these messages.
+func (b *Broker) publishSystemStatus() {
+	b.mu.RLock()
+	conns := len(b.connections)
+	b.mu.RUnlock()
+
+	b.publishSystem("$SYS/broker/version", []byte(b.opts.version))
+	b.publishSystem("$SYS/broker/uptime", []byte(time.Since(b.startedAt).Round(time.Second).String()))
+	b.publishSystem("$SYS/broker/connections", []byte(strconv.Itoa(conns)))
+	b.publishSystem("$SYS/broker/retained", []byte(strconv.FormatInt(b.retainedCount.Load(), 10)))
+	b.publishSystem("$SYS/broker/subscriptions", []byte(strconv.FormatInt(b.topics.SubscriberCount(), 10)))
+}
+
+// publishSystem routes a $SYS status message to matching subscribers using the
+// normal delivery path (flow control, per-connection write queue).
+func (b *Broker) publishSystem(topic string, payload []byte) {
+	pkt := &protocol.PublishPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish},
+		Topic:       topic,
+		Payload:     payload,
+	}
+	for _, sub := range b.topics.Match(topic) {
+		b.deliverToClient(sub.ClientID, "$SYS", pkt)
+	}
 }
 
 // Stop stops the broker's internal subsystems and closes all sessions.

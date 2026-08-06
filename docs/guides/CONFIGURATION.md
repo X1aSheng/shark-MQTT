@@ -92,6 +92,7 @@ qos_max_inflight: 200
 |--------|------|---------|-------------|
 | `storage_backend` | string | `memory` | Storage backend: memory, redis, badger |
 | `session_expiry_interval` | duration | `24h` | Session expiration time |
+| `sys_interval` | duration | `30s` | $SYS status topic publish interval (0 disables) |
 
 #### Redis Backend
 
@@ -242,6 +243,7 @@ All configuration options can be set via environment variables with the `MQTT_` 
 | `MQTT_QOS_MAX_INFLIGHT` | `qos_max_inflight` |
 | `MQTT_STORAGE_BACKEND` | `storage_backend` |
 | `MQTT_SESSION_EXPIRY_INTERVAL` | `session_expiry_interval` |
+| `MQTT_SYS_INTERVAL` | `sys_interval` |
 | `MQTT_REDIS_ADDR` | `redis_addr` |
 | `MQTT_REDIS_PASSWORD` | `redis_password` |
 | `MQTT_REDIS_DB` | `redis_db` |

@@ -41,6 +41,9 @@ type Config struct {
 	// Session settings
 	SessionExpiryInterval time.Duration `yaml:"session_expiry_interval" toml:"session_expiry_interval" env:"MQTT_SESSION_EXPIRY"`
 
+	// $SYS status topic publish interval (0 disables the status loop).
+	SysInterval time.Duration `yaml:"sys_interval" toml:"sys_interval" env:"MQTT_SYS_INTERVAL"`
+
 	// Storage backend: "memory", "redis", "badger"
 	StorageBackend string `yaml:"storage_backend" toml:"storage_backend" env:"MQTT_STORAGE_BACKEND"`
 
@@ -75,6 +78,7 @@ func DefaultConfig() *Config {
 		QoSMaxRetries:         3,
 		QoSMaxInflight:        100,
 		SessionExpiryInterval: 24 * time.Hour,
+		SysInterval:           30 * time.Second,
 		StorageBackend:        "memory",
 		LogLevel:              "info",
 		LogFormat:             "text",
@@ -96,6 +100,9 @@ func (c *Config) Validate() error {
 	}
 	if c.WriteQueueSize < 0 {
 		return fmt.Errorf("write_queue_size must be >= 0, got %d", c.WriteQueueSize)
+	}
+	if c.SysInterval < 0 {
+		return fmt.Errorf("sys_interval must be >= 0, got %v", c.SysInterval)
 	}
 	if c.QoSMaxRetries < 0 {
 		return fmt.Errorf("qos_max_retries must be >= 0, got %d", c.QoSMaxRetries)

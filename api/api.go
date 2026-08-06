@@ -43,6 +43,7 @@ type brokerOpts struct {
 	metrics        metrics.Metrics
 	pluginManager  *plugin.Manager
 	maxConnections int
+	version        string
 }
 
 // WithAuth sets the authenticator.
@@ -116,6 +117,13 @@ func WithMaxConnections(n int) Option {
 	}
 }
 
+// WithVersion sets the broker version published to $SYS/broker/version (R8).
+func WithVersion(v string) Option {
+	return func(o *brokerOpts) {
+		o.version = v
+	}
+}
+
 // NewBroker creates a new MQTT broker with the given options.
 func NewBroker(opts ...Option) *Broker {
 	o := &brokerOpts{
@@ -168,6 +176,12 @@ func NewBroker(opts ...Option) *Broker {
 	}
 	if o.cfg.WriteQueueSize > 0 {
 		bopts = append(bopts, broker.WithWriteQueueSize(o.cfg.WriteQueueSize))
+	}
+	if o.cfg.SysInterval > 0 {
+		bopts = append(bopts, broker.WithSysInterval(o.cfg.SysInterval))
+	}
+	if o.version != "" {
+		bopts = append(bopts, broker.WithVersion(o.version))
 	}
 	if o.cfg.SessionExpiryInterval > 0 {
 		bopts = append(bopts, broker.WithSessionExpiry(o.cfg.SessionExpiryInterval))
