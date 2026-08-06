@@ -85,6 +85,9 @@ func DefaultConfig() *Config {
 
 // Validate checks that configuration values are valid.
 func (c *Config) Validate() error {
+	if c.ListenAddr == "" {
+		return fmt.Errorf("listen_addr must not be empty")
+	}
 	if c.MaxPacketSize <= 0 {
 		return fmt.Errorf("max_packet_size must be > 0, got %d", c.MaxPacketSize)
 	}
@@ -124,6 +127,11 @@ func (c *Config) Validate() error {
 	}
 	if c.StorageBackend == "redis" && c.RedisAddr == "" {
 		return fmt.Errorf("redis_addr is required when storage_backend is redis")
+	}
+	switch c.LogLevel {
+	case "debug", "info", "warn", "error", "":
+	default:
+		return fmt.Errorf("unknown log_level: %q (must be debug, info, warn, or error)", c.LogLevel)
 	}
 	return nil
 }

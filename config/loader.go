@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -115,15 +116,15 @@ func setField(fv reflect.Value, val string) error {
 			}
 			fv.SetInt(int64(d))
 		} else {
-			var n int64
-			if _, err := fmt.Sscanf(val, "%d", &n); err != nil {
+			n, err := strconv.ParseInt(val, 10, fv.Type().Bits())
+			if err != nil {
 				return fmt.Errorf("invalid int value: %s", val)
 			}
 			fv.SetInt(n)
 		}
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		var n uint64
-		if _, err := fmt.Sscanf(val, "%d", &n); err != nil {
+		n, err := strconv.ParseUint(val, 10, fv.Type().Bits())
+		if err != nil {
 			return fmt.Errorf("invalid uint value: %s", val)
 		}
 		fv.SetUint(n)

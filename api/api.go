@@ -138,6 +138,12 @@ func NewBroker(opts ...Option) *Broker {
 		initErr = err
 	}
 
+	// Default to Prometheus metrics so the /metrics endpoint is served out of
+	// the box (NEW-20); an explicit WithMetrics overrides this.
+	if o.metrics == nil {
+		o.metrics = metrics.NewPrometheusMetrics(nil)
+	}
+
 	// Build broker options. Preserve broker package defaults unless the API
 	// caller explicitly provides an override.
 	bopts := []broker.Option{}

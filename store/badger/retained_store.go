@@ -94,7 +94,11 @@ func (s *RetainedStore) DeleteRetained(ctx context.Context, topic string) error 
 func (s *RetainedStore) MatchRetained(ctx context.Context, pattern string) ([]*store.RetainedMessage, error) {
 	var messages []*store.RetainedMessage
 	err := s.db.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		// Values are fetched individually below, so skip the iterator's value
+		// prefetch to avoid allocating every entry during a full scan (NEW-13).
+		itOpts := badger.DefaultIteratorOptions
+		itOpts.PrefetchValues = false
+		it := txn.NewIterator(itOpts)
 		defer it.Close()
 
 		prefix := []byte(s.keyPrefix)

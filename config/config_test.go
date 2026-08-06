@@ -266,6 +266,49 @@ func TestValidate_BadgerPathRequired(t *testing.T) {
 	}
 }
 
+// TestValidate_EmptyListenAddr verifies an empty listen address is rejected
+// (NEW-7).
+func TestValidate_EmptyListenAddr(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.ListenAddr = ""
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for empty listen_addr")
+	}
+}
+
+// TestValidate_InvalidLogLevel verifies an unknown log level is rejected
+// (NEW-8).
+func TestValidate_InvalidLogLevel(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.LogLevel = "banana"
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for invalid log_level")
+	}
+	for _, ok := range []string{"debug", "info", "warn", "error"} {
+		cfg.LogLevel = ok
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("log_level %q should validate, got %v", ok, err)
+		}
+	}
+}
+
+// TestEnvLoader_RejectsTrailingGarbage verifies integer env vars reject
+// trailing garbage instead of silently truncating (NEW-9).
+func TestEnvLoader_RejectsTrailingGarbage(t *testing.T) {
+	t.Setenv("MQTT_MAX_PACKET_SIZE", "100abc")
+	if _, err := NewLoader("").Load(); err == nil {
+		t.Error("expected error for trailing garbage in integer env var")
+	}
+	t.Setenv("MQTT_MAX_PACKET_SIZE", "65536")
+	cfg, err := NewLoader("").Load()
+	if err != nil {
+		t.Fatalf("valid env should load: %v", err)
+	}
+	if cfg.MaxPacketSize != 65536 {
+		t.Errorf("expected MaxPacketSize 65536, got %d", cfg.MaxPacketSize)
+	}
+}
+
 // TestValidate_TLSVersionRange verifies TLS version range check (P3-L03).
 func TestValidate_TLSVersionRange(t *testing.T) {
 	cfg := DefaultConfig()

@@ -15,8 +15,15 @@ import (
 	"github.com/X1aSheng/shark-mqtt/config"
 )
 
+// Version is the broker version, injected at build time via
+// -ldflags "-X main.Version=..." (see scripts/build.sh).
+var Version = "dev"
+
 func main() {
 	// Parse command-line flags
+	var configPath string
+	flag.StringVar(&configPath, "config", "", "path to a YAML configuration file")
+
 	cfg := config.DefaultConfig()
 
 	var allowAllAuth bool
@@ -28,6 +35,15 @@ func main() {
 	flag.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "log level (debug/info/warn/error)")
 	flag.BoolVar(&allowAllAuth, "allow-all", false, "allow all connections without authentication (DEVELOPMENT ONLY)")
 	flag.Parse()
+
+	// Load a YAML configuration file if requested (NEW-11).
+	if configPath != "" {
+		loaded, err := config.NewLoader(configPath).Load()
+		if err != nil {
+			log.Fatalf("Failed to load config %s: %v", configPath, err)
+		}
+		cfg = loaded
+	}
 
 	addrSet := false
 	flag.Visit(func(f *flag.Flag) {
@@ -53,7 +69,7 @@ func main() {
 	fmt.Println(" | |_| | |_) | |_| | (_| | |  __/ / /_\\\\ ")
 	fmt.Println("  \\___/| .__/ \\__,_|\\__,_|_|\\___| \\____/ ")
 	fmt.Println("       |_|")
-	fmt.Printf("Shark-MQTT Broker v1.0.0 - listening on %s\n\n", cfg.ListenAddr)
+	fmt.Printf("Shark-MQTT Broker v%s - listening on %s\n\n", Version, cfg.ListenAddr)
 
 	var brokerOpts []api.Option
 	brokerOpts = append(brokerOpts, api.WithConfig(cfg))

@@ -168,15 +168,43 @@ func TestBrokerMaxConnectionsConfigPropagation(t *testing.T) {
 	}
 }
 
+func TestBrokerMetricsEndpointByDefault(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.ListenAddr = ":0"
+	cfg.MetricsAddr = ":0"
+
+	// Default metrics is Prometheus — /metrics is served out of the box (NEW-20).
+	b := NewBroker(
+		WithConfig(cfg),
+		WithAuth(broker.AllowAllAuth{}),
+	)
+	if err := b.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer b.Stop()
+
+	time.Sleep(50 * time.Millisecond)
+
+	resp, err := http.Get("http://" + b.MetricsAddr() + "/metrics")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 for default Prometheus metrics, got %d", resp.StatusCode)
+	}
+}
+
 func TestBrokerNoMetricsEndpointWithoutPrometheus(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.ListenAddr = ":0"
 	cfg.MetricsAddr = ":0"
 
-	// Default metrics is noop — should not expose /metrics
+	// An explicit noop metrics implementation does not expose /metrics.
 	b := NewBroker(
 		WithConfig(cfg),
 		WithAuth(broker.AllowAllAuth{}),
+		WithMetrics(metrics.Default()),
 	)
 
 	if err := b.Start(); err != nil {
