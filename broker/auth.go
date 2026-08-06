@@ -26,6 +26,23 @@ type Authenticator interface {
 	Authenticate(ctx context.Context, clientID, username, password string) error
 }
 
+// EnhancedAuthenticator implements MQTT 5.0 enhanced authentication (§4.12).
+// It is stateful per connection. The broker calls Initial with the
+// AuthenticationData from CONNECT, then Continue for each subsequent AUTH
+// packet, until a non-continue reason code is returned.
+//
+// Reason codes: protocol.AuthContinueAuth (0x18) continues the exchange;
+// protocol.AuthSuccess (0x00) completes it. Any other reason code (e.g.
+// ReasonCodeNotAuthorized) rejects the connection.
+type EnhancedAuthenticator interface {
+	// Method returns the AuthenticationMethod name this authenticator handles.
+	Method() string
+	// Initial processes the CONNECT AuthenticationData.
+	Initial(data []byte) (reasonCode byte, responseData []byte, err error)
+	// Continue processes a subsequent AUTH packet's AuthenticationData.
+	Continue(data []byte) (reasonCode byte, responseData []byte, err error)
+}
+
 // Authorizer handles topic-level authorization.
 type Authorizer interface {
 	CanPublish(ctx context.Context, username, topic string) bool

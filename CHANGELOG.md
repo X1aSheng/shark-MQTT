@@ -7,6 +7,16 @@ This project uses semantic versioning. Pre-release tags use the form
 
 ## Unreleased
 
+### Protocol gaps (2026-08-06)
+
+- **Enhanced authentication (MQTT 5.0 §4.12):** `EnhancedAuthenticator` interface
+  + `WithEnhancedAuth` option. A CONNECT carrying an `AuthenticationMethod` now
+  runs the enhanced auth exchange (AUTH packets: 0x18 continue → 0x00 success)
+  instead of being rejected; an unregistered method returns CONNACK 0x8C; a
+  failed exchange ends with a DISCONNECT (AUTH packets only carry
+  0x00/0x18/0x19). Re-authentication during a session is handled in the read
+  loop.
+
 ### Review Round V7 (2026-08-06) - reference comparison
 
 Reviewed against smart-mqtt (Java, <4MB), smart-mqtt-4g (Go) and mica-mqtt

@@ -34,6 +34,12 @@ type clientState struct {
 	// writes under wmu. stopWrites is closed to stop the writer goroutine.
 	out        chan protocol.Packet
 	stopWrites chan struct{}
+
+	// enhancedAuth is the active MQTT 5.0 enhanced authenticator for a
+	// connection that connected via an AuthenticationMethod (§4.12). Non-nil
+	// only for such connections; used to handle re-authentication AUTH packets
+	// during the session.
+	enhancedAuth EnhancedAuthenticator
 }
 
 // Broker is the core MQTT message broker that orchestrates TopicTree, QoSEngine,
@@ -225,8 +231,25 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 		b.logger.Debug("failed to clear read deadline", "error", err)
 	}
 
-	// Authenticate
-	if b.opts.authenticator != nil {
+	// MQTT 5.0 enhanced authentication (§4.12): a CONNECT carrying an
+	// AuthenticationMethod runs the enhanced auth exchange (AUTH packets)
+	// instead of the traditional username/password path. The handshake sends
+	// AUTH packets only; the final CONNACK 0x00 is sent later, once the session
+	// is set up.
+	var enhancedAuth EnhancedAuthenticator
+	if connectPkt.Properties != nil && connectPkt.Properties.AuthenticationMethod != "" {
+		enhancedAuth = b.findEnhancedAuth(connectPkt.Properties.AuthenticationMethod)
+		if enhancedAuth == nil {
+			b.metrics.IncAuthFailures()
+			b.sendConnAckRaw(conn, c, protocol.ReasonCodeBadAuthMethod, false)
+			return fmt.Errorf("broker: unsupported authentication method %q", connectPkt.Properties.AuthenticationMethod)
+		}
+		if err := b.enhancedAuthHandshake(conn, c, connectPkt, enhancedAuth); err != nil {
+			b.metrics.IncAuthFailures()
+			b.logger.Debug("enhanced auth failed", "clientID", connectPkt.ClientID, "error", err)
+			return err
+		}
+	} else if b.opts.authenticator != nil {
 		authErr := b.opts.authenticator.Authenticate(ctx, connectPkt.ClientID, connectPkt.Username, string(connectPkt.Password))
 		if authErr != nil {
 			b.metrics.IncAuthFailures()
@@ -391,10 +414,11 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 		qcap = 1
 	}
 	cs := &clientState{
-		conn:       conn,
-		codec:      c,
-		out:        make(chan protocol.Packet, qcap),
-		stopWrites: make(chan struct{}),
+		conn:         conn,
+		codec:        c,
+		out:          make(chan protocol.Packet, qcap),
+		stopWrites:   make(chan struct{}),
+		enhancedAuth: enhancedAuth,
 	}
 	b.connections[clientID] = cs
 	online := len(b.connections)
@@ -448,6 +472,109 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 	b.readLoop(clientID, sess, c, conn)
 
 	return nil
+}
+
+// findEnhancedAuth returns the registered enhanced authenticator for a method
+// name, or nil if none is registered (§4.12).
+func (b *Broker) findEnhancedAuth(method string) EnhancedAuthenticator {
+	for _, a := range b.opts.enhancedAuth {
+		if a.Method() == method {
+			return a
+		}
+	}
+	return nil
+}
+
+// enhancedAuthHandshake runs the MQTT 5.0 enhanced authentication exchange
+// (§4.12). The server answers the CONNECT's AuthenticationData with AUTH
+// packets: reason 0x18 (Continue authentication) advances the exchange, and a
+// final AUTH 0x00 (Success) completes it. On single-step success (the
+// authenticator accepts the CONNECT data immediately) no AUTH packet is sent —
+// HandleConnection sends the CONNACK 0x00 afterwards.
+func (b *Broker) enhancedAuthHandshake(conn net.Conn, codec *protocol.Codec, connectPkt *protocol.ConnectPacket, auth EnhancedAuthenticator) error {
+	var data []byte
+	if connectPkt.Properties != nil {
+		data = connectPkt.Properties.AuthenticationData
+	}
+	reason, respData, err := auth.Initial(data)
+	if err != nil {
+		return fmt.Errorf("broker: enhanced auth initial: %w", err)
+	}
+
+	// Bound the exchange so a stalled client cannot hold the connection open.
+	if err := conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		b.logger.Debug("failed to set enhanced-auth read deadline", "error", err)
+	}
+	defer conn.SetReadDeadline(time.Time{})
+
+	continued := false
+	for reason == protocol.AuthContinueAuth {
+		continued = true
+		if err := b.sendAuthPacket(conn, codec, reason, auth.Method(), respData); err != nil {
+			return err
+		}
+		pkt, err := codec.Decode(conn)
+		if err != nil {
+			return fmt.Errorf("broker: enhanced auth: read AUTH: %w", err)
+		}
+		authPkt, ok := pkt.(*protocol.AuthPacket)
+		if !ok {
+			return fmt.Errorf("broker: enhanced auth: expected AUTH, got %T", pkt)
+		}
+		var in []byte
+		if authPkt.Properties != nil {
+			in = authPkt.Properties.AuthenticationData
+		}
+		reason, respData, err = auth.Continue(in)
+		if err != nil {
+			return fmt.Errorf("broker: enhanced auth continue: %w", err)
+		}
+	}
+	if reason != protocol.AuthSuccess {
+		// AUTH packets only carry 0x00/0x18/0x19; a failed exchange is signalled
+		// with a DISCONNECT carrying the rejection reason (§4.12).
+		_ = codec.Encode(conn, &protocol.DisconnectPacket{
+			FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeDisconnect},
+			ReasonCode:  protocol.ReasonCodeNotAuthorized,
+		})
+		return fmt.Errorf("broker: enhanced auth rejected (reason 0x%02X)", reason)
+	}
+	// A multi-step exchange ends with a final AUTH 0x00 (Success).
+	if continued {
+		if err := b.sendAuthPacket(conn, codec, reason, auth.Method(), respData); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// sendAuthPacket encodes and writes an AUTH packet directly to the connection.
+func (b *Broker) sendAuthPacket(conn net.Conn, codec *protocol.Codec, reason byte, method string, data []byte) error {
+	pkt := &protocol.AuthPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeAuth},
+		ReasonCode:  reason,
+		Properties: &protocol.Properties{
+			AuthenticationMethod: method,
+			AuthenticationData:   data,
+		},
+	}
+	if err := codec.Encode(conn, pkt); err != nil {
+		return fmt.Errorf("broker: send AUTH: %w", err)
+	}
+	return nil
+}
+
+// sendAuthPacketToClient queues an AUTH packet on the client's write queue
+// (used for re-authentication during an established session).
+func (b *Broker) sendAuthPacketToClient(clientID string, reason byte, method string, data []byte) {
+	b.writePacket(clientID, &protocol.AuthPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeAuth},
+		ReasonCode:  reason,
+		Properties: &protocol.Properties{
+			AuthenticationMethod: method,
+			AuthenticationData:   data,
+		},
+	})
 }
 
 // Start starts the broker's internal subsystems.
@@ -836,10 +963,32 @@ func (b *Broker) readLoop(clientID string, sess *Session, codec *protocol.Codec,
 		case *protocol.PubCompPacket:
 			b.handlePubComp(clientID, p.PacketID)
 		case *protocol.AuthPacket:
-			// MQTT 5.0 enhanced authentication is not supported.
-			// Per spec §4.12, send DISCONNECT with ReasonCode 0x8C
-			// (Bad Authentication Method) when AUTH is received.
-			b.logger.Debug("AUTH packet received but enhanced auth not supported",
+			// MQTT 5.0 re-authentication (§4.12): a connection established via
+			// enhanced auth may exchange more AUTH packets during the session.
+			if cs := b.connection(clientID); cs != nil && cs.enhancedAuth != nil {
+				var in []byte
+				if p.Properties != nil {
+					in = p.Properties.AuthenticationData
+				}
+				reason, respData, err := cs.enhancedAuth.Continue(in)
+				if err != nil {
+					b.logger.Debug("re-auth failed", "clientID", clientID, "error", err)
+					b.writePacket(clientID, &protocol.DisconnectPacket{
+						FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeDisconnect},
+						ReasonCode:  protocol.ReasonCodeBadAuthMethod,
+					})
+					b.gracefulDisconnect(clientID, conn)
+					return
+				}
+				b.sendAuthPacketToClient(clientID, reason, cs.enhancedAuth.Method(), respData)
+				if reason != protocol.AuthContinueAuth {
+					b.gracefulDisconnect(clientID, conn)
+					return
+				}
+				continue
+			}
+			// No enhanced auth: reject AUTH per §4.12.
+			b.logger.Debug("AUTH packet received but no enhanced auth in use",
 				"clientID", clientID, "reasonCode", p.ReasonCode)
 			b.writePacket(clientID, &protocol.DisconnectPacket{
 				FixedHeader: protocol.FixedHeader{
@@ -1460,6 +1609,13 @@ func (b *Broker) persistBufferedOutbound(clientID string, sess *Session) {
 func (b *Broker) isClientOnline(clientID string) bool {
 	_, ok := b.sessions.GetSession(clientID)
 	return ok
+}
+
+// connection returns the clientState for a client, or nil if not connected.
+func (b *Broker) connection(clientID string) *clientState {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.connections[clientID]
 }
 
 // routeSharedPublish delivers a PUBLISH to shared subscribers via MatchShared,

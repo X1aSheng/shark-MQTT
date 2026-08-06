@@ -17,6 +17,7 @@ type brokerOptions struct {
 	messageStore           store.MessageStore
 	retainedStore          store.RetainedStore
 	authenticator          Authenticator
+	enhancedAuth           []EnhancedAuthenticator // MQTT 5.0 §4.12 (by AuthenticationMethod)
 	authorizer             Authorizer
 	pluginManager          *plugin.Manager
 	logger                 logger.Logger
@@ -101,6 +102,16 @@ func WithRetainedStore(s store.RetainedStore) Option {
 func WithAuth(a Authenticator) Option {
 	return func(o *brokerOptions) {
 		o.authenticator = a
+	}
+}
+
+// WithEnhancedAuth registers an MQTT 5.0 enhanced authenticator (by its
+// AuthenticationMethod). A CONNECT carrying that method runs the enhanced
+// authentication exchange instead of the traditional username/password path.
+// Multiple authenticators with distinct methods may be registered.
+func WithEnhancedAuth(a EnhancedAuthenticator) Option {
+	return func(o *brokerOptions) {
+		o.enhancedAuth = append(o.enhancedAuth, a)
 	}
 }
 
