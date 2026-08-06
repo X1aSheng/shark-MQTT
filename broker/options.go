@@ -37,6 +37,7 @@ type brokerOptions struct {
 	maxClientIDLength       int // max bytes for MQTT client ID (0 = unlimited)
 	maxTopicFiltersPerSub   int // max topic filters per SUBSCRIBE packet
 	maxRetainedTopics       int // max retained messages (0 = unlimited)
+	writeQueueSize          int // per-connection outbound write queue capacity (R1)
 	maxWillDelay            time.Duration
 	retainedExpiry          time.Duration
 	retainedCleanupInterval time.Duration
@@ -63,6 +64,7 @@ func defaultBrokerOptions() brokerOptions {
 		maxClientIDLength:       128,
 		maxTopicFiltersPerSub:   100,
 		maxRetainedTopics:       10000,
+		writeQueueSize:          256,
 		maxWillDelay:            24 * time.Hour,
 		retainedExpiry:          0,
 		retainedCleanupInterval: 10 * time.Minute,
@@ -238,5 +240,15 @@ func WithRetainedExpiry(d time.Duration) Option {
 func WithRetainedCleanupInterval(d time.Duration) Option {
 	return func(o *brokerOptions) {
 		o.retainedCleanupInterval = d
+	}
+}
+
+// WithWriteQueueSize sets the per-connection outbound write queue capacity.
+// A bounded queue drained by a per-connection writer goroutine decouples slow
+// consumers from producers, so a slow subscriber cannot block the publishing
+// client's read loop (R1). Values <= 0 fall back to a 1-slot queue.
+func WithWriteQueueSize(n int) Option {
+	return func(o *brokerOptions) {
+		o.writeQueueSize = n
 	}
 }

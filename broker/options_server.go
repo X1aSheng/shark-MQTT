@@ -17,7 +17,6 @@ type serverOpts struct {
 	readBufferSize  int
 	maxPacketSize   uint32
 	keepAlive       time.Duration
-	writeQueueSize  int
 	connectTimeout  time.Duration
 	listener        net.Listener  // custom listener (for testing)
 	logr            logger.Logger // diagnostic logger
@@ -28,7 +27,6 @@ func defaultServerOptions() serverOpts {
 		writeBufferSize: 4096,
 		readBufferSize:  4096,
 		maxPacketSize:   268435455, // MQTT max packet size
-		writeQueueSize:  100,
 		connectTimeout:  5 * time.Second,
 	}
 }
@@ -65,13 +63,6 @@ func WithMaxPacketSize(n uint32) ServerOption {
 func WithKeepAlive(d time.Duration) ServerOption {
 	return func(o *serverOpts) {
 		o.keepAlive = d
-	}
-}
-
-// WithWriteQueueSize sets the outbound message queue size.
-func WithWriteQueueSize(n int) ServerOption {
-	return func(o *serverOpts) {
-		o.writeQueueSize = n
 	}
 }
 

@@ -16,9 +16,14 @@ Details in `docs/reports/PROJECT-REVIEW-260806-143527.md`.
 - **R6 fixed:** the flow-control outbound buffer is now bounded
   (`maxBufferedOutbound = 1000`); a client that never acknowledges can no
   longer grow the buffer without bound (memory exhaustion).
-- **R1 (P2) open:** `WriteQueueSize` is declared but no write queue is
-  implemented; synchronous per-connection writes cause head-of-line blocking
-  when a subscriber is slow. Planned as the next large item.
+- **R1 fixed:** per-connection async write queues eliminate head-of-line
+  blocking. Each connection gets a bounded outbound queue drained by a single
+  writer goroutine; `write_queue_size` (config / `WithWriteQueueSize`) now
+  takes effect. QoS 0 publishes are dropped (at-most-once) when the queue is
+  full so a stalled subscriber cannot block its publisher; QoS 1/2 deliveries
+  and control packets apply backpressure because the protocol requires them to
+  reach the client. Regression tests cover drop, backpressure release, and
+  tiny-queue delivery.
 - **R2-R5, R7, R8 noted:** decode payload pooling, O(1) topic-match, dependency
   footprint (11.5 MB binary / 61 modules vs. reference <4 MB), WebSocket
   transport, shared-sub round-robin fairness, and `$SYS` status topics are

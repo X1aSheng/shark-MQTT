@@ -94,6 +94,9 @@ func (c *Config) Validate() error {
 	if c.MaxConnections < 0 {
 		return fmt.Errorf("max_connections must be >= 0, got %d", c.MaxConnections)
 	}
+	if c.WriteQueueSize < 0 {
+		return fmt.Errorf("write_queue_size must be >= 0, got %d", c.WriteQueueSize)
+	}
 	if c.QoSMaxRetries < 0 {
 		return fmt.Errorf("qos_max_retries must be >= 0, got %d", c.QoSMaxRetries)
 	}

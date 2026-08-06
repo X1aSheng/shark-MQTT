@@ -23,7 +23,16 @@ var _ ConnectionHandler = (*Broker)(nil)
 type clientState struct {
 	conn  net.Conn
 	codec *protocol.Codec
-	wmu   sync.Mutex // serializes writes to this connection
+	wmu   sync.Mutex // serializes writes when no async write queue is configured
+
+	// out is the bounded per-connection outbound write queue. When non-nil,
+	// writePacket/sendConnAck enqueue here and writeLoop drains it on a single
+	// goroutine, so a slow consumer cannot block the producing client's read
+	// loop (R1). It stays nil only for clientStates created outside
+	// HandleConnection (e.g. unit tests), which fall back to synchronous
+	// writes under wmu. stopWrites is closed to stop the writer goroutine.
+	out        chan protocol.Packet
+	stopWrites chan struct{}
 }
 
 // Broker is the core MQTT message broker that orchestrates TopicTree, QoSEngine,
@@ -366,11 +375,28 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 		if err := old.conn.Close(); err != nil {
 			b.logger.Debug("failed to close previous connection", "clientID", clientID, "error", err)
 		}
+		// Stop the previous connection's writer goroutine; its readLoop will
+		// later call disconnect() and bail out on the conn identity check, so
+		// it must be stopped here (R1).
+		if old.out != nil {
+			close(old.stopWrites)
+		}
 		b.logger.Info("session takeover", "clientID", clientID)
 	}
-	b.connections[clientID] = &clientState{conn: conn, codec: c}
+	qcap := b.opts.writeQueueSize
+	if qcap < 1 {
+		qcap = 1
+	}
+	cs := &clientState{
+		conn:       conn,
+		codec:      c,
+		out:        make(chan protocol.Packet, qcap),
+		stopWrites: make(chan struct{}),
+	}
+	b.connections[clientID] = cs
 	online := len(b.connections)
 	b.mu.Unlock()
+	go cs.writeLoop()
 	b.metrics.SetOnlineSessions(online)
 
 	// Register will message
@@ -583,6 +609,9 @@ func (b *Broker) Stop() {
 		if err := cs.conn.Close(); err != nil {
 			b.logger.Debug("failed to close client connection", "clientID", id, "error", err)
 		}
+		if cs.out != nil {
+			close(cs.stopWrites)
+		}
 		delete(b.connections, id)
 	}
 	b.mu.Unlock()
@@ -684,6 +713,12 @@ func (b *Broker) disconnect(clientID string, conn net.Conn) {
 	b.sessions.RemoveSession(clientID)
 	b.qos.RemoveClient(clientID)
 	delete(b.connections, clientID)
+	// Stop this connection's writer goroutine. Producers that already passed
+	// the map lookup select on stopWrites and back off instead of enqueuing to
+	// a torn-down connection (R1).
+	if cs.out != nil {
+		close(cs.stopWrites)
+	}
 	online := len(b.connections)
 	b.mu.Unlock()
 
@@ -1428,7 +1463,11 @@ func (b *Broker) deliverRetainedMessages(clientID string, sess *Session, topicFi
 	}
 }
 
-// writePacket writes a packet to a client via the stored connection (used in read loop).
+// writePacket queues a packet to a client via its per-connection write queue
+// (R1). QoS 0 publishes are at-most-once: when the queue is full they are
+// dropped instead of blocking, so a slow subscriber cannot stall the producing
+// client's read loop. Control packets and QoS 1/2 deliveries apply backpressure
+// because the protocol requires them to reach the client.
 func (b *Broker) writePacket(clientID string, pkt protocol.Packet) {
 	b.mu.RLock()
 	cs, ok := b.connections[clientID]
@@ -1436,11 +1475,57 @@ func (b *Broker) writePacket(clientID string, pkt protocol.Packet) {
 	if !ok {
 		return
 	}
-	cs.wmu.Lock()
-	err := cs.codec.Encode(cs.conn, pkt)
-	cs.wmu.Unlock()
-	if err != nil {
+
+	if pub, ok := pkt.(*protocol.PublishPacket); ok && pub.FixedHeader.QoS == 0 && cs.out != nil {
+		select {
+		case cs.out <- pkt:
+			return
+		case <-cs.stopWrites:
+			return
+		default:
+			b.metrics.IncMessagesDropped("write_queue_full")
+			return
+		}
+	}
+
+	if err := cs.writeOrEnqueue(pkt); err != nil {
 		b.logger.Warn("write error", "clientID", clientID, "error", err)
+	}
+}
+
+// writeOrEnqueue writes pkt to a client connection. With an async write queue
+// configured it enqueues and returns; the writer goroutine serializes the
+// actual socket writes (R1). Without one (clientStates created outside
+// HandleConnection, e.g. unit tests) it writes synchronously under wmu.
+func (cs *clientState) writeOrEnqueue(pkt protocol.Packet) error {
+	if cs.out == nil {
+		cs.wmu.Lock()
+		err := cs.codec.Encode(cs.conn, pkt)
+		cs.wmu.Unlock()
+		return err
+	}
+	select {
+	case cs.out <- pkt:
+	case <-cs.stopWrites:
+	}
+	return nil
+}
+
+// writeLoop drains a connection's outbound queue, serializing all socket
+// writes to that connection on a single goroutine (R1). It exits when the
+// connection is torn down (stopWrites closed) or a write fails. QoS 1/2
+// deliveries left behind are retried from the session's inflight tracking on
+// reconnect, so dropping them here does not break delivery semantics.
+func (cs *clientState) writeLoop() {
+	for {
+		select {
+		case pkt := <-cs.out:
+			if err := cs.codec.Encode(cs.conn, pkt); err != nil {
+				return
+			}
+		case <-cs.stopWrites:
+			return
+		}
 	}
 }
 
@@ -1464,11 +1549,9 @@ func (b *Broker) sendConnAck(clientID string, reasonCode byte, sessionPresent bo
 		pkt.Properties = b.buildConnAckProperties(sess)
 	}
 
-	cs.wmu.Lock()
-	if err := cs.codec.Encode(cs.conn, pkt); err != nil {
+	if err := cs.writeOrEnqueue(pkt); err != nil {
 		b.logger.Warn("write error", "clientID", clientID, "error", err)
 	}
-	cs.wmu.Unlock()
 }
 
 // buildConnAckProperties builds MQTT 5.0 CONNACK capability properties.
