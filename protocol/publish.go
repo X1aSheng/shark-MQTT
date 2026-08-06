@@ -53,7 +53,8 @@ func (c *Codec) decodePublish(r io.Reader, fh *FixedHeader) (*PublishPacket, err
 				return nil, err
 			}
 		}
-		reader := bytes.NewReader(data)
+		reader := decodeReader(data)
+		defer putDecodeReader(reader)
 		props, err = c.decodeProperties(reader)
 		if err != nil {
 			return nil, fmt.Errorf("decode properties: %w", err)
@@ -277,7 +278,8 @@ func (c *Codec) decodeAckFields(r io.Reader, fh *FixedHeader) (uint16, byte, *Pr
 	if _, err := io.ReadFull(r, data); err != nil {
 		return 0, 0, nil, err
 	}
-	reader := bytes.NewReader(data)
+	reader := decodeReader(data)
+	defer putDecodeReader(reader)
 
 	packetID, err := readUint16FromReader(reader)
 	if err != nil {

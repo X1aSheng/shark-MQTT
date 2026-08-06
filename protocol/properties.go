@@ -129,7 +129,8 @@ func (c *Codec) decodeProperties(r io.Reader) (*Properties, error) {
 	if _, err := io.ReadFull(r, buf); err != nil {
 		return nil, err
 	}
-	reader := bytes.NewReader(buf)
+	reader := decodeReader(buf)
+	defer putDecodeReader(reader)
 
 	props := &Properties{}
 	for reader.Len() > 0 {

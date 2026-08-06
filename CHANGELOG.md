@@ -13,6 +13,12 @@ This project uses semantic versioning. Pre-release tags use the form
   publish latency is observed for metrics (1 = every message, the default; N =
   1 in N; 0 = off). Prometheus histogram observations are comparatively
   expensive, so sampling cuts per-message overhead when metrics are enabled.
+- **Decode buffer pooling:** `bytes.Reader` instances used to parse packet
+  bodies are now pooled (they do not escape the decode call), removing one
+  allocation per decoded packet across publish/ack/connect/subscribe paths.
+  (A QoS 0 "direct write" delivery path was evaluated but rejected: it would
+  have forwarded the Topic Alias property, which MQTT 5.0 forbids the server
+  from sending.)
 
 ### Protocol gaps (2026-08-06)
 

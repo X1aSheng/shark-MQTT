@@ -11,7 +11,8 @@ func (c *Codec) decodeConnect(r io.Reader, fh *FixedHeader) (*ConnectPacket, err
 	if _, err := io.ReadFull(r, buf); err != nil {
 		return nil, err
 	}
-	reader := bytes.NewReader(buf)
+	reader := decodeReader(buf)
+	defer putDecodeReader(reader)
 
 	protoName, err := readString(reader, c.pool)
 	if err != nil {
@@ -306,7 +307,8 @@ func (c *Codec) decodeConnAck(r io.Reader, fh *FixedHeader) (*ConnAckPacket, err
 	if _, err := io.ReadFull(r, buf); err != nil {
 		return nil, err
 	}
-	reader := bytes.NewReader(buf)
+	reader := decodeReader(buf)
+	defer putDecodeReader(reader)
 
 	// Session present flag (only first bit of first byte)
 	spFlag, err := reader.ReadByte()

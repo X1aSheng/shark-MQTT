@@ -23,7 +23,8 @@ func (c *Codec) decodeSubscribe(r io.Reader, fh *FixedHeader) (*SubscribePacket,
 	if _, err := io.ReadFull(r, data); err != nil {
 		return nil, err
 	}
-	reader := bytes.NewReader(data)
+	reader := decodeReader(data)
+	defer putDecodeReader(reader)
 
 	var props *Properties
 	if c.protocolVersion == Version50 {
@@ -152,7 +153,8 @@ func (c *Codec) decodeSubAck(r io.Reader, fh *FixedHeader) (*SubAckPacket, error
 		if _, err := io.ReadFull(r, data); err != nil {
 			return nil, err
 		}
-		reader := bytes.NewReader(data)
+		reader := decodeReader(data)
+		defer putDecodeReader(reader)
 
 		if c.protocolVersion == Version50 {
 			props, err = c.decodeProperties(reader)
@@ -230,7 +232,8 @@ func (c *Codec) decodeUnsubscribe(r io.Reader, fh *FixedHeader) (*UnsubscribePac
 	if _, err := io.ReadFull(r, data); err != nil {
 		return nil, err
 	}
-	reader := bytes.NewReader(data)
+	reader := decodeReader(data)
+	defer putDecodeReader(reader)
 
 	var props *Properties
 	if c.protocolVersion == Version50 {
@@ -321,7 +324,8 @@ func (c *Codec) decodeUnsubAck(r io.Reader, fh *FixedHeader) (*UnsubAckPacket, e
 		if _, err := io.ReadFull(r, data); err != nil {
 			return nil, err
 		}
-		reader := bytes.NewReader(data)
+		reader := decodeReader(data)
+		defer putDecodeReader(reader)
 
 		if c.protocolVersion == Version50 {
 			props, err = c.decodeProperties(reader)
@@ -410,7 +414,8 @@ func (c *Codec) decodeDisconnect(r io.Reader, fh *FixedHeader) (*DisconnectPacke
 	if _, err := io.ReadFull(r, buf); err != nil {
 		return nil, err
 	}
-	reader := bytes.NewReader(buf)
+	reader := decodeReader(buf)
+	defer putDecodeReader(reader)
 
 	var reasonCode byte
 	if fh.RemainingLength > 0 {
@@ -478,7 +483,8 @@ func (c *Codec) decodeAuth(r io.Reader, fh *FixedHeader) (*AuthPacket, error) {
 	if _, err := io.ReadFull(r, buf); err != nil {
 		return nil, err
 	}
-	reader := bytes.NewReader(buf)
+	reader := decodeReader(buf)
+	defer putDecodeReader(reader)
 
 	var reasonCode byte
 	if fh.RemainingLength > 0 {

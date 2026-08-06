@@ -1,14 +1,35 @@
 package protocol
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"math"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/X1aSheng/shark-mqtt/pkg/bufferpool"
 )
+
+// decodeReaderPool reuses bytes.Reader instances for decoding packet bodies;
+// the readers do not escape the decode call, so pooling avoids a per-packet
+// allocation.
+var decodeReaderPool = sync.Pool{
+	New: func() any { return new(bytes.Reader) },
+}
+
+// decodeReader returns a pooled bytes.Reader over data.
+func decodeReader(data []byte) *bytes.Reader {
+	r := decodeReaderPool.Get().(*bytes.Reader)
+	r.Reset(data)
+	return r
+}
+
+// putDecodeReader returns a decode reader to the pool.
+func putDecodeReader(r *bytes.Reader) {
+	decodeReaderPool.Put(r)
+}
 
 // Codec handles encoding and decoding of MQTT packets.
 type Codec struct {
