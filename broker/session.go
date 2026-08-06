@@ -82,6 +82,7 @@ type outboundMsg struct {
 	pkt        *protocol.PublishPacket
 	deliverQoS uint8
 	subOpts    SubscriptionOptions
+	expiresAt  time.Time // absolute Message Expiry Interval deadline; zero = none (MQTT 5.0 §3.3.2.3.2)
 }
 
 // maxBufferedOutbound caps the number of QoS 1/2 deliveries buffered per
@@ -91,13 +92,14 @@ const maxBufferedOutbound = 1000
 
 // InflightMsg tracks an in-flight QoS message.
 type InflightMsg struct {
-	PacketID uint16
-	QoS      uint8
-	Topic    string
-	Payload  []byte
-	Retain   bool
-	SentAt   time.Time
-	AckType  byte // PUBACK, PUBREC, PUBREL, PUBCOMP
+	PacketID  uint16
+	QoS       uint8
+	Topic     string
+	Payload   []byte
+	Retain    bool
+	SentAt    time.Time
+	ExpiresAt time.Time // absolute Message Expiry Interval deadline; zero = none (MQTT 5.0 §3.3.2.3.2)
+	AckType   byte      // PUBACK, PUBREC, PUBREL, PUBCOMP
 }
 
 // Manager manages all client sessions.
@@ -675,13 +677,13 @@ func (s *Session) ResetOutboundUnacked() {
 // window opens (P2-14). It reports whether the message was accepted; the queue
 // is bounded by maxBufferedOutbound so a client that never acknowledges cannot
 // exhaust memory (R6).
-func (s *Session) BufferOutbound(pkt *protocol.PublishPacket, deliverQoS uint8, subOpts SubscriptionOptions) bool {
+func (s *Session) BufferOutbound(pkt *protocol.PublishPacket, deliverQoS uint8, subOpts SubscriptionOptions, expiresAt time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.outboundQueue) >= maxBufferedOutbound {
 		return false
 	}
-	s.outboundQueue = append(s.outboundQueue, outboundMsg{pkt: pkt, deliverQoS: deliverQoS, subOpts: subOpts})
+	s.outboundQueue = append(s.outboundQueue, outboundMsg{pkt: pkt, deliverQoS: deliverQoS, subOpts: subOpts, expiresAt: expiresAt})
 	return true
 }
 

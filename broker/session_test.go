@@ -217,7 +217,7 @@ func TestSessionOutboundBuffer(t *testing.T) {
 	pkt.Topic = "buf/topic"
 	pkt.Payload = []byte("data")
 
-	sess.BufferOutbound(pkt, 1, SubscriptionOptions{QoS: 1})
+	sess.BufferOutbound(pkt, 1, SubscriptionOptions{QoS: 1}, time.Time{})
 	if sess.OutboundQueueLen() != 1 {
 		t.Fatalf("expected 1 buffered message, got %d", sess.OutboundQueueLen())
 	}
@@ -252,14 +252,14 @@ func TestOutboundBufferBounded(t *testing.T) {
 	pkt.Payload = []byte("x")
 
 	for i := 0; i < maxBufferedOutbound; i++ {
-		if !sess.BufferOutbound(pkt, 1, SubscriptionOptions{QoS: 1}) {
+		if !sess.BufferOutbound(pkt, 1, SubscriptionOptions{QoS: 1}, time.Time{}) {
 			t.Fatalf("buffer should accept message %d", i)
 		}
 	}
 	if got := sess.OutboundQueueLen(); got != maxBufferedOutbound {
 		t.Fatalf("expected buffer at %d, got %d", maxBufferedOutbound, got)
 	}
-	if sess.BufferOutbound(pkt, 1, SubscriptionOptions{QoS: 1}) {
+	if sess.BufferOutbound(pkt, 1, SubscriptionOptions{QoS: 1}, time.Time{}) {
 		t.Error("buffer should reject messages beyond maxBufferedOutbound")
 	}
 	if got := sess.OutboundQueueLen(); got != maxBufferedOutbound {

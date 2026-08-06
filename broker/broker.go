@@ -1375,14 +1375,24 @@ func (b *Broker) handleUnsubscribe(clientID string, sess *Session, pkt *protocol
 	b.metrics.SetSubscriptions(int(b.topics.SubscriberCount()))
 }
 
+// messageExpiresAt returns the absolute Message Expiry Interval deadline for a
+// PUBLISH, or the zero time if it has none (MQTT 5.0 §3.3.2.3.2).
+func messageExpiresAt(pkt *protocol.PublishPacket) time.Time {
+	if pkt.Properties != nil && pkt.Properties.MessageExpiryInterval != nil && *pkt.Properties.MessageExpiryInterval > 0 {
+		return time.Now().Add(time.Duration(*pkt.Properties.MessageExpiryInterval) * time.Second)
+	}
+	return time.Time{}
+}
+
 // deliverToClient sends a PUBLISH packet to a specific client.
 // It checks subscription matches and applies QoS downgrade. An offline
 // persistent-session subscriber has its message queued for later delivery
 // instead of silently dropped (P1-5).
 func (b *Broker) deliverToClient(clientID, sourceClientID string, pkt *protocol.PublishPacket) {
+	expiresAt := messageExpiresAt(pkt)
 	sess, ok := b.sessions.GetSession(clientID)
 	if !ok {
-		b.queueOfflineMessage(clientID, pkt)
+		b.queueOfflineMessage(clientID, pkt, expiresAt)
 		return
 	}
 	if sourceClientID != "" && clientID == sourceClientID && !sess.AllowsLocalPublish(pkt.Topic) {
@@ -1399,12 +1409,13 @@ func (b *Broker) deliverToClient(clientID, sourceClientID string, pkt *protocol.
 	if subQoS < deliverQoS {
 		deliverQoS = subQoS
 	}
-	b.doDeliver(clientID, pkt, deliverQoS, subOpts)
+	b.doDeliver(clientID, pkt, deliverQoS, expiresAt, subOpts)
 }
 
 // deliverToSharedClient delivers a PUBLISH to a shared subscription member.
 // MatchesSubscription is skipped — the match was already done by MatchShared.
 func (b *Broker) deliverToSharedClient(clientID, sourceClientID string, pkt *protocol.PublishPacket, subQoS uint8) {
+	expiresAt := messageExpiresAt(pkt)
 	sess, ok := b.sessions.GetSession(clientID)
 	if !ok {
 		return
@@ -1416,13 +1427,13 @@ func (b *Broker) deliverToSharedClient(clientID, sourceClientID string, pkt *pro
 	if subQoS < deliverQoS {
 		deliverQoS = subQoS
 	}
-	b.doDeliver(clientID, pkt, deliverQoS, SubscriptionOptions{QoS: subQoS})
+	b.doDeliver(clientID, pkt, deliverQoS, expiresAt, SubscriptionOptions{QoS: subQoS})
 }
 
 // queueOfflineMessage stores a QoS 1/2 message for an offline persistent
 // session so it can be delivered when the client reconnects (P1-5). QoS 0 is
 // fire-and-forget and is never queued.
-func (b *Broker) queueOfflineMessage(clientID string, pkt *protocol.PublishPacket) {
+func (b *Broker) queueOfflineMessage(clientID string, pkt *protocol.PublishPacket, expiresAt time.Time) {
 	if b.messageStore == nil || b.sessionStore == nil || pkt.FixedHeader.QoS == 0 {
 		return
 	}
@@ -1444,6 +1455,7 @@ func (b *Broker) queueOfflineMessage(clientID string, pkt *protocol.PublishPacke
 		Payload:   pkt.Payload,
 		Retain:    pkt.Retain,
 		Timestamp: time.Now(),
+		ExpiresAt: expiresAt,
 	}
 	if err := b.messageStore.SaveMessage(b.ctx, clientID, msg); err != nil {
 		b.metrics.IncErrors("message_store")
@@ -1465,6 +1477,15 @@ func (b *Broker) deliverQueuedMessages(clientID string, sess *Session) {
 		return
 	}
 	for _, msg := range msgs {
+		// Drop a queued message whose Message Expiry Interval has passed while
+		// the client was offline (§3.3.2.3.2).
+		if !msg.ExpiresAt.IsZero() && time.Now().After(msg.ExpiresAt) {
+			b.metrics.IncMessagesDropped("message_expired")
+			if err := b.messageStore.DeleteMessage(b.ctx, clientID, msg.ID); err != nil {
+				b.logger.Debug("failed to delete expired queued message", "clientID", clientID, "error", err)
+			}
+			continue
+		}
 		matches, subQoS, subOpts := sess.MatchesSubscription(msg.Topic)
 		if !matches {
 			continue
@@ -1485,7 +1506,14 @@ func (b *Broker) deliverQueuedMessages(clientID string, sess *Session) {
 			Topic:   msg.Topic,
 			Payload: msg.Payload,
 		}
-		b.doDeliver(clientID, pubPkt, deliverQoS, subOpts)
+		if !msg.ExpiresAt.IsZero() {
+			remaining := uint32(time.Until(msg.ExpiresAt).Seconds())
+			if remaining < 1 {
+				remaining = 1 // never advertise 0 (0 means "already expired")
+			}
+			pubPkt.Properties = &protocol.Properties{MessageExpiryInterval: &remaining}
+		}
+		b.doDeliver(clientID, pubPkt, deliverQoS, msg.ExpiresAt, subOpts)
 		if err := b.messageStore.DeleteMessage(b.ctx, clientID, msg.ID); err != nil {
 			b.logger.Debug("failed to delete queued message", "clientID", clientID, "error", err)
 		}
@@ -1495,9 +1523,16 @@ func (b *Broker) deliverQueuedMessages(clientID string, sess *Session) {
 // doDeliver performs the actual PUBLISH write after QoS negotiation.
 // If subscription options include a SubscriptionIdentifier, it is added to
 // the outgoing PUBLISH properties (MQTT 5.0 3.3.2.3.7).
-func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliverQoS uint8, subOpts ...SubscriptionOptions) {
+func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliverQoS uint8, expiresAt time.Time, subOpts ...SubscriptionOptions) {
 	sess, ok := b.sessions.GetSession(clientID)
 	if !ok {
+		return
+	}
+
+	// MQTT 5.0 §3.3.2.3.2: never onward-deliver a message whose Message Expiry
+	// Interval has passed.
+	if !expiresAt.IsZero() && time.Now().After(expiresAt) {
+		b.metrics.IncMessagesDropped("message_expired")
 		return
 	}
 
@@ -1511,7 +1546,7 @@ func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliver
 		if len(subOpts) > 0 {
 			opts = subOpts[0]
 		}
-		if !sess.BufferOutbound(pkt, deliverQoS, opts) {
+		if !sess.BufferOutbound(pkt, deliverQoS, opts, expiresAt) {
 			b.metrics.IncMessagesDropped("receive_max_buffered_overflow")
 			b.metrics.IncErrors("flow_control")
 			b.logger.Debug("outbound flow-control buffer full, dropping message",
@@ -1530,10 +1565,21 @@ func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliver
 		Payload: pkt.Payload,
 	}
 
-	// Include SubscriptionIdentifier from the matching subscription (MQTT 5.0).
-	if len(subOpts) > 0 && subOpts[0].SubscriptionIdentifier != nil {
-		pubPkt.Properties = &protocol.Properties{
-			SubscriptionIdentifier: subOpts[0].SubscriptionIdentifier,
+	// Include SubscriptionIdentifier from the matching subscription (MQTT 5.0),
+	// and the remaining Message Expiry Interval (§3.3.2.3.2).
+	if len(subOpts) > 0 && subOpts[0].SubscriptionIdentifier != nil || !expiresAt.IsZero() {
+		if pubPkt.Properties == nil {
+			pubPkt.Properties = &protocol.Properties{}
+		}
+		if len(subOpts) > 0 && subOpts[0].SubscriptionIdentifier != nil {
+			pubPkt.Properties.SubscriptionIdentifier = subOpts[0].SubscriptionIdentifier
+		}
+		if !expiresAt.IsZero() {
+			remaining := uint32(time.Until(expiresAt).Seconds())
+			if remaining < 1 {
+				remaining = 1 // never advertise 0 (0 means "already expired")
+			}
+			pubPkt.Properties.MessageExpiryInterval = &remaining
 		}
 	}
 
@@ -1542,12 +1588,13 @@ func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliver
 		// Track the outbound delivery so it can be retried until the client
 		// acknowledges it (NEW-1) and persisted across a disconnect (P2-3).
 		sess.AddInflight(&InflightMsg{
-			PacketID: pubPkt.PacketID,
-			QoS:      deliverQoS,
-			Topic:    pkt.Topic,
-			Payload:  pkt.Payload,
-			Retain:   pkt.Retain,
-			SentAt:   time.Now(),
+			PacketID:  pubPkt.PacketID,
+			QoS:       deliverQoS,
+			Topic:     pkt.Topic,
+			Payload:   pkt.Payload,
+			Retain:    pkt.Retain,
+			SentAt:    time.Now(),
+			ExpiresAt: expiresAt,
 		})
 		if deliverQoS == 1 {
 			_ = b.qos.TrackOutboundQoS1(clientID, pubPkt.PacketID, pkt.Topic, pkt.Payload, pkt.Retain)
@@ -1575,7 +1622,7 @@ func (b *Broker) flushBufferedOutbound(clientID string, sess *Session) {
 			return
 		}
 		msg, _ := sess.PopOutbound()
-		b.doDeliver(clientID, msg.pkt, msg.deliverQoS, msg.subOpts)
+		b.doDeliver(clientID, msg.pkt, msg.deliverQoS, msg.expiresAt, msg.subOpts)
 	}
 }
 
@@ -1598,6 +1645,7 @@ func (b *Broker) persistBufferedOutbound(clientID string, sess *Session) {
 			Payload:   msg.pkt.Payload,
 			Retain:    msg.pkt.Retain,
 			Timestamp: time.Now(),
+			ExpiresAt: msg.expiresAt,
 		}
 		if err := b.messageStore.SaveMessage(b.ctx, clientID, sm); err != nil {
 			b.metrics.IncErrors("message_store")
@@ -1664,8 +1712,10 @@ func (b *Broker) deliverRetainedMessages(clientID string, sess *Session, topicFi
 			Payload: msg.Payload,
 		}
 		// doDeliver applies flow control (buffering when the window is full),
-		// assigns the packet ID, and tracks the delivery (NEW-4).
-		b.doDeliver(clientID, pubPkt, deliverQoS, subOpts)
+		// assigns the packet ID, and tracks the delivery (NEW-4). Retained
+		// messages carry no per-message expiry here; their lifecycle is handled
+		// by the retained-message TTL (retained_expiry).
+		b.doDeliver(clientID, pubPkt, deliverQoS, time.Time{}, subOpts)
 	}
 }
 
@@ -1925,6 +1975,13 @@ func (b *Broker) republish(clientID string, packetID uint16, topic string, paylo
 	// client waiting on our PUBREC, so re-send the PUBREC.
 	if sess, ok := b.sessions.GetSession(clientID); ok {
 		if msg, found := sess.GetInflight(packetID); found && msg.QoS == qos {
+			// MQTT 5.0 §3.3.2.3.2: stop retrying once the Message Expiry
+			// Interval has passed.
+			if !msg.ExpiresAt.IsZero() && time.Now().After(msg.ExpiresAt) {
+				sess.RemoveInflight(packetID)
+				b.metrics.IncMessagesDropped("message_expired")
+				return nil
+			}
 			pub := &protocol.PublishPacket{
 				FixedHeader: protocol.FixedHeader{
 					PacketType: protocol.PacketTypePublish,

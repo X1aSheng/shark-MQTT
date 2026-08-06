@@ -16,6 +16,12 @@ This project uses semantic versioning. Pre-release tags use the form
   failed exchange ends with a DISCONNECT (AUTH packets only carry
   0x00/0x18/0x19). Re-authentication during a session is handled in the read
   loop.
+- **Message Expiry Interval fully enforced (MQTT 5.0 §3.3.2.3.2):** an absolute
+  expiry deadline is tracked per message and carried through the offline message
+  queue, the flow-control buffer, and the inflight retry. Expired queued
+  messages are dropped on reconnect instead of being delivered late; inflight
+  retries stop once the deadline passes; forwarded PUBLISHes carry the remaining
+  interval. (Retained messages are still governed by the retained-expiry TTL.)
 
 ### Review Round V7 (2026-08-06) - reference comparison
 

@@ -44,6 +44,7 @@ type StoredMessage struct {
 	Payload   []byte
 	Retain    bool
 	Timestamp time.Time
+	ExpiresAt time.Time // absolute Message Expiry Interval deadline; zero = none (MQTT 5.0 §3.3.2.3.2)
 }
 
 // RetainedMessage represents a retained message.
