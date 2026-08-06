@@ -36,6 +36,9 @@ func TestDecodePublishAllocs(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short mode")
 	}
+	if raceEnabled {
+		t.Skip("allocation counts are not meaningful under the race detector")
+	}
 	v4 := decodeAllocsPerRun(t, 4, 256)
 	if v4 >= 10 {
 		t.Errorf("3.1.1 DecodePublish allocated %.0f/op (R2 expected < 10)", v4)
