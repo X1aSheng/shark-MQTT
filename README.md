@@ -1,5 +1,7 @@
 # Shark-MQTT
 
+> **English** | [简体中文](README.zh-CN.md)
+
 A high-performance MQTT Broker written in Go, supporting both **MQTT 3.1.1** and **MQTT 5.0** protocols.
 
 **Project version baseline: 1.0.0**
