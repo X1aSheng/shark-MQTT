@@ -27,6 +27,10 @@ This project uses semantic versioning. Pre-release tags use the form
   redis 9.7→9.22, x/crypto 0.53→0.54, plus transitive deps. `govulncheck`
   reports the 8 standard-library advisories are fixed by **Go 1.26.2+** (the
   local toolchain is 1.26.1); imported-package advisories are unreachable.
+- **Configurable bcrypt cost:** `StaticAuth.SetBcryptCost(N)` sets the work
+  factor for `SetHashedPassword` (default 10); lower costs trade weaker hash
+  resistance for faster logins at high connection rates. Verification always
+  uses the cost embedded in the stored hash.
 
 ### Protocol gaps (2026-08-06)
 

@@ -54,6 +54,7 @@ type StaticAuth struct {
 	mu          sync.RWMutex
 	credentials map[string]string // username -> password
 	acls        map[string]*ACL   // username -> ACL
+	bcryptCost  int               // cost for SetHashedPassword; bcrypt.DefaultCost unless overridden
 }
 
 var (
@@ -76,7 +77,18 @@ func NewStaticAuth() *StaticAuth {
 	return &StaticAuth{
 		credentials: make(map[string]string),
 		acls:        make(map[string]*ACL),
+		bcryptCost:  bcrypt.DefaultCost,
 	}
+}
+
+// SetBcryptCost sets the bcrypt work factor used by SetHashedPassword.
+// Lower costs are faster (useful at high connection rates) at the expense of
+// weaker hash resistance; the cost is stored in the generated hash itself, so
+// verification always uses the hash's own cost regardless of this setting.
+func (s *StaticAuth) SetBcryptCost(cost int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.bcryptCost = cost
 }
 
 // AddCredentials adds username/password pair. Passwords are stored as-is
@@ -91,7 +103,10 @@ func (s *StaticAuth) AddCredentials(username, password string) {
 // automatically bcrypt-hashed before storage. This is the recommended method
 // for production use to avoid storing plaintext passwords in memory.
 func (s *StaticAuth) SetHashedPassword(username, password string) error {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	s.mu.RLock()
+	cost := s.bcryptCost
+	s.mu.RUnlock()
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), cost)
 	if err != nil {
 		return err
 	}

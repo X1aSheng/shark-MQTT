@@ -378,3 +378,19 @@ func TestChainAuthFailsClosedForRecognizedUser(t *testing.T) {
 		t.Fatalf("valid credentials failed: %v", err)
 	}
 }
+
+// TestStaticAuth_SetBcryptCost verifies a lowered bcrypt cost still produces
+// verifiable credentials (the cost is embedded in the hash).
+func TestStaticAuth_SetBcryptCost(t *testing.T) {
+	a := NewStaticAuth()
+	a.SetBcryptCost(4) // minimum cost, fast
+	if err := a.SetHashedPassword("user", "pass"); err != nil {
+		t.Fatalf("SetHashedPassword: %v", err)
+	}
+	if err := a.Authenticate(context.Background(), "c", "user", "pass"); err != nil {
+		t.Errorf("expected auth success with cost 4: %v", err)
+	}
+	if err := a.Authenticate(context.Background(), "c", "user", "wrong"); err == nil {
+		t.Error("expected auth failure for wrong password")
+	}
+}
