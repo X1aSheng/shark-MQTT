@@ -265,6 +265,48 @@ Add to your CI pipeline:
 
 ---
 
+## Deployment Runtime Tuning
+
+Recommendations for tuning the broker for production workloads. All knobs are
+optional; defaults are sensible for general use.
+
+### Go runtime
+
+- **`GOMEMLIMIT`** — set a soft memory limit so the GC stays ahead of the heap
+  instead of reacting to it. Recommended: 80% of the container/instance RAM,
+  e.g. `GOMEMLIMIT=8GiB` for a 10GiB heap budget. Improves latency
+  predictability under load.
+- **`GOGC`** — the default `100` (GC when heap doubles) is a good throughput
+  choice. For lower tail latency, raise it (e.g. `200`) to GC less often and
+  let `GOMEMLIMIT` bound the heap.
+- **`GOMAXPROCS`** — leave unset; Go uses all CPUs by default. For noisy
+  neighbours in shared VMs you may cap it, but measure first.
+
+### Broker options
+
+| Knob | Default | Guidance |
+| --- | --- | --- |
+| `write_queue_size` | `256` | Larger absorbs bursts to slow subscribers but uses more memory per connection; smaller increases backpressure (drops for QoS 0). |
+| `qos_max_inflight` | `100` | Per-client QoS 1/2 in-flight cap. Raise for clients that expect deep pipelining; lower to bound memory. |
+| `latency_sampling` (`WithLatencySampling`) | `1` | 0 disables latency histogram observation (cheapest); N observes 1 in N. Reduces per-message overhead under Prometheus metrics. |
+| `sys_interval` | `30s` | `$SYS` status publish interval; 0 disables. |
+| `retained_expiry` | `0` | TTL for retained messages; set for bounded retained storage. |
+
+### Authentication
+
+- **bcrypt cost** — `StaticAuth.SetBcryptCost(N)` controls the work factor for
+  `SetHashedPassword`. The default `10` (~50–100ms CPU per login) is fine for
+  moderate connection rates; lower it (e.g. `4`) for very high connect rates,
+  accepting weaker hash resistance. Verification cost is embedded in the hash.
+
+### Measuring
+
+Benchmark with `make bench` and compare changes with `benchstat`. The
+`tests/bench` suite covers E2E QoS 0/1/2, fan-out, payload sizes, and
+micro-benchmarks for the codec, topic tree, QoS engine, and session manager.
+
+---
+
 ## See Also
 
 - [Testing Guide](guides/TESTING)
