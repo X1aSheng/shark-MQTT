@@ -31,6 +31,12 @@ This project uses semantic versioning. Pre-release tags use the form
   factor for `SetHashedPassword` (default 10); lower costs trade weaker hash
   resistance for faster logins at high connection rates. Verification always
   uses the cost embedded in the stored hash.
+- **QoS 2 path (evaluated):** the remaining allocations are structural — the
+  QoS engine/session inflight records and ack packet bodies are escaping
+  references that cannot be safely pooled. Attempting to pool the fixed-header
+  write buffer measured *worse* (the compiler already stack-allocates it) and
+  was reverted. QoS 2's ~2x latency over QoS 1 is inherent to the mandatory
+  4-way handshake. Already-applied decode/match optimizations cover this path.
 
 ### Protocol gaps (2026-08-06)
 
