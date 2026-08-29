@@ -30,14 +30,24 @@ func (s *sessionStore) SaveSession(ctx context.Context, clientID string, data *s
 		delete(s.sessions, clientID)
 		return nil
 	}
-	// Store a copy to prevent callers from modifying internal state
+	// Store a deep copy so callers cannot modify internal state after saving
+	// (mirrors GetSession's defensive copying; previously only the Inflight
+	// message structs were copied, sharing their payload backing arrays).
 	copied := *data
 	if data.Inflight != nil {
 		copied.Inflight = make(map[uint16]*store.InflightMessage, len(data.Inflight))
 		for k, v := range data.Inflight {
 			msgCopy := *v
+			if v.Payload != nil {
+				msgCopy.Payload = make([]byte, len(v.Payload))
+				copy(msgCopy.Payload, v.Payload)
+			}
 			copied.Inflight[k] = &msgCopy
 		}
+	}
+	if data.Subscriptions != nil {
+		copied.Subscriptions = make([]store.Subscription, len(data.Subscriptions))
+		copy(copied.Subscriptions, data.Subscriptions)
 	}
 	s.sessions[clientID] = &copied
 	return nil

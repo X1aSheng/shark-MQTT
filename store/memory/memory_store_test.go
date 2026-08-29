@@ -375,3 +375,38 @@ func TestRetainedStore_ConcurrentAccess(t *testing.T) {
 		<-done
 	}
 }
+
+func TestSessionStore_SaveIsolation(t *testing.T) {
+	ctx := context.Background()
+	s := NewSessionStore()
+
+	payload := []byte("original-payload")
+	data := &store.SessionData{
+		ClientID: "isolate-client",
+		Subscriptions: []store.Subscription{
+			{Topic: "a/b", QoS: 1},
+		},
+		Inflight: map[uint16]*store.InflightMessage{
+			1: {PacketID: 1, QoS: 1, Topic: "a/b", Payload: payload},
+		},
+	}
+	if err := s.SaveSession(ctx, data.ClientID, data); err != nil {
+		t.Fatalf("SaveSession failed: %v", err)
+	}
+
+	// Mutating the caller's data after Save must not affect the store.
+	payload[0] = 'X'
+	data.Subscriptions[0].Topic = "mutated"
+	data.Inflight[1].Payload[0] = 'Y'
+
+	got, err := s.GetSession(ctx, data.ClientID)
+	if err != nil {
+		t.Fatalf("GetSession failed: %v", err)
+	}
+	if got.Subscriptions[0].Topic != "a/b" {
+		t.Errorf("subscription leaked after save: got %q", got.Subscriptions[0].Topic)
+	}
+	if string(got.Inflight[1].Payload) != "original-payload" {
+		t.Errorf("inflight payload leaked after save: got %q", string(got.Inflight[1].Payload))
+	}
+}
