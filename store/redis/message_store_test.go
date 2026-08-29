@@ -4,6 +4,7 @@ package redis
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -341,5 +342,102 @@ func BenchmarkMessageStore_List(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		ms.ListMessages(ctx, "bench-client")
+	}
+}
+
+// TestMessageStore_TTLFollowsExpiry verifies a queued message with a Message
+// Expiry Interval is not deleted by the storage-side TTL before the broker's
+// own expiry deadline (S5): the key must live at least until ExpiresAt.
+func TestMessageStore_TTLFollowsExpiry(t *testing.T) {
+	skipIfNoRedis(t)
+
+	client := newTestClient(t)
+	defer client.Close()
+	cleanupTestDB(t, client)
+
+	ctx := context.Background()
+	ms := NewMessageStore(MessageStoreConfig{
+		Client:    client,
+		KeyPrefix: "test:message:",
+		TTL:       time.Hour, // long default; ExpiresAt must override it
+	})
+
+	clientID := "test-msg-expiry"
+	msg := &store.StoredMessage{
+		ID:        "msg-exp-1",
+		Topic:     "test/topic",
+		QoS:       1,
+		Payload:   []byte("expiring"),
+		ExpiresAt: time.Now().Add(200 * time.Millisecond),
+	}
+
+	if err := ms.SaveMessage(ctx, clientID, msg); err != nil {
+		t.Fatalf("SaveMessage failed: %v", err)
+	}
+
+	// The Redis TTL must follow ExpiresAt (~200ms), not the 1h default.
+	ttl, err := client.PTTL(ctx, ms.messageKey(clientID, msg.ID)).Result()
+	if err != nil {
+		t.Fatalf("PTTL failed: %v", err)
+	}
+	if ttl <= 0 || ttl > time.Second {
+		t.Errorf("expected TTL near 200ms, got %v", ttl)
+	}
+
+	// After the expiry deadline the message must be gone.
+	time.Sleep(400 * time.Millisecond)
+	if _, err := ms.GetMessage(ctx, clientID, msg.ID); err != store.ErrMessageNotFound {
+		t.Errorf("expected ErrMessageNotFound after expiry, got %v", err)
+	}
+}
+
+// TestMessageStore_ListMessages_Many verifies the batch-fetch path (S2):
+// more than one SCAN page (100 keys) of queued messages are all returned via a
+// single MGet, with no message lost across pages.
+func TestMessageStore_ListMessages_Many(t *testing.T) {
+	skipIfNoRedis(t)
+
+	client := newTestClient(t)
+	defer client.Close()
+	cleanupTestDB(t, client)
+
+	ctx := context.Background()
+	ms := NewMessageStore(MessageStoreConfig{
+		Client:    client,
+		KeyPrefix: "test:message:",
+		TTL:       time.Hour,
+	})
+
+	const total = 120 // spans two SCAN pages (page size 100)
+	clientID := "test-list-many"
+	for i := 0; i < total; i++ {
+		msg := &store.StoredMessage{
+			ID:      fmt.Sprintf("msg-%03d", i),
+			Topic:   "test/topic",
+			QoS:     1,
+			Payload: []byte(fmt.Sprintf("payload-%d", i)),
+		}
+		if err := ms.SaveMessage(ctx, clientID, msg); err != nil {
+			t.Fatalf("SaveMessage %d failed: %v", i, err)
+		}
+	}
+
+	messages, err := ms.ListMessages(ctx, clientID)
+	if err != nil {
+		t.Fatalf("ListMessages failed: %v", err)
+	}
+	if len(messages) != total {
+		t.Fatalf("expected %d messages, got %d", total, len(messages))
+	}
+
+	seen := make(map[string]bool, total)
+	for _, m := range messages {
+		seen[m.ID] = true
+	}
+	for i := 0; i < total; i++ {
+		id := fmt.Sprintf("msg-%03d", i)
+		if !seen[id] {
+			t.Errorf("message %s missing from ListMessages result", id)
+		}
 	}
 }

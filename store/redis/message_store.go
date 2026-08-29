@@ -59,7 +59,19 @@ func (s *MessageStore) SaveMessage(ctx context.Context, clientID string, msg *st
 	if err != nil {
 		return fmt.Errorf("serialize message: %w", err)
 	}
-	return s.client.Set(ctx, s.messageKey(clientID, msg.ID), serialized, s.ttl).Err()
+	// Keep the key alive at least as long as the message's own expiry
+	// deadline (Message Expiry Interval), so the broker's expiry handling —
+	// not a storage-side TTL — decides when a queued message disappears (S5).
+	// Messages without an expiry deadline keep the configured default TTL.
+	ttl := s.ttl
+	if msg != nil && !msg.ExpiresAt.IsZero() {
+		if d := time.Until(msg.ExpiresAt); d > 0 {
+			ttl = d
+		} else {
+			ttl = time.Second // already expired; dropped on next delivery pass
+		}
+	}
+	return s.client.Set(ctx, s.messageKey(clientID, msg.ID), serialized, ttl).Err()
 }
 
 func (s *MessageStore) GetMessage(ctx context.Context, clientID, id string) (*store.StoredMessage, error) {
@@ -82,28 +94,42 @@ func (s *MessageStore) DeleteMessage(ctx context.Context, clientID, id string) e
 }
 
 func (s *MessageStore) ListMessages(ctx context.Context, clientID string) ([]*store.StoredMessage, error) {
-	var messages []*store.StoredMessage
-	var cursor uint64
 	pattern := s.clientPattern(clientID)
 
+	// Collect the matching keys first, then fetch all values with a single
+	// MGet instead of one GET per key: an offline persistent session's queue
+	// is drained on reconnect, so a large queue would otherwise cost one
+	// round-trip per message (S2).
+	var keys []string
+	var cursor uint64
 	for {
-		keys, nextCursor, err := s.client.Scan(ctx, cursor, pattern, 100).Result()
+		batch, nextCursor, err := s.client.Scan(ctx, cursor, pattern, 100).Result()
 		if err != nil {
 			return nil, fmt.Errorf("scan messages: %w", err)
 		}
-		for _, key := range keys {
-			val, err := s.client.Get(ctx, key).Result()
-			if err != nil {
-				continue
-			}
-			var msg store.StoredMessage
-			if err := json.Unmarshal([]byte(val), &msg); err == nil {
-				messages = append(messages, &msg)
-			}
-		}
+		keys = append(keys, batch...)
 		cursor = nextCursor
 		if cursor == 0 {
 			break
+		}
+	}
+	if len(keys) == 0 {
+		return nil, nil
+	}
+
+	vals, err := s.client.MGet(ctx, keys...).Result()
+	if err != nil {
+		return nil, fmt.Errorf("get messages: %w", err)
+	}
+	messages := make([]*store.StoredMessage, 0, len(keys))
+	for _, v := range vals {
+		raw, ok := v.(string)
+		if !ok {
+			continue // key expired or was deleted between SCAN and MGet
+		}
+		var msg store.StoredMessage
+		if err := json.Unmarshal([]byte(raw), &msg); err == nil {
+			messages = append(messages, &msg)
 		}
 	}
 	return messages, nil

@@ -55,7 +55,25 @@ func (s *SessionStore) SaveSession(ctx context.Context, clientID string, data *s
 	if err != nil {
 		return fmt.Errorf("serialize session: %w", err)
 	}
-	return s.client.Set(ctx, s.sessionKey(clientID), serialized, s.ttl).Err()
+	// Align the Redis key TTL with the broker's session expiry semantics (S5):
+	// a fixed default TTL can delete a session before the broker's negotiated
+	// Session Expiry Interval, silently turning a reconnect into a new session
+	// (SessionPresent=0). Prefer the absolute ExpiryTime persisted by
+	// Session.Save, then the expiry interval; fall back to the configured TTL
+	// for sessions that carry no expiry information.
+	ttl := s.ttl
+	if data != nil {
+		switch {
+		case !data.ExpiryTime.IsZero():
+			ttl = time.Until(data.ExpiryTime)
+			if ttl <= 0 {
+				ttl = time.Second // already expired; the cleanup loop removes it
+			}
+		case data.ExpiryInterval > 0:
+			ttl = time.Duration(data.ExpiryInterval) * time.Second
+		}
+	}
+	return s.client.Set(ctx, s.sessionKey(clientID), serialized, ttl).Err()
 }
 
 func (s *SessionStore) GetSession(ctx context.Context, clientID string) (*store.SessionData, error) {

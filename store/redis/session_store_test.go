@@ -307,3 +307,96 @@ func BenchmarkSessionStore_Get(b *testing.B) {
 		ss.GetSession(ctx, "bench-get-"+string(rune(i%prePop)))
 	}
 }
+
+// TestSessionStore_TTLFollowsExpiryTime verifies the Redis key TTL tracks the
+// session's expiry semantics instead of the fixed default (S5): a session with
+// a short absolute ExpiryTime must disappear shortly after that deadline even
+// when the configured default TTL is much longer, so a reconnect after the
+// broker-side expiry is not silently treated as a fresh session.
+func TestSessionStore_TTLFollowsExpiryTime(t *testing.T) {
+	skipIfNoRedis(t)
+
+	client := newTestClient(t)
+	defer client.Close()
+	cleanupTestDB(t, client)
+
+	ctx := context.Background()
+	ss := NewSessionStore(SessionStoreConfig{
+		Client:    client,
+		KeyPrefix: "test:session:",
+		TTL:       time.Hour, // long default; ExpiryTime must override it
+	})
+
+	data := &store.SessionData{
+		ClientID:   "test-expiry-ttl",
+		IsClean:    false,
+		ExpiryTime: time.Now().Add(200 * time.Millisecond),
+	}
+
+	if err := ss.SaveSession(ctx, data.ClientID, data); err != nil {
+		t.Fatalf("SaveSession failed: %v", err)
+	}
+
+	// The key must exist immediately.
+	exists, err := ss.IsSessionExists(ctx, data.ClientID)
+	if err != nil {
+		t.Fatalf("IsSessionExists failed: %v", err)
+	}
+	if !exists {
+		t.Fatal("expected session to exist immediately after save")
+	}
+
+	// The Redis TTL must be driven by ExpiryTime (~200ms), not the 1h default.
+	ttl, err := client.PTTL(ctx, ss.sessionKey(data.ClientID)).Result()
+	if err != nil {
+		t.Fatalf("PTTL failed: %v", err)
+	}
+	if ttl <= 0 || ttl > time.Second {
+		t.Errorf("expected TTL near 200ms, got %v", ttl)
+	}
+
+	// After the expiry deadline the session must be gone.
+	time.Sleep(400 * time.Millisecond)
+	exists, err = ss.IsSessionExists(ctx, data.ClientID)
+	if err != nil {
+		t.Fatalf("IsSessionExists failed: %v", err)
+	}
+	if exists {
+		t.Error("expected session to expire with ExpiryTime, got still-existing session")
+	}
+}
+
+// TestSessionStore_TTLFollowsExpiryInterval verifies the TTL falls back to the
+// session's expiry interval when no absolute ExpiryTime is present (S5).
+func TestSessionStore_TTLFollowsExpiryInterval(t *testing.T) {
+	skipIfNoRedis(t)
+
+	client := newTestClient(t)
+	defer client.Close()
+	cleanupTestDB(t, client)
+
+	ctx := context.Background()
+	ss := NewSessionStore(SessionStoreConfig{
+		Client:    client,
+		KeyPrefix: "test:session:",
+		TTL:       time.Hour, // long default; ExpiryInterval must override it
+	})
+
+	data := &store.SessionData{
+		ClientID:       "test-expiry-interval",
+		IsClean:        false,
+		ExpiryInterval: 2, // 2 seconds
+	}
+
+	if err := ss.SaveSession(ctx, data.ClientID, data); err != nil {
+		t.Fatalf("SaveSession failed: %v", err)
+	}
+
+	ttl, err := client.PTTL(ctx, ss.sessionKey(data.ClientID)).Result()
+	if err != nil {
+		t.Fatalf("PTTL failed: %v", err)
+	}
+	if ttl <= time.Second || ttl > 3*time.Second {
+		t.Errorf("expected TTL near 2s, got %v", ttl)
+	}
+}

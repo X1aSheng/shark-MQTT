@@ -84,30 +84,44 @@ func (s *RetainedStore) MatchRetained(ctx context.Context, pattern string) ([]*s
 	// Convert MQTT topic pattern to Redis glob pattern
 	redisPattern := s.keyPrefix + topicPatternToRedis(pattern)
 
-	var messages []*store.RetainedMessage
+	// Collect matching keys first, then batch-fetch values with a single MGet
+	// (S2): a wildcard retained match previously cost one GET round-trip per
+	// candidate key.
+	var keys []string
 	var cursor uint64
-
 	for {
-		keys, nextCursor, err := s.client.Scan(ctx, cursor, redisPattern, 100).Result()
+		batch, nextCursor, err := s.client.Scan(ctx, cursor, redisPattern, 100).Result()
 		if err != nil {
 			return nil, fmt.Errorf("scan retained: %w", err)
 		}
-		for _, key := range keys {
-			val, err := s.client.Get(ctx, key).Result()
-			if err != nil {
-				continue
-			}
-			var msg store.RetainedMessage
-			if err := json.Unmarshal([]byte(val), &msg); err == nil {
-				// Verify topic matches MQTT pattern (not just Redis pattern)
-				if protocol.MatchTopic(pattern, msg.Topic) {
-					messages = append(messages, &msg)
-				}
-			}
-		}
+		keys = append(keys, batch...)
 		cursor = nextCursor
 		if cursor == 0 {
 			break
+		}
+	}
+	if len(keys) == 0 {
+		return nil, nil
+	}
+
+	vals, err := s.client.MGet(ctx, keys...).Result()
+	if err != nil {
+		return nil, fmt.Errorf("get retained: %w", err)
+	}
+
+	var messages []*store.RetainedMessage
+	for _, v := range vals {
+		raw, ok := v.(string)
+		if !ok {
+			continue // key expired or was deleted between SCAN and MGet
+		}
+		var msg store.RetainedMessage
+		if err := json.Unmarshal([]byte(raw), &msg); err != nil {
+			continue
+		}
+		// Verify topic matches MQTT pattern (not just Redis pattern).
+		if protocol.MatchTopic(pattern, msg.Topic) {
+			messages = append(messages, &msg)
 		}
 	}
 	return messages, nil
