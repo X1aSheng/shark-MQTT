@@ -335,20 +335,28 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 		sess.publishRate.SetMaxRate(b.opts.maxPublishRate)
 	}
 
-	// Set session expiry interval (MQTT 5.0 §3.1.2.11.2).
-	// Use the smaller of client-requested and server-configured values.
+	// Set session expiry interval (MQTT 5.0 §3.1.2.11.2). An explicit 0 from
+	// the client means "end the session when the network connection closes"
+	// and must be honored; an absent property defaults to the
+	// server-configured maximum (the server may extend the session), and
+	// values above the server maximum are capped.
 	if connectPkt.Flags.CleanSession {
 		sess.ExpiryInterval = 0
 	} else {
 		serverMax := uint32(b.opts.sessionExpiry.Seconds())
 		clientVal := uint32(0)
+		explicit := false
 		if connectPkt.Properties != nil && connectPkt.Properties.SessionExpiryInterval != nil {
 			clientVal = *connectPkt.Properties.SessionExpiryInterval
+			explicit = true
 		}
-		if clientVal > 0 && clientVal < serverMax {
+		switch {
+		case explicit && clientVal == 0:
+			sess.ExpiryInterval = 0 // session ends when the connection closes
+		case clientVal > 0 && clientVal < serverMax:
 			sess.ExpiryInterval = clientVal
-		} else {
-			sess.ExpiryInterval = serverMax
+		default:
+			sess.ExpiryInterval = serverMax // absent property or capped
 		}
 	}
 
@@ -863,11 +871,24 @@ func (b *Broker) disconnect(clientID string, conn net.Conn) {
 	// connection's will (P2-10).
 
 	// Persist session BEFORE taking the lock, since Save() is a heavy
-	// operation that should not block connection registration.
+	// operation that should not block connection registration. A session
+	// with Session Expiry Interval 0 ends when the connection closes
+	// (MQTT 5.0 §3.1.2.11.2): it is not saved, and any previously stored
+	// state is removed.
 	if sess, ok := b.sessions.GetSession(clientID); ok && !sess.IsClean && b.sessionStore != nil {
-		if err := sess.Save(b.ctx, b.sessionStore); err != nil {
-			b.logger.Debug("failed to save session", "clientID", clientID, "error", err)
-			b.metrics.IncErrors("session_save")
+		if sess.ExpiryInterval > 0 {
+			if err := sess.Save(b.ctx, b.sessionStore); err != nil {
+				b.logger.Debug("failed to save session", "clientID", clientID, "error", err)
+				b.metrics.IncErrors("session_save")
+			}
+		} else {
+			if err := b.sessionStore.DeleteSession(b.ctx, clientID); err != nil {
+				b.logger.Debug("failed to delete expired session", "clientID", clientID, "error", err)
+				b.metrics.IncErrors("session_save")
+			}
+			if b.messageStore != nil {
+				_ = b.messageStore.ClearMessages(b.ctx, clientID)
+			}
 		}
 	}
 
@@ -960,6 +981,18 @@ func (b *Broker) readLoop(clientID string, sess *Session, codec *protocol.Codec,
 				},
 			})
 		case *protocol.DisconnectPacket:
+			// MQTT 5.0 §3.14.2.2.2: the DISCONNECT may carry a new Session
+			// Expiry Interval that overrides the one from CONNECT (0 = the
+			// session ends now; values are capped at the server maximum).
+			if p.Properties != nil && p.Properties.SessionExpiryInterval != nil {
+				v := *p.Properties.SessionExpiryInterval
+				if serverMax := uint32(b.opts.sessionExpiry.Seconds()); v > serverMax {
+					v = serverMax
+				}
+				sess.mu.Lock()
+				sess.ExpiryInterval = v
+				sess.mu.Unlock()
+			}
 			b.logger.Info("graceful disconnect", "clientID", clientID)
 			b.gracefulDisconnect(clientID, conn)
 			return
@@ -1843,7 +1876,12 @@ func (b *Broker) buildConnAckProperties(sess *Session) *protocol.Properties {
 		xretainAvailable = 1
 	}
 	wildcardAvailable := byte(1)
-	subIDAvailable := byte(0)
+	// The broker fully supports Subscription Identifiers (MQTT 5.0 §3.8.2.1.2):
+	// the SUBSCRIBE packet-level SubscriptionIdentifier property is parsed and
+	// stored per subscription, and the identifier is echoed back in delivered
+	// PUBLISH packets (§3.3.2.3.7). Advertise support so clients are not
+	// misled by a SubIDAvailable=0 CONNACK.
+	subIDAvailable := byte(1)
 	sharedSubAvailable := byte(1)
 
 	receiveMax := sess.ReceiveMax
