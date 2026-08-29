@@ -496,3 +496,75 @@ func TestStructuredBinaryPayload(t *testing.T) {
 	pubConn.Close()
 	subConn.Close()
 }
+
+// TestOverlappingSubscriptionsMaxQoS verifies that overlapping filters deliver
+// once at the maximum matching subscription QoS (MQTT 3.1.1 §3.3.5 / 5.0
+// §3.3.5). Previously the delivered QoS depended on map iteration order, so a
+// QoS 1 publish could randomly arrive as QoS 0 or QoS 1.
+func TestOverlappingSubscriptionsMaxQoS(t *testing.T) {
+	broker := testBroker(t)
+
+	subConn := dialTestBroker(t, broker)
+	subCodec := protocol.NewCodec(0)
+	connectClient(t, subConn, subCodec, "overlap-maxqos-sub")
+
+	// Two overlapping filters: QoS 0 (exact) and QoS 2 (wildcard).
+	subPkt := &protocol.SubscribePacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe, QoS: 1},
+		PacketID:    1,
+		Topics: []protocol.TopicFilter{
+			{Topic: "sensors/room1/temperature", QoS: 0},
+			{Topic: "sensors/+/temperature", QoS: 2},
+		},
+	}
+	subConn.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := subCodec.Encode(subConn, subPkt); err != nil {
+		t.Fatalf("SUBSCRIBE: %v", err)
+	}
+	subConn.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err := subCodec.Decode(subConn); err != nil {
+		t.Fatalf("SUBACK: %v", err)
+	}
+
+	// Publish QoS 1: delivery QoS must be min(1, max(0,2)) = 1, never 0.
+	pubConn := dialTestBroker(t, broker)
+	pubCodec := protocol.NewCodec(0)
+	connectClient(t, pubConn, pubCodec, "overlap-maxqos-pub")
+	pubPkt := &protocol.PublishPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 1},
+		PacketID:    1,
+		Topic:       "sensors/room1/temperature",
+		Payload:     []byte("22.5"),
+	}
+	pubConn.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := pubCodec.Encode(pubConn, pubPkt); err != nil {
+		t.Fatalf("PUBLISH: %v", err)
+	}
+	pubConn.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err := pubCodec.Decode(pubConn); err != nil {
+		t.Fatalf("PUBACK: %v", err)
+	}
+
+	received := collectPublishes(t, subConn, subCodec, 1, 500*time.Millisecond)
+	if len(received) != 1 {
+		t.Fatalf("expected exactly 1 delivery, got %d", len(received))
+	}
+	if received[0].FixedHeader.QoS != 1 {
+		t.Errorf("expected delivery QoS 1 (min of publish QoS 1 and max sub QoS 2), got %d",
+			received[0].FixedHeader.QoS)
+	}
+
+	// Acknowledge the QoS 1 delivery so the broker's retry loop does not
+	// resend it during the test window.
+	ack := &protocol.PubAckPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePubAck},
+		PacketID:    received[0].PacketID,
+	}
+	subConn.SetDeadline(time.Now().Add(time.Second))
+	if err := subCodec.Encode(subConn, ack); err != nil {
+		t.Fatalf("PUBACK: %v", err)
+	}
+
+	pubConn.Close()
+	subConn.Close()
+}

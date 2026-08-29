@@ -155,6 +155,48 @@ func TestSessionSubscriptions(t *testing.T) {
 	}
 }
 
+func TestSessionMatchesSubscriptionMaxQoS(t *testing.T) {
+	// Overlapping filters must yield a single match at the MAXIMUM QoS
+	// (MQTT 3.1.1 §3.3.5 / 5.0 §3.3.5), independent of map iteration order.
+	mgr := NewManager(nil)
+	sess := mgr.CreateSession("maxqos-client", &protocol.ConnectPacket{
+		ProtocolVersion: protocol.Version311,
+		Flags:           protocol.ConnectFlags{CleanSession: true},
+		KeepAlive:       60,
+		ClientID:        "maxqos-client",
+	}, false)
+
+	sess.AddSubscription("home/#", 0)
+	sess.AddSubscription("home/temp", 2)
+
+	matches, qos, _ := sess.MatchesSubscription("home/temp")
+	if !matches {
+		t.Fatal("expected match")
+	}
+	if qos != 2 {
+		t.Errorf("expected max QoS 2, got %d", qos)
+	}
+
+	// Shared subscription filters merge too.
+	sess.AddSubscription("$share/g/home/#", 1)
+	matches, qos, _ = sess.MatchesSubscription("home/temp")
+	if !matches {
+		t.Fatal("expected match with shared filter")
+	}
+	if qos != 2 {
+		t.Errorf("expected max QoS 2 with shared filter present, got %d", qos)
+	}
+
+	// Retained variant applies the same rule.
+	matches, qos, _ = sess.MatchesRetainedSubscription("home/temp")
+	if !matches {
+		t.Fatal("expected retained match")
+	}
+	if qos != 2 {
+		t.Errorf("expected retained max QoS 2, got %d", qos)
+	}
+}
+
 func TestSessionNextPacketID(t *testing.T) {
 	sess := &Session{
 		packetIDSeq: 1,

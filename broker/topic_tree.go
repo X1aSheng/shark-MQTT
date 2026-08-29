@@ -87,6 +87,35 @@ type Subscriber struct {
 	QoS      uint8
 }
 
+// matchVisitedPool reuses the subscriber-dedup map in Match. A fresh
+// make(map[string]struct{}) per call is a measurable allocator on the publish
+// hot path (Match runs once per published message); the map is cleared and
+// returned to the pool afterwards. Maps that grew large (deep '#' fan-out)
+// are dropped instead of pooled so the pool does not pin large heaps.
+var matchVisitedPool = sync.Pool{
+	New: func() any { return make(map[string]uint8, 8) },
+}
+
+// addSubscriber records a subscriber match, keeping the highest QoS when the
+// same client matches via multiple filters. MQTT 3.1.1 §3.3.5 / 5.0 §3.3.5
+// require a single delivery at the maximum QoS of all matching subscriptions;
+// previously the first (map-order-random) match won, making the delivered QoS
+// nondeterministic.
+func addSubscriber(results *[]Subscriber, visited map[string]uint8, clientID string, qos uint8) {
+	if old, ok := visited[clientID]; !ok {
+		visited[clientID] = qos
+		*results = append(*results, Subscriber{ClientID: clientID, QoS: qos})
+	} else if qos > old {
+		visited[clientID] = qos
+		for i := range *results {
+			if (*results)[i].ClientID == clientID {
+				(*results)[i].QoS = qos
+				return
+			}
+		}
+	}
+}
+
 // Match finds all subscribers that match a given topic.
 // Implements MQTT §4.7.2: topics starting with $ are not matched by + or #
 // wildcards unless the subscription filter also starts with $.
@@ -98,7 +127,15 @@ func (tt *TopicTree) Match(topic string) []Subscriber {
 	// Pre-size results to the common fanout case so the append in
 	// matchNodeWithSys/collectAllSubscribers does not reallocate (R3).
 	results := make([]Subscriber, 0, 4)
-	visited := make(map[string]struct{})
+	visited := matchVisitedPool.Get().(map[string]uint8)
+	defer func() {
+		if len(visited) <= 64 {
+			for k := range visited {
+				delete(visited, k)
+			}
+			matchVisitedPool.Put(visited)
+		}
+	}()
 	isSystemTopic := len(parts) > 0 && len(parts[0]) > 0 && parts[0][0] == '$'
 	tt.matchNodeWithSys(tt.root, parts, 0, &results, visited, isSystemTopic, !isSystemTopic)
 	return results
@@ -150,13 +187,10 @@ func (tt *TopicTree) unsubscribeNode(node *TopicNode, parts []string, clientID s
 // matchNodeWithSys performs matching with MQTT §4.7.2 system topic protection.
 // Root-level '+' and '#' filters never match topics starting with '$'. Once a
 // filter explicitly enters a '$' root segment, its nested wildcards are valid.
-func (tt *TopicTree) matchNodeWithSys(node *TopicNode, parts []string, depth int, results *[]Subscriber, visited map[string]struct{}, isSystemTopic bool, wildcardsAllowed bool) {
+func (tt *TopicTree) matchNodeWithSys(node *TopicNode, parts []string, depth int, results *[]Subscriber, visited map[string]uint8, isSystemTopic bool, wildcardsAllowed bool) {
 	// Add subscribers at current node
 	for clientID, qos := range node.subscribers {
-		if _, ok := visited[clientID]; !ok {
-			visited[clientID] = struct{}{}
-			*results = append(*results, Subscriber{ClientID: clientID, QoS: qos})
-		}
+		addSubscriber(results, visited, clientID, qos)
 	}
 
 	// # wildcard matches zero or more remaining levels when allowed.
@@ -300,18 +334,27 @@ func (tt *TopicTree) matchShared(topic string, isOnline func(string) bool) []Sha
 			continue
 		}
 
-		// Collect all clients from matching filters, dedup by clientID
+		// Collect all clients from matching filters, dedup by clientID,
+		// keeping the highest QoS across a member's matching filters (§3.3.5).
 		type member struct {
 			clientID string
 			qos      uint8
 		}
-		seen := make(map[string]struct{})
+		seen := make(map[string]uint8)
 		var members []member
 		for _, filter := range matchingFilters {
 			for cid, qos := range tt.sharedSubs[shareName][filter] {
-				if _, dup := seen[cid]; !dup {
-					seen[cid] = struct{}{}
+				if old, dup := seen[cid]; !dup {
+					seen[cid] = qos
 					members = append(members, member{clientID: cid, qos: qos})
+				} else if qos > old {
+					seen[cid] = qos
+					for i := range members {
+						if members[i].clientID == cid {
+							members[i].qos = qos
+							break
+						}
+					}
 				}
 			}
 		}
@@ -371,12 +414,9 @@ func (tt *TopicTree) matchShared(topic string, isOnline func(string) bool) []Sha
 	return results
 }
 
-func (tt *TopicTree) collectAllSubscribers(node *TopicNode, results *[]Subscriber, visited map[string]struct{}) {
+func (tt *TopicTree) collectAllSubscribers(node *TopicNode, results *[]Subscriber, visited map[string]uint8) {
 	for clientID, qos := range node.subscribers {
-		if _, ok := visited[clientID]; !ok {
-			visited[clientID] = struct{}{}
-			*results = append(*results, Subscriber{ClientID: clientID, QoS: qos})
-		}
+		addSubscriber(results, visited, clientID, qos)
 	}
 
 	for _, child := range node.children {

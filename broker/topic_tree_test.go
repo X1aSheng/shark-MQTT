@@ -538,26 +538,51 @@ func TestTopicTree_ConcurrentAccess(t *testing.T) {
 	}
 }
 
-func TestTopicTree_QoSMinOnMultipleMatches(t *testing.T) {
-	// When a client has multiple matching subscriptions,
-	// the match should return the QoS of the node where it was found.
-	// The broker's deliverToSubscriber handles QoS min logic.
+func TestTopicTree_QoSMaxOnMultipleMatches(t *testing.T) {
+	// When a client has multiple matching subscriptions, the match must
+	// deliver once at the MAXIMUM QoS of the matching filters
+	// (MQTT 3.1.1 §3.3.5 / 5.0 §3.3.5) — not the first (map-order-random)
+	// match's QoS.
 	tt := NewTopicTree()
 	tt.Subscribe("home/#", "client1", 0)    // matches via #
 	tt.Subscribe("home/temp", "client1", 2) // exact match
 
 	subs := tt.Match("home/temp")
-	// client1 appears once (dedup). The QoS depends on which node matched first.
-	// In the trie, exact match is traversed first, then # collects remaining.
-	// But since visited dedup, only the first encounter matters.
 	count := 0
 	for _, sub := range subs {
 		if sub.ClientID == "client1" {
 			count++
+			if sub.QoS != 2 {
+				t.Errorf("expected max QoS 2 for client1, got %d", sub.QoS)
+			}
 		}
 	}
 	if count != 1 {
 		t.Errorf("expected client1 once, got %d times", count)
+	}
+
+	// Reverse subscription order: the max rule must hold regardless of which
+	// filter is registered first or matched first.
+	tt2 := NewTopicTree()
+	tt2.Subscribe("home/temp", "client2", 1) // exact match first
+	tt2.Subscribe("home/#", "client2", 2)    // wildcard with higher QoS
+
+	subs2 := tt2.Match("home/temp")
+	for _, sub := range subs2 {
+		if sub.ClientID == "client2" && sub.QoS != 2 {
+			t.Errorf("expected max QoS 2 for client2, got %d", sub.QoS)
+		}
+	}
+
+	// A # fan-out through collectAllSubscribers must also merge QoS.
+	tt3 := NewTopicTree()
+	tt3.Subscribe("a/#", "client3", 0)
+	tt3.Subscribe("a/b/c", "client3", 2)
+	subs3 := tt3.Match("a/b/c")
+	for _, sub := range subs3 {
+		if sub.ClientID == "client3" && sub.QoS != 2 {
+			t.Errorf("expected max QoS 2 via #-fanout for client3, got %d", sub.QoS)
+		}
 	}
 }
 
