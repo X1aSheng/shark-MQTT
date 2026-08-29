@@ -35,16 +35,22 @@ type MQTTClient struct {
 	nextPID        atomic.Uint32
 	pending        map[uint16]chan protocol.Packet
 	pendingMu      sync.RWMutex
-	ctx            context.Context
-	cancel         context.CancelFunc
-	wg             sync.WaitGroup
-	connected      bool
-	connecting     bool         // guards against concurrent Connect calls
-	lastRead       atomic.Int64 // unix nanos of last received packet
-	onMessage      func(topic string, qos byte, payload []byte)
-	msgMu          sync.RWMutex
-	onError        func(format string, args ...interface{})
-	receivedQoS2   map[uint16]struct{} // tracks received QoS 2 PacketIDs for dedup
+	// connCtx/connCancel/connDone describe the CURRENT connection generation
+	// (protected by mu). Each Connect creates a fresh generation; the old
+	// generation's goroutines hold their own copies as parameters, so a
+	// closing old connection can never cancel or tear down a newer one
+	// (L-005 Connect TOCTOU). connDone is closed when the generation's
+	// readLoop exits.
+	connCtx      context.Context
+	connCancel   context.CancelFunc
+	connDone     chan struct{}
+	connected    bool
+	connecting   bool         // guards against concurrent Connect calls
+	lastRead     atomic.Int64 // unix nanos of last received packet
+	onMessage    func(topic string, qos byte, payload []byte)
+	msgMu        sync.RWMutex
+	onError      func(format string, args ...interface{})
+	receivedQoS2 map[uint16]struct{} // tracks received QoS 2 PacketIDs for dedup
 }
 
 type inflightEntry struct {
@@ -57,15 +63,12 @@ func New(opts ...Option) *MQTTClient {
 	for _, fn := range opts {
 		fn(o)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
 	c := &MQTTClient{
 		opts:         o,
 		codec:        protocol.NewCodec(o.MaxPacketSize),
 		inflight:     make(map[uint16]*inflightEntry),
 		pending:      make(map[uint16]chan protocol.Packet),
 		receivedQoS2: make(map[uint16]struct{}),
-		ctx:          ctx,
-		cancel:       cancel,
 	}
 	c.nextPID.Store(1)
 	return c
@@ -92,8 +95,8 @@ func (c *MQTTClient) Connect(ctx context.Context) error {
 	}()
 
 	// Rebuild one-shot state so Disconnect followed by Connect works: the
-	// previous context was cancelled and the maps were drained on close.
-	c.ctx, c.cancel = context.WithCancel(context.Background())
+	// previous connection generation was cancelled and the maps were drained
+	// on close.
 	c.pendingMu.Lock()
 	c.pending = make(map[uint16]chan protocol.Packet)
 	c.pendingMu.Unlock()
@@ -103,6 +106,15 @@ func (c *MQTTClient) Connect(ctx context.Context) error {
 	c.mu.Lock()
 	c.receivedQoS2 = make(map[uint16]struct{})
 	c.lastRead.Store(time.Now().UnixNano())
+	// Create this connection's generation context. It is registered before
+	// the dial so that a concurrent Disconnect can cancel the in-progress
+	// connection attempt; the old generation's context is left untouched, so
+	// a stale readLoop can never cancel this new connection (L-005).
+	connCtx, connCancel := context.WithCancel(context.Background())
+	connDone := make(chan struct{})
+	c.connCtx = connCtx
+	c.connCancel = connCancel
+	c.connDone = connDone
 	c.mu.Unlock()
 	c.nextPID.Store(1)
 
@@ -190,11 +202,11 @@ func (c *MQTTClient) Connect(ctx context.Context) error {
 
 	// Start reader goroutine and, if keep-alive is configured, a PINGREQ
 	// keepalive loop so an idle connection is not dropped by the broker.
-	c.wg.Add(1)
-	go c.readLoop()
+	// Both receive this generation's context/cancel/done so their shutdown
+	// can never touch a newer connection (L-005).
+	go c.readLoop(conn, connCtx, connCancel, connDone)
 	if c.opts.KeepAlive > 0 {
-		c.wg.Add(1)
-		go c.keepAliveLoop(conn)
+		go c.keepAliveLoop(conn, connCtx)
 	}
 
 	return nil
@@ -208,6 +220,7 @@ func (c *MQTTClient) Publish(ctx context.Context, topic string, qos byte, retain
 		return fmt.Errorf("not connected")
 	}
 	conn := c.conn
+	connCtx := c.connCtx // this connection generation; cancelled on disconnect
 	c.mu.Unlock()
 
 	pkt := &protocol.PublishPacket{
@@ -294,7 +307,7 @@ func (c *MQTTClient) Publish(ctx context.Context, topic string, qos byte, retain
 		default:
 			return fmt.Errorf("unexpected response: %T", resp)
 		}
-	case <-c.ctx.Done():
+	case <-connCtx.Done():
 		return fmt.Errorf("client disconnected")
 	}
 }
@@ -307,6 +320,7 @@ func (c *MQTTClient) Subscribe(ctx context.Context, topics []TopicSubscription) 
 		return nil, fmt.Errorf("not connected")
 	}
 	conn := c.conn
+	connCtx := c.connCtx // this connection generation; cancelled on disconnect
 	c.mu.Unlock()
 
 	pid := c.nextPacketID()
@@ -352,7 +366,7 @@ func (c *MQTTClient) Subscribe(ctx context.Context, topics []TopicSubscription) 
 			return nil, fmt.Errorf("expected SUBACK, got %T", resp)
 		}
 		return suback.ReasonCodes, nil
-	case <-c.ctx.Done():
+	case <-connCtx.Done():
 		return nil, fmt.Errorf("client disconnected")
 	}
 }
@@ -365,6 +379,7 @@ func (c *MQTTClient) Unsubscribe(ctx context.Context, topics []string) error {
 		return fmt.Errorf("not connected")
 	}
 	conn := c.conn
+	connCtx := c.connCtx // this connection generation; cancelled on disconnect
 	c.mu.Unlock()
 
 	pid := c.nextPacketID()
@@ -401,7 +416,7 @@ func (c *MQTTClient) Unsubscribe(ctx context.Context, topics []string) error {
 			return fmt.Errorf("expected UNSUBACK, got %T", resp)
 		}
 		return nil
-	case <-c.ctx.Done():
+	case <-connCtx.Done():
 		return fmt.Errorf("client disconnected")
 	}
 }
@@ -414,6 +429,11 @@ func (c *MQTTClient) Disconnect(ctx context.Context) error {
 		return nil
 	}
 	conn := c.conn
+	// Snapshot this generation's cancellation and completion channels: a
+	// concurrent Connect may already have replaced c.connCtx/connDone with a
+	// newer generation, which this disconnect must not touch (L-005).
+	connCancel := c.connCancel
+	connDone := c.connDone
 	c.connected = false
 	c.mu.Unlock()
 
@@ -428,7 +448,10 @@ func (c *MQTTClient) Disconnect(ctx context.Context) error {
 	}
 	c.wmu.Unlock()
 
-	c.cancel()
+	// Cancel only this generation: wakes waiters of this connection
+	// (Publish/Subscribe/Unsubscribe blocked on connCtx) and stops this
+	// generation's keep-alive loop, without affecting a newer connection.
+	connCancel()
 	closeErr := conn.Close()
 
 	// Clear client-side state so a subsequent Connect starts clean.
@@ -442,19 +465,14 @@ func (c *MQTTClient) Disconnect(ctx context.Context) error {
 	c.receivedQoS2 = make(map[uint16]struct{})
 	c.mu.Unlock()
 
-	done := make(chan struct{})
-	go func() {
-		c.wg.Wait()
-		close(done)
-	}()
-
+	// Wait for this generation's readLoop to exit (it closes connDone).
 	if ctx == nil {
-		<-done
+		<-connDone
 		return closeErr
 	}
 
 	select {
-	case <-done:
+	case <-connDone:
 		return closeErr
 	case <-ctx.Done():
 		return ctx.Err()
@@ -493,32 +511,31 @@ func (c *MQTTClient) IsConnected() bool {
 	return c.connected
 }
 
-// readLoop reads packets from the broker connection.
-func (c *MQTTClient) readLoop() {
-	defer c.wg.Done()
+// readLoop reads packets from the broker connection. It operates on the
+// connection generation it was started for: the generation's connCtx is used
+// for shutdown checks, connCancel is called on read errors to wake this
+// generation's waiters (never a newer connection), and connDone is closed on
+// exit so Disconnect can wait for exactly this generation (L-005).
+func (c *MQTTClient) readLoop(conn net.Conn, connCtx context.Context, connCancel context.CancelFunc, connDone chan struct{}) {
+	defer close(connDone)
 	for {
 		select {
-		case <-c.ctx.Done():
+		case <-connCtx.Done():
 			return
 		default:
-		}
-
-		c.mu.Lock()
-		conn := c.conn
-		c.mu.Unlock()
-
-		if conn == nil {
-			return
 		}
 
 		pkt, err := c.codec.Decode(conn)
 		if err != nil {
 			c.mu.Lock()
-			c.connected = false
+			if c.conn == conn {
+				c.connected = false
+			}
 			c.receivedQoS2 = make(map[uint16]struct{})
 			c.mu.Unlock()
-			// Cancel context to wake up pending QoS publish/response waiters
-			c.cancel()
+			// Cancel this generation's context to wake up pending QoS
+			// publish/response waiters blocked on connCtx.
+			connCancel()
 			// Drain pending response channels to prevent goroutine leaks
 			c.pendingMu.Lock()
 			for pid, ch := range c.pending {
@@ -662,9 +679,9 @@ func (c *MQTTClient) deliverResponse(packetID uint16, pkt protocol.Packet) {
 
 // keepAliveLoop sends PINGREQ packets on a keep-alive schedule and detects a
 // dead connection when no packet has been received within 1.5x KeepAlive.
-// It runs only when the client is configured with a non-zero KeepAlive.
-func (c *MQTTClient) keepAliveLoop(conn net.Conn) {
-	defer c.wg.Done()
+// It runs only when the client is configured with a non-zero KeepAlive and
+// shuts down with its connection generation's context (L-005).
+func (c *MQTTClient) keepAliveLoop(conn net.Conn, connCtx context.Context) {
 	interval := time.Duration(c.opts.KeepAlive) * time.Second / 2
 	if interval <= 0 {
 		interval = time.Second
@@ -675,7 +692,7 @@ func (c *MQTTClient) keepAliveLoop(conn net.Conn) {
 
 	for {
 		select {
-		case <-c.ctx.Done():
+		case <-connCtx.Done():
 			return
 		case <-ticker.C:
 			c.mu.Lock()

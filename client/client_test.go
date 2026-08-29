@@ -234,7 +234,7 @@ func TestNextPacketID(t *testing.T) {
 func TestConnectNotConnected(t *testing.T) {
 	c := New(WithHostPort("127.0.0.1", 18983))
 
-	err := c.Publish(c.ctx, "test", 0, false, []byte("data"))
+	err := c.Publish(context.Background(), "test", 0, false, []byte("data"))
 	if err == nil {
 		t.Error("expected error when publishing while not connected")
 	}
@@ -242,7 +242,7 @@ func TestConnectNotConnected(t *testing.T) {
 
 func TestSubscribeNotConnected(t *testing.T) {
 	c := New()
-	_, err := c.Subscribe(c.ctx, []TopicSubscription{{Topic: "test", QoS: 0}})
+	_, err := c.Subscribe(context.Background(), []TopicSubscription{{Topic: "test", QoS: 0}})
 	if err == nil {
 		t.Error("expected error when subscribing while not connected")
 	}
@@ -250,7 +250,7 @@ func TestSubscribeNotConnected(t *testing.T) {
 
 func TestUnsubscribeNotConnected(t *testing.T) {
 	c := New()
-	err := c.Unsubscribe(c.ctx, []string{"test"})
+	err := c.Unsubscribe(context.Background(), []string{"test"})
 	if err == nil {
 		t.Error("expected error when unsubscribing while not connected")
 	}
@@ -258,7 +258,7 @@ func TestUnsubscribeNotConnected(t *testing.T) {
 
 func TestDisconnectWhenNotConnected(t *testing.T) {
 	c := New()
-	err := c.Disconnect(c.ctx)
+	err := c.Disconnect(context.Background())
 	if err != nil {
 		t.Errorf("expected no error when disconnecting while not connected, got %v", err)
 	}
@@ -703,19 +703,21 @@ func TestReadLoopDecodeErrorDisconnects(t *testing.T) {
 	conn := newBlockingReadConn()
 
 	c := New()
+	connCtx, connCancel := context.WithCancel(context.Background())
+	connDone := make(chan struct{})
 	c.mu.Lock()
 	c.conn = conn
 	c.connected = true
+	c.connCtx, c.connCancel, c.connDone = connCtx, connCancel, connDone
 	c.mu.Unlock()
 
-	c.wg.Add(1)
-	go c.readLoop()
+	go c.readLoop(conn, connCtx, connCancel, connDone)
 
 	// Close the conn to trigger Decode error
 	conn.Close()
 
 	// Wait for readLoop to finish
-	c.wg.Wait()
+	<-connDone
 
 	if c.IsConnected() {
 		t.Error("expected IsConnected() to be false after readLoop error")
@@ -736,13 +738,15 @@ func TestDisconnectClosesConnectionBeforeWaitingForReadLoop(t *testing.T) {
 	conn := newBlockingReadConn()
 
 	c := New()
+	connCtx, connCancel := context.WithCancel(context.Background())
+	connDone := make(chan struct{})
 	c.mu.Lock()
 	c.conn = conn
 	c.connected = true
+	c.connCtx, c.connCancel, c.connDone = connCtx, connCancel, connDone
 	c.mu.Unlock()
 
-	c.wg.Add(1)
-	go c.readLoop()
+	go c.readLoop(conn, connCtx, connCancel, connDone)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -1063,21 +1067,76 @@ func TestKeepAliveSendsPing(t *testing.T) {
 func TestReceivedQoS2ClearedOnReadLoopError(t *testing.T) {
 	conn := newBlockingReadConn()
 	c := New()
+	connCtx, connCancel := context.WithCancel(context.Background())
+	connDone := make(chan struct{})
 	c.mu.Lock()
 	c.conn = conn
 	c.connected = true
 	c.receivedQoS2[7] = struct{}{}
+	c.connCtx, c.connCancel, c.connDone = connCtx, connCancel, connDone
 	c.mu.Unlock()
 
-	c.wg.Add(1)
-	go c.readLoop()
+	go c.readLoop(conn, connCtx, connCancel, connDone)
 	conn.Close()
-	c.wg.Wait()
+	<-connDone
 
 	c.mu.Lock()
 	remaining := len(c.receivedQoS2)
 	c.mu.Unlock()
 	if remaining != 0 {
 		t.Errorf("expected receivedQoS2 cleared after readLoop error, got %d entries", remaining)
+	}
+}
+
+// TestClientConnectTOCTOU_StaleReadLoopDoesNotKillNewConnection is the L-005
+// regression: when a new Connect takes over a client ID, the OLD connection's
+// readLoop exits with a decode error shortly after the new connection is
+// established. The stale goroutine must only cancel its own connection
+// generation — previously it cancelled the shared client context, killing the
+// brand-new connection's pending operations.
+func TestClientConnectTOCTOU_StaleReadLoopDoesNotKillNewConnection(t *testing.T) {
+	_, addr := startTestBroker(t)
+	host, port := splitAddr(addr)
+
+	for round := 1; round <= 5; round++ {
+		// First generation with the shared client ID.
+		c1 := New(
+			WithHostPort(host, port),
+			WithClientID("toctou-client"),
+			WithConnectTimeout(5*time.Second),
+		)
+		ctx := context.Background()
+		if err := c1.Connect(ctx); err != nil {
+			t.Fatalf("round %d: first Connect failed: %v", round, err)
+		}
+
+		// Let the first generation settle, then take over the client ID.
+		time.Sleep(100 * time.Millisecond)
+		c2 := New(
+			WithHostPort(host, port),
+			WithClientID("toctou-client"),
+			WithConnectTimeout(5*time.Second),
+		)
+		if err := c2.Connect(ctx); err != nil {
+			t.Fatalf("round %d: takeover Connect failed: %v", round, err)
+		}
+
+		// Give the stale first-generation readLoop time to hit its decode
+		// error and run its shutdown path (the L-005 race window).
+		time.Sleep(300 * time.Millisecond)
+
+		if !c2.IsConnected() {
+			t.Fatalf("round %d: new connection lost after stale readLoop exit", round)
+		}
+
+		// The new connection must still complete a QoS 1 round-trip.
+		if err := c2.Publish(ctx, "toctou/test", 1, false, []byte("still-alive")); err != nil {
+			t.Fatalf("round %d: Publish on new connection failed after stale readLoop exit: %v", round, err)
+		}
+		if _, err := c2.Subscribe(ctx, []TopicSubscription{{Topic: "toctou/test", QoS: 0}}); err != nil {
+			t.Fatalf("round %d: Subscribe on new connection failed: %v", round, err)
+		}
+
+		_ = c2.Disconnect(ctx)
 	}
 }
