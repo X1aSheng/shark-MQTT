@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+
+	"github.com/X1aSheng/shark-mqtt/pkg/bufferpool"
 )
 
-func (c *Codec) decodePublish(r io.Reader, fh *FixedHeader) (*PublishPacket, error) {
+func (c *Codec) decodePublish(r io.Reader, fh FixedHeader) (*PublishPacket, error) {
 	topic, err := readString(r, c.pool)
 	if err != nil {
 		return nil, err
@@ -86,7 +88,7 @@ func (c *Codec) decodePublish(r io.Reader, fh *FixedHeader) (*PublishPacket, err
 	}
 
 	return &PublishPacket{
-		FixedHeader: *fh,
+		FixedHeader: fh,
 		PacketID:    packetID,
 		Topic:       topic,
 		Payload:     payload,
@@ -95,7 +97,19 @@ func (c *Codec) decodePublish(r io.Reader, fh *FixedHeader) (*PublishPacket, err
 }
 
 func (c *Codec) encodePublish(w io.Writer, pkt *PublishPacket) error {
-	var buf bytes.Buffer
+	// Assemble the body in a pooled buffer: a fresh make([]byte) per packet
+	// shows up as a top allocator (bytes.NewBuffer) in publish-path profiles,
+	// and the buffer does not escape the encode call, so it is safe to return
+	// to the pool afterwards. The default pool holds 4KB buffers, which covers
+	// the common small-payload case with zero growth; larger payloads grow the
+	// buffer inside bytes.Buffer as before.
+	pool := c.pool
+	if pool == nil {
+		pool = bufferpool.Default()
+	}
+	poolBuf := pool.Get()
+	defer pool.Put(poolBuf)
+	buf := bytes.NewBuffer(poolBuf[:0])
 
 	if len(pkt.Topic) == 0 {
 		// MQTT 5.0 topic-alias publish with an empty topic name.
@@ -112,23 +126,23 @@ func (c *Codec) encodePublish(w io.Writer, pkt *PublishPacket) error {
 		return ErrMalformedPacket
 	}
 
-	if err := writeString(&buf, pkt.Topic); err != nil {
+	if err := writeString(buf, pkt.Topic); err != nil {
 		return err
 	}
 
 	if pkt.QoS > 0 {
-		if err := writeUint16(&buf, pkt.PacketID); err != nil {
+		if err := writeUint16(buf, pkt.PacketID); err != nil {
 			return err
 		}
 	}
 
 	// Properties (MQTT 5.0)
 	if pkt.Properties != nil {
-		if err := c.encodeProperties(&buf, pkt.Properties); err != nil {
+		if err := c.encodeProperties(buf, pkt.Properties); err != nil {
 			return err
 		}
 	} else if c.protocolVersion == Version50 {
-		if err := writeVarInt(&buf, 0); err != nil {
+		if err := writeVarInt(buf, 0); err != nil {
 			return err
 		}
 	}
@@ -149,14 +163,14 @@ func (c *Codec) encodePublish(w io.Writer, pkt *PublishPacket) error {
 
 // --- PubAck ---
 
-func (c *Codec) decodePubAck(r io.Reader, fh *FixedHeader) (*PubAckPacket, error) {
+func (c *Codec) decodePubAck(r io.Reader, fh FixedHeader) (*PubAckPacket, error) {
 	packetID, reasonCode, props, err := c.decodeAckFields(r, fh)
 	if err != nil {
 		return nil, err
 	}
 
 	return &PubAckPacket{
-		FixedHeader: *fh,
+		FixedHeader: fh,
 		PacketID:    packetID,
 		ReasonCode:  reasonCode,
 		Properties:  props,
@@ -178,14 +192,14 @@ func (c *Codec) encodePubAck(w io.Writer, pkt *PubAckPacket) error {
 
 // --- PubRec ---
 
-func (c *Codec) decodePubRec(r io.Reader, fh *FixedHeader) (*PubRecPacket, error) {
+func (c *Codec) decodePubRec(r io.Reader, fh FixedHeader) (*PubRecPacket, error) {
 	packetID, reasonCode, props, err := c.decodeAckFields(r, fh)
 	if err != nil {
 		return nil, err
 	}
 
 	return &PubRecPacket{
-		FixedHeader: *fh,
+		FixedHeader: fh,
 		PacketID:    packetID,
 		ReasonCode:  reasonCode,
 		Properties:  props,
@@ -207,14 +221,14 @@ func (c *Codec) encodePubRec(w io.Writer, pkt *PubRecPacket) error {
 
 // --- PubRel ---
 
-func (c *Codec) decodePubRel(r io.Reader, fh *FixedHeader) (*PubRelPacket, error) {
+func (c *Codec) decodePubRel(r io.Reader, fh FixedHeader) (*PubRelPacket, error) {
 	packetID, reasonCode, props, err := c.decodeAckFields(r, fh)
 	if err != nil {
 		return nil, err
 	}
 
 	return &PubRelPacket{
-		FixedHeader: *fh,
+		FixedHeader: fh,
 		PacketID:    packetID,
 		ReasonCode:  reasonCode,
 		Properties:  props,
@@ -239,14 +253,14 @@ func (c *Codec) encodePubRel(w io.Writer, pkt *PubRelPacket) error {
 
 // --- PubComp ---
 
-func (c *Codec) decodePubComp(r io.Reader, fh *FixedHeader) (*PubCompPacket, error) {
+func (c *Codec) decodePubComp(r io.Reader, fh FixedHeader) (*PubCompPacket, error) {
 	packetID, reasonCode, props, err := c.decodeAckFields(r, fh)
 	if err != nil {
 		return nil, err
 	}
 
 	return &PubCompPacket{
-		FixedHeader: *fh,
+		FixedHeader: fh,
 		PacketID:    packetID,
 		ReasonCode:  reasonCode,
 		Properties:  props,
@@ -266,7 +280,7 @@ func (c *Codec) encodePubComp(w io.Writer, pkt *PubCompPacket) error {
 	return err
 }
 
-func (c *Codec) decodeAckFields(r io.Reader, fh *FixedHeader) (uint16, byte, *Properties, error) {
+func (c *Codec) decodeAckFields(r io.Reader, fh FixedHeader) (uint16, byte, *Properties, error) {
 	if fh.RemainingLength < 2 {
 		return 0, 0, nil, ErrMalformedPacket
 	}

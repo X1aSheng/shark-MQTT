@@ -6,7 +6,7 @@ import (
 	"io"
 )
 
-func (c *Codec) decodeConnect(r io.Reader, fh *FixedHeader) (*ConnectPacket, error) {
+func (c *Codec) decodeConnect(r io.Reader, fh FixedHeader) (*ConnectPacket, error) {
 	buf := make([]byte, fh.RemainingLength)
 	if _, err := io.ReadFull(r, buf); err != nil {
 		return nil, err
@@ -107,7 +107,7 @@ func (c *Codec) decodeConnect(r io.Reader, fh *FixedHeader) (*ConnectPacket, err
 	}
 
 	pkt := &ConnectPacket{
-		FixedHeader:     *fh,
+		FixedHeader:     fh,
 		ProtocolName:    protoName,
 		ProtocolVersion: protoVer,
 		Flags:           flags,
@@ -302,7 +302,7 @@ func (c *Codec) encodeConnect(w io.Writer, pkt *ConnectPacket) error {
 	return err
 }
 
-func (c *Codec) decodeConnAck(r io.Reader, fh *FixedHeader) (*ConnAckPacket, error) {
+func (c *Codec) decodeConnAck(r io.Reader, fh FixedHeader) (*ConnAckPacket, error) {
 	buf := make([]byte, fh.RemainingLength)
 	if _, err := io.ReadFull(r, buf); err != nil {
 		return nil, err
@@ -341,7 +341,7 @@ func (c *Codec) decodeConnAck(r io.Reader, fh *FixedHeader) (*ConnAckPacket, err
 	}
 
 	return &ConnAckPacket{
-		FixedHeader:    *fh,
+		FixedHeader:    fh,
 		ReasonCode:     reasonCode,
 		SessionPresent: sessionPresent,
 		Properties:     props,

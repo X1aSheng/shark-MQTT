@@ -5,7 +5,7 @@ import (
 	"io"
 )
 
-func (c *Codec) decodeSubscribe(r io.Reader, fh *FixedHeader) (*SubscribePacket, error) {
+func (c *Codec) decodeSubscribe(r io.Reader, fh FixedHeader) (*SubscribePacket, error) {
 	packetID, err := readUint16(r)
 	if err != nil {
 		return nil, err
@@ -73,7 +73,7 @@ func (c *Codec) decodeSubscribe(r io.Reader, fh *FixedHeader) (*SubscribePacket,
 	}
 
 	return &SubscribePacket{
-		FixedHeader: *fh,
+		FixedHeader: fh,
 		PacketID:    packetID,
 		Topics:      topics,
 		Properties:  props,
@@ -135,7 +135,7 @@ func (c *Codec) encodeSubscribe(w io.Writer, pkt *SubscribePacket) error {
 	return err
 }
 
-func (c *Codec) decodeSubAck(r io.Reader, fh *FixedHeader) (*SubAckPacket, error) {
+func (c *Codec) decodeSubAck(r io.Reader, fh FixedHeader) (*SubAckPacket, error) {
 	packetID, err := readUint16(r)
 	if err != nil {
 		return nil, err
@@ -173,7 +173,7 @@ func (c *Codec) decodeSubAck(r io.Reader, fh *FixedHeader) (*SubAckPacket, error
 	}
 
 	return &SubAckPacket{
-		FixedHeader: *fh,
+		FixedHeader: fh,
 		PacketID:    packetID,
 		ReasonCodes: reasonCodes,
 		Properties:  props,
@@ -214,7 +214,7 @@ func (c *Codec) encodeSubAck(w io.Writer, pkt *SubAckPacket) error {
 	return err
 }
 
-func (c *Codec) decodeUnsubscribe(r io.Reader, fh *FixedHeader) (*UnsubscribePacket, error) {
+func (c *Codec) decodeUnsubscribe(r io.Reader, fh FixedHeader) (*UnsubscribePacket, error) {
 	packetID, err := readUint16(r)
 	if err != nil {
 		return nil, err
@@ -256,7 +256,7 @@ func (c *Codec) decodeUnsubscribe(r io.Reader, fh *FixedHeader) (*UnsubscribePac
 	}
 
 	return &UnsubscribePacket{
-		FixedHeader: *fh,
+		FixedHeader: fh,
 		PacketID:    packetID,
 		Topics:      topics,
 		Properties:  props,
@@ -302,7 +302,7 @@ func (c *Codec) encodeUnsubscribe(w io.Writer, pkt *UnsubscribePacket) error {
 	return err
 }
 
-func (c *Codec) decodeUnsubAck(r io.Reader, fh *FixedHeader) (*UnsubAckPacket, error) {
+func (c *Codec) decodeUnsubAck(r io.Reader, fh FixedHeader) (*UnsubAckPacket, error) {
 	if c.protocolVersion != Version50 && fh.RemainingLength != 2 {
 		return nil, ErrMalformedPacket
 	}
@@ -344,7 +344,7 @@ func (c *Codec) decodeUnsubAck(r io.Reader, fh *FixedHeader) (*UnsubAckPacket, e
 	}
 
 	return &UnsubAckPacket{
-		FixedHeader: *fh,
+		FixedHeader: fh,
 		PacketID:    packetID,
 		ReasonCodes: reasonCodes,
 		Properties:  props,
@@ -405,7 +405,7 @@ func (c *Codec) encodePingResp(w io.Writer, pkt *PingRespPacket) error {
 
 // --- Disconnect ---
 
-func (c *Codec) decodeDisconnect(r io.Reader, fh *FixedHeader) (*DisconnectPacket, error) {
+func (c *Codec) decodeDisconnect(r io.Reader, fh FixedHeader) (*DisconnectPacket, error) {
 	if c.protocolVersion != Version50 && fh.RemainingLength > 0 {
 		return nil, ErrMalformedPacket
 	}
@@ -440,7 +440,7 @@ func (c *Codec) decodeDisconnect(r io.Reader, fh *FixedHeader) (*DisconnectPacke
 	}
 
 	return &DisconnectPacket{
-		FixedHeader: *fh,
+		FixedHeader: fh,
 		ReasonCode:  reasonCode,
 		Properties:  props,
 	}, nil
@@ -474,7 +474,7 @@ func (c *Codec) encodeDisconnect(w io.Writer, pkt *DisconnectPacket) error {
 
 // --- Auth ---
 
-func (c *Codec) decodeAuth(r io.Reader, fh *FixedHeader) (*AuthPacket, error) {
+func (c *Codec) decodeAuth(r io.Reader, fh FixedHeader) (*AuthPacket, error) {
 	if c.protocolVersion != Version50 {
 		return nil, ErrInvalidPacket
 	}
@@ -512,7 +512,7 @@ func (c *Codec) decodeAuth(r io.Reader, fh *FixedHeader) (*AuthPacket, error) {
 	}
 
 	return &AuthPacket{
-		FixedHeader: *fh,
+		FixedHeader: fh,
 		ReasonCode:  reasonCode,
 		Properties:  props,
 	}, nil

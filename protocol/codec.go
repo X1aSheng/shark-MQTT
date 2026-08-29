@@ -99,9 +99,9 @@ func (c *Codec) Decode(r io.Reader) (Packet, error) {
 	case PacketTypeUnsubAck:
 		return c.decodeUnsubAck(r, fh)
 	case PacketTypePingReq:
-		return &PingReqPacket{FixedHeader: *fh}, nil
+		return &PingReqPacket{FixedHeader: fh}, nil
 	case PacketTypePingResp:
-		return &PingRespPacket{FixedHeader: *fh}, nil
+		return &PingRespPacket{FixedHeader: fh}, nil
 	case PacketTypeDisconnect:
 		return c.decodeDisconnect(r, fh)
 	case PacketTypeAuth:
@@ -111,7 +111,7 @@ func (c *Codec) Decode(r io.Reader) (Packet, error) {
 	}
 }
 
-func validateFixedHeaderFlags(fh *FixedHeader) error {
+func validateFixedHeaderFlags(fh FixedHeader) error {
 	if fh.PacketType == PacketTypePublish {
 		if fh.QoS == 3 {
 			return ErrInvalidPacket
@@ -177,13 +177,13 @@ func (c *Codec) Encode(w io.Writer, p Packet) error {
 
 // --- FixedHeader encoding/decoding ---
 
-func (c *Codec) decodeFixedHeader(r io.Reader) (*FixedHeader, error) {
+func (c *Codec) decodeFixedHeader(r io.Reader) (FixedHeader, error) {
 	var buf [5]byte
 	if _, err := io.ReadFull(r, buf[:1]); err != nil {
-		return nil, err
+		return FixedHeader{}, err
 	}
 
-	fh := &FixedHeader{
+	fh := FixedHeader{
 		PacketType: PacketType((buf[0] >> 4) & 0x0F),
 		Dup:        (buf[0] & 0x08) != 0,
 		QoS:        (buf[0] >> 1) & 0x03,
@@ -197,7 +197,7 @@ func (c *Codec) decodeFixedHeader(r io.Reader) (*FixedHeader, error) {
 	remLenBytes := 0
 	for {
 		if _, err := io.ReadFull(r, buf[:1]); err != nil {
-			return nil, err
+			return FixedHeader{}, err
 		}
 		encodedByte := buf[0]
 		remLenBytes++
@@ -209,12 +209,12 @@ func (c *Codec) decodeFixedHeader(r io.Reader) (*FixedHeader, error) {
 			// A multi-byte encoding whose final byte contributes zero is
 			// non-minimal (e.g. [0x81, 0x00] encodes 1 in two bytes) (P3-2).
 			if remLenBytes > 1 && (encodedByte&0x7F) == 0 {
-				return nil, ErrInvalidPacket
+				return FixedHeader{}, ErrInvalidPacket
 			}
 			break
 		}
 		if multiplier > 128*128*128 { // Max 4 bytes for remaining length
-			return nil, ErrInvalidPacket
+			return FixedHeader{}, ErrInvalidPacket
 		}
 	}
 
