@@ -7,6 +7,103 @@ This project uses semantic versioning. Pre-release tags use the form
 
 ## Unreleased
 
+### Client / correctness (2026-08-29)
+
+- **Client Connect TOCTOU fixed (L-005):** the client now uses a
+  per-connection "generation" context (`connCtx`/`connCancel`/`connDone`)
+  instead of a shared client-wide context and WaitGroup. A stale readLoop or
+  keep-alive loop shutting down after a takeover (same client ID) previously
+  cancelled the shared context — killing the brand-new connection's pending
+  operations. Now each generation's goroutines hold their own context as
+  parameters: an old connection's shutdown can never cancel or tear down a
+  newer one, and `Disconnect` waits on exactly its own generation's done
+  channel. `Publish`/`Subscribe`/`Unsubscribe` wait on the generation context
+  snapshot. Regression test:
+  `TestClientConnectTOCTOU_StaleReadLoopDoesNotKillNewConnection` (5 takeover
+  rounds with QoS 1 round-trips). Race-clean.
+- **Session Expiry Interval 0 honored (MQTT 5.0 §3.1.2.11.2):** an explicit
+  `SessionExpiryInterval=0` in CONNECT previously fell through to the
+  server-configured maximum (24h default), so "end the session when the
+  connection closes" was silently ignored. The CONNACK now reports 0 and the
+  disconnect path deletes any stored session/messages instead of saving.
+  DISCONNECT may now also update the interval (§3.14.2.2.2, capped at the
+  server maximum; 0 ends the session immediately). Absent property still
+  defaults to the server maximum. Tests:
+  `TestSessionExpiryZero_EndsSessionOnDisconnect`,
+  `TestSessionExpiryAbsent_UsesServerDefault`,
+  `TestDisconnectUpdatesSessionExpiry`.
+
+### Protocol / correctness (2026-08-29)
+
+- **Max QoS on overlapping subscriptions:** a client with multiple matching
+  filters is now delivered once at the **maximum** QoS of the matching
+  subscriptions (MQTT 3.1.1 §3.3.5 / 5.0 §3.3.5). Previously the delivered
+  QoS was whichever filter the randomized map/trie iteration hit first, so a
+  QoS 1 publish could arrive as QoS 0 or QoS 1 nondeterministically. Fixed in
+  `TopicTree.Match` (dedup map now tracks QoS, `addSubscriber` keeps the max),
+  shared-subscription member selection (`matchShared`), and
+  `Session.MatchesSubscription` / `MatchesRetainedSubscription` (highest-QoS
+  match wins). Tests: `TestTopicTree_QoSMaxOnMultipleMatches`,
+  `TestSessionMatchesSubscriptionMaxQoS`,
+  `TestOverlappingSubscriptionsMaxQoS`.
+- **SubIDAvailable=1 advertised:** the CONNACK now advertises Subscription
+  Identifier support (MQTT 5.0 §3.8.2.1.2) — the broker already parsed,
+  stored, and echoed the SUBSCRIBE packet-level SubscriptionIdentifier in
+  delivered PUBLISH packets, so the previous SubIDAvailable=0 claim was
+  inconsistent with its behavior. New end-to-end test
+  (`TestSubscriptionIdentifierAdvertisedAndEchoed`).
+- **Protocol fuzz tests (L-008):** `FuzzDecodeNeverPanics` (arbitrary bytes
+  into the codec decoder) and `FuzzPublishRoundTrip` (structured
+  encode→decode round-trip) added to the protocol package. 8.4M executions
+  across both fuzzers with zero crashes/panics.
+
+### Performance (2026-08-29)
+
+- **Fixed-header decode without heap allocation:** `decodeFixedHeader` now
+  returns a value instead of a pointer, removing one heap allocation per
+  decoded packet across all 15 packet types (was 7 MB flat of 85 MB total in
+  the QoS 0 publish-path alloc profile). `validateFixedHeaderFlags` takes the
+  value as well; decode function signatures were adjusted accordingly.
+- **Pooled publish encode buffer:** `encodePublish` assembles the body in a
+  pooled 4 KB buffer (the codec's buffer pool) instead of a fresh
+  `bytes.Buffer`, removing the per-packet assembly allocation and most buffer
+  growth. Measured on Ryzen 7 8845HS: `BenchmarkCodec_EncodePublish`
+  433→144 ns/op (422→94 B/op); `DecodePublish` 489→372 ns/op (454→430 B/op,
+  8→7 allocs); `RoundTripPublish` 908→665 ns/op (882→528 B/op, 14→12 allocs);
+  E2E QoS 0 71.6→62.2 µs/op (36→34 allocs, 1089→959 B/op); E2E QoS 1/2
+  −4/−8 allocs per message.
+- **TopicTree.Match dedup map pooled:** the per-call subscriber-dedup map is
+  now reused via `sync.Pool` (maps that grew past 64 entries are dropped so
+  the pool does not pin large heaps), removing one allocation per published
+  message on the match path. `BenchmarkTopicTree_Match_Exact` 370→264 ns/op
+  (−29%) with unchanged 2 allocs/op.
+
+### Storage (2026-08-29)
+
+- **Redis store TTL aligned with broker expiry semantics (S5):** the session
+  store derives the key TTL from `SessionData.ExpiryTime` (absolute) or
+  `ExpiryInterval` (relative) instead of a fixed default, so Redis can no
+  longer delete a session before the broker's negotiated Session Expiry
+  Interval — which silently turned a reconnect into a fresh session
+  (SessionPresent=0). The message store likewise keeps a queued message alive
+  at least until its Message Expiry deadline, leaving expiry decisions to the
+  broker's delivery path. Regression tests
+  (`TestSessionStore_TTLFollowsExpiryTime`,
+  `TestSessionStore_TTLFollowsExpiryInterval`,
+  `TestMessageStore_TTLFollowsExpiry`) run under `-tags=store_redis`.
+- **Redis batch fetch (S2):** `MessageStore.ListMessages` and
+  `RetainedStore.MatchRetained` now SCAN for keys first and fetch all values
+  with a single `MGet` instead of one `GET` per key, so draining a large
+  offline queue or matching retained messages no longer costs one round-trip
+  per message. Keys that vanish between SCAN and MGet are skipped (nil value).
+  `TestMessageStore_ListMessages_Many` covers 120 messages across two SCAN
+  pages.
+- **Memory store save isolation (S8):** `memory.sessionStore.SaveSession` now
+  deep-copies inflight payloads and the subscriptions slice (mirroring
+  `GetSession`), so a caller mutating its `SessionData` after `SaveSession`
+  can no longer corrupt the stored session. `TestSessionStore_SaveIsolation`
+  covers the regression.
+
 ### Performance (2026-08-07)
 
 - **Publish latency sampling:** `WithLatencySampling(N)` controls how often
