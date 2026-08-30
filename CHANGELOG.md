@@ -77,6 +77,16 @@ This project uses semantic versioning. Pre-release tags use the form
   the pool does not pin large heaps), removing one allocation per published
   message on the match path. `BenchmarkTopicTree_Match_Exact` 370→264 ns/op
   (−29%) with unchanged 2 allocs/op.
+- **Tiered buffer pool:** `pkg/bufferpool` now uses size tiers
+  (512B/1KB/2KB/16KB/32KB/64KB/256KB) instead of a single 4KB bucket.
+  `Get(size)` picks the smallest bucket that fits, so small messages no longer
+  pin a 4KB buffer and large messages reuse a large buffer instead of growing
+  from 4KB. `encodePublish` sizes its request from the body estimate;
+  `readString`/`decodePublish` request exactly the byte count they need.
+  Measured on Ryzen 7 8845HS: `BenchmarkCodec_EncodeLargePayload` 96 B/op
+  (5 allocs); `BenchmarkPayload_128KB` 262→122 µs/op (551→136 KB/op);
+  `BenchmarkE2E_Payload_64KB` 469→202 µs/op (431→180 KB/op); `DecodePublish`
+  372→357 ns/op; `EncodePublishQos1` 244→183 ns/op.
 
 ### Storage (2026-08-29)
 

@@ -265,8 +265,8 @@ func readString(r io.Reader, pool *bufferpool.Pool) (string, error) {
 		return "", nil
 	}
 	var buf []byte
-	if pool != nil && length <= pool.BufSize() {
-		buf = pool.Get()[:length]
+	if pool != nil {
+		buf = pool.Get(length)
 		defer pool.Put(buf)
 	} else {
 		buf = make([]byte, length)

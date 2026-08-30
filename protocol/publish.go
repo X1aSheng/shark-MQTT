@@ -45,8 +45,8 @@ func (c *Codec) decodePublish(r io.Reader, fh FixedHeader) (*PublishPacket, erro
 		// be returned to the pool on return (R2).
 		var data []byte
 		if remaining > 0 {
-			if c.pool != nil && remaining <= c.pool.BufSize() {
-				data = c.pool.Get()[:remaining]
+			if c.pool != nil {
+				data = c.pool.Get(remaining)
 				defer c.pool.Put(data)
 			} else {
 				data = make([]byte, remaining)
@@ -100,14 +100,19 @@ func (c *Codec) encodePublish(w io.Writer, pkt *PublishPacket) error {
 	// Assemble the body in a pooled buffer: a fresh make([]byte) per packet
 	// shows up as a top allocator (bytes.NewBuffer) in publish-path profiles,
 	// and the buffer does not escape the encode call, so it is safe to return
-	// to the pool afterwards. The default pool holds 4KB buffers, which covers
-	// the common small-payload case with zero growth; larger payloads grow the
-	// buffer inside bytes.Buffer as before.
+	// to the pool afterwards. The tiered pool picks the smallest bucket that
+	// fits an estimate of the body size (topic + payload + slack), so small
+	// messages reuse a small buffer and large messages reuse a large one
+	// instead of growing a 4KB buffer.
 	pool := c.pool
 	if pool == nil {
 		pool = bufferpool.Default()
 	}
-	poolBuf := pool.Get()
+	est := 2 + len(pkt.Topic) + len(pkt.Payload) + 8 // slack: ID + property length
+	if pkt.QoS > 0 {
+		est += 2
+	}
+	poolBuf := pool.Get(est)
 	defer pool.Put(poolBuf)
 	buf := bytes.NewBuffer(poolBuf[:0])
 

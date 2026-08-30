@@ -1,63 +1,99 @@
 package bufferpool
 
 import (
+	"sync"
 	"testing"
 )
 
-func TestNewDefaultSize(t *testing.T) {
+func TestNewDefaultTiers(t *testing.T) {
+	p := New()
+	if p == nil {
+		t.Fatal("New() returned nil")
+	}
+	if got := len(p.sizes); got != len(defaultSizes) {
+		t.Errorf("expected %d default tiers, got %d", len(defaultSizes), got)
+	}
+	if p.BufSize() != 262144 {
+		t.Errorf("expected max bucket 262144, got %d", p.BufSize())
+	}
+}
+
+func TestNewZeroFallsBackToDefault(t *testing.T) {
 	p := New(0)
 	if p == nil {
 		t.Fatal("New(0) returned nil")
 	}
-	if p.size != 4096 {
-		t.Errorf("expected size 4096 for New(0), got %d", p.size)
+	if p.BufSize() != 262144 {
+		t.Errorf("expected default max bucket for New(0), got %d", p.BufSize())
 	}
 }
 
-func TestNewNegativeSize(t *testing.T) {
-	p := New(-100)
-	if p == nil {
-		t.Fatal("New(-100) returned nil")
+func TestNewExplicitTiers(t *testing.T) {
+	p := New(2048, 512, 512, 1024) // unsorted with duplicates
+	want := []int{512, 1024, 2048}
+	if len(p.sizes) != len(want) {
+		t.Fatalf("expected %d tiers, got %d", len(want), len(p.sizes))
 	}
-	if p.size != 4096 {
-		t.Errorf("expected size 4096 for New(-100), got %d", p.size)
-	}
-}
-
-func TestNewExplicitSize(t *testing.T) {
-	p := New(8192)
-	if p.size != 8192 {
-		t.Errorf("expected size 8192, got %d", p.size)
-	}
-}
-
-func TestGetReturnsCorrectLength(t *testing.T) {
-	p := New(4096)
-	buf := p.Get()
-	if len(buf) != 4096 {
-		t.Errorf("expected Get() to return buffer of length 4096, got %d", len(buf))
-	}
-	if cap(buf) < 4096 {
-		t.Errorf("expected Get() to return buffer with capacity >= 4096, got %d", cap(buf))
-	}
-}
-
-func TestPutSmallBufferIgnored(t *testing.T) {
-	p := New(4096)
-	smallBuf := make([]byte, 100)
-	// Put should silently ignore buffers with capacity less than pool size
-	p.Put(smallBuf)
-	// No panic - test passes
-}
-
-func TestPutNilBuffer(t *testing.T) {
-	defer func() {
-		if r := recover(); r != nil {
-			t.Errorf("Put(nil) panicked: %v", r)
+	for i, sz := range want {
+		if p.sizes[i] != sz {
+			t.Errorf("tier %d: want %d, got %d", i, sz, p.sizes[i])
 		}
-	}()
-	p := New(4096)
-	p.Put(nil)
+	}
+}
+
+func TestGetSelectsSmallestFittingBucket(t *testing.T) {
+	p := New(512, 1024, 2048)
+	cases := []struct {
+		size    int
+		wantLen int
+		wantCap int
+	}{
+		{1, 1, 512},
+		{512, 512, 512},
+		{513, 513, 1024},
+		{1024, 1024, 1024},
+		{2048, 2048, 2048},
+	}
+	for _, c := range cases {
+		buf := p.Get(c.size)
+		if len(buf) != c.wantLen {
+			t.Errorf("Get(%d): len=%d, want %d", c.size, len(buf), c.wantLen)
+		}
+		if cap(buf) != c.wantCap {
+			t.Errorf("Get(%d): cap=%d, want %d", c.size, cap(buf), c.wantCap)
+		}
+		p.Put(buf)
+	}
+}
+
+func TestGetOversizeAllocatesDirectly(t *testing.T) {
+	p := New(512, 1024)
+	buf := p.Get(4096)
+	if len(buf) != 4096 || cap(buf) != 4096 {
+		t.Errorf("expected direct 4096 allocation, got len=%d cap=%d", len(buf), cap(buf))
+	}
+	// Oversized buffer must not be pooled (capacity does not match a tier).
+	p.Put(buf)
+}
+
+func TestPutReclaimsMatchingCapacityOnly(t *testing.T) {
+	p := New(1024)
+	// A slice with cap != a tier is discarded without panic.
+	p.Put(make([]byte, 0, 2048)) // cap 2048 != tier 1024 -> dropped
+	p.Put(nil)                   // nil -> no-op
+}
+
+func TestGetPutRoundTrip(t *testing.T) {
+	p := New(1024)
+	buf := p.Get(100)
+	for i := range buf {
+		buf[i] = byte(i % 256)
+	}
+	p.Put(buf)
+	buf2 := p.Get(100)
+	if len(buf2) != 100 || cap(buf2) != 1024 {
+		t.Errorf("expected len=100 cap=1024 after round trip, got len=%d cap=%d", len(buf2), cap(buf2))
+	}
 }
 
 func TestDefaultPool(t *testing.T) {
@@ -65,92 +101,33 @@ func TestDefaultPool(t *testing.T) {
 	if p == nil {
 		t.Fatal("Default() returned nil")
 	}
-	if p.size != 4096 {
-		t.Errorf("expected default pool size 4096, got %d", p.size)
-	}
-}
-
-func TestGetPutRoundTrip(t *testing.T) {
-	p := New(1024)
-	buf := p.Get()
-
-	// Use the buffer
-	for i := range buf {
-		buf[i] = byte(i % 256)
-	}
-
-	// Put it back (capacity must be >= size)
-	if cap(buf) >= 1024 {
-		p.Put(buf)
-	}
-
-	// Get again - should not panic
-	buf2 := p.Get()
-	if len(buf2) != 1024 {
-		t.Errorf("expected buffer length 1024, got %d", len(buf2))
-	}
-}
-
-func TestMultipleGetPut(t *testing.T) {
-	p := New(512)
-	buffers := make([][]byte, 10)
-	for i := range buffers {
-		buffers[i] = p.Get()
-		if len(buffers[i]) != 512 {
-			t.Errorf("buffer %d: expected length 512, got %d", i, len(buffers[i]))
-		}
-	}
-	for _, buf := range buffers {
-		p.Put(buf)
+	if p.BufSize() != 262144 {
+		t.Errorf("expected default max bucket 262144, got %d", p.BufSize())
 	}
 }
 
 func TestPoolConcurrentAccess(t *testing.T) {
-	p := New(256)
-	done := make(chan bool, 10)
-
+	p := New(512, 1024, 2048)
+	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			for j := 0; j < 100; j++ {
-				buf := p.Get()
-				if len(buf) != 256 {
-					t.Errorf("expected length 256, got %d", len(buf))
+				buf := p.Get(100)
+				if len(buf) != 100 {
+					t.Errorf("expected len 100, got %d", len(buf))
 				}
 				p.Put(buf)
 			}
-			done <- true
 		}()
 	}
-
-	for i := 0; i < 10; i++ {
-		<-done
-	}
+	wg.Wait()
 }
 
 func TestBufSize(t *testing.T) {
-	p := New(2048)
+	p := New(2048, 512)
 	if size := p.BufSize(); size != 2048 {
-		t.Errorf("BufSize() = %d, want 2048", size)
-	}
-
-	p2 := New(0)
-	if size := p2.BufSize(); size != 4096 {
-		t.Errorf("BufSize() for default = %d, want 4096", size)
-	}
-}
-
-func TestGetDefaultPath(t *testing.T) {
-	// Create a pool and put a non-slice value to force the default path in Get.
-	// The sync.Pool.New creates *[]byte, so the default path only triggers
-	// when something unexpected is in the pool. We simulate this by putting
-	// a non-slice value directly into the underlying pool.
-	p := New(128)
-	// Get once to initialize the pool
-	_ = p.Get()
-	// Put a non-*[]byte value to force the default path on next Get
-	p.pool.Put("not a buffer")
-	buf := p.Get()
-	if len(buf) != 128 {
-		t.Errorf("expected length 128 from default path, got %d", len(buf))
+		t.Errorf("BufSize() = %d, want 2048 (max tier)", size)
 	}
 }

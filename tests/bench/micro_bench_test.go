@@ -473,7 +473,7 @@ func BenchmarkBufferPool_GetPut(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		buf := pool.Get()
+		buf := pool.Get(4096)
 		pool.Put(buf)
 	}
 }
@@ -485,7 +485,7 @@ func BenchmarkBufferPool_GetPut_Default(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		buf := pool.Get()
+		buf := pool.Get(4096)
 		pool.Put(buf)
 	}
 }
@@ -498,7 +498,7 @@ func BenchmarkBufferPool_Parallel(b *testing.B) {
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			buf := pool.Get()
+			buf := pool.Get(4096)
 			pool.Put(buf)
 		}
 	})
@@ -513,7 +513,7 @@ func BenchmarkBufferPool_AllocVsPool(b *testing.B) {
 	b.Run("Pool", func(b *testing.B) {
 		pool := bufferpool.New(4096)
 		for i := 0; i < b.N; i++ {
-			buf := pool.Get()
+			buf := pool.Get(4096)
 			pool.Put(buf)
 		}
 	})
