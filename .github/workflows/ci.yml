@@ -153,6 +153,9 @@ jobs:
             exit 1
           fi
 
+      - name: Check markdown links
+        run: go run scripts/check_links.go
+
   # ─────────────────────────────────────────────────────────────
   # Job 5: Build Verification
   # ─────────────────────────────────────────────────────────────
