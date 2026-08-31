@@ -30,7 +30,7 @@
 | 单元测试 (14 包) | PASS: 326 PASS, 13 SKIP (Redis 未配置) |
 | 集成测试 (tests/integration) | PASS: 92 PASS |
 | 基准测试 (tests/bench + 组件) | PASS: 71 个 Benchmark 函数 |
-| 测试日志 | logs/20260806_120538_{unit,integration,benchmark}.log |
+| 测试日志 | tests/logs/20260806_120538_{unit,integration,benchmark}.log |
 | 覆盖率 (本地, Redis 跳过) | broker 49.0%, protocol 65.2%, client 84.5%, api 83.2%, store/memory 91.4%, store/badger 88.5%, plugin 90.6%, pkg/metrics 98.0%, pkg/bufferpool 100%; cmd/redis/examples 0% (无测试/跳过) |
 
 说明: 与上一轮报告 (260806-034632) 相比, 单元测试计数差异 (326 vs 419) 来自测试集在 V5 修复期间增删, 以本次实测为准。store/redis 13 个测试因本地无 Redis 跳过 (CI 中已配 MQTT_REDIS_ADDR 会执行)。
@@ -173,3 +173,4 @@
 - 上轮 31 项中 11 项已修复 (含停机优化), 18 项仍存在 + 1 项部分修复 (P3-3), 其中 P3-7 为环境问题; 本轮另新发现 20 项.
 - 剩余缺陷集中在: 离线持久会话队列 (P1-5), 出站 QoS 重试 (NEW-1), will 延迟/接管语义 (P2-5/P2-10), 会话持久化接线 (P2-3), 订阅泄漏 (P2-13/NEW-3), 流控边角 (P2-14/16, NEW-4), 以及一批 P3 健壮性项.
 - 本报告仅确认+出计划, 未改动生产代码; 改进按第 3 节优先级逐个实现并提交.
+

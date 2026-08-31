@@ -13,14 +13,14 @@ REM    scripts\run_tests.bat --cover        -- coverage report
 REM    scripts\run_tests.bat --all          -- same as default
 REM    scripts\run_tests.bat --save-json    -- also save raw JSON files
 REM
-REM  Readable text logs (.log) are always saved to .\logs\.
+REM  Readable text logs (.log) are always saved to .\tests\logs\.
 REM  Raw JSON (.json) is only saved when --save-json is used.
-REM  Example: logs\20260428_190627_unit.log
+REM  Example: tests\logs\20260428_190627_unit.log
 REM ============================================================
 
 set "SCRIPT_DIR=%~dp0"
 set "PROJECT_DIR=%SCRIPT_DIR%.."
-set "LOGDIR=%PROJECT_DIR%\logs"
+set "LOGDIR=%PROJECT_DIR%\tests\logs"
 
 if not exist "%LOGDIR%" mkdir "%LOGDIR%"
 

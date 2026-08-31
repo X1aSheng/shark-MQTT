@@ -11,7 +11,7 @@
 //	go run scripts/run_tests.go -mode cover            # coverage report
 //	go run scripts/run_tests.go -save-json             # also save raw JSON files
 //
-// By default, tests run with -v and save readable text logs to ./logs/.
+// By default, tests run with -v and save readable text logs to ./tests/logs/.
 // With -save-json, raw go test -json output is also saved (larger files).
 
 package main
@@ -38,7 +38,7 @@ var saveJSON bool
 func main() {
 	var (
 		mode         = flag.String("mode", "all", "test mode: unit, integration, benchmark, cover, all")
-		logDir       = flag.String("logdir", "logs", "directory for log output")
+		logDir       = flag.String("logdir", "tests/logs", "directory for log output (relative to project root)")
 		timeout      = flag.Duration("timeout", 5*time.Minute, "overall test timeout")
 		saveJSONFlag = flag.Bool("save-json", false, "also save raw JSON output from go test -json")
 	)

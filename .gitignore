@@ -32,6 +32,8 @@ vendor/
 
 # ─── Temporary & build output ────────────────────────────
 logs/
+tests/logs/
+tests/artifacts/
 *.log
 tmp/
 bin/

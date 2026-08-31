@@ -296,7 +296,7 @@ b := api.NewBroker(
 
 ## 性能
 
-最近一次基准测试运行于 **AMD Ryzen 7 8845HS / Windows 11 / Go 1.26.1**(`logs/20260506_123128_benchmark.log`):
+最近一次基准测试运行于 **AMD Ryzen 7 8845HS / Windows 11 / Go 1.26.1**(`tests/logs/20260506_123128_benchmark.log`):
 
 | 基准测试 | ns/op | B/op | allocs/op |
 |-----------|-------|------|-----------|
@@ -326,10 +326,10 @@ b := api.NewBroker(
 | 单元测试 | 344 个通过 / 13 个 Redis 跳过 | 全部通过 |
 | 集成测试 | 96 个通过 | 全部通过 |
 | 基准测试 | 65 个执行 | 全部通过 |
-| **最近一次脚本运行** | `logs/20260806_140435_*` | **0 失败** |
+| **最近一次脚本运行** | `tests/logs/20260806_140435_*` | **0 失败** |
 
 > 未设置 `MQTT_REDIS_ADDR` 时,13 个 Redis 测试被跳过。
-> 最近一次完整运行:`logs/20260806_*`;单元日志报告 344 个通过,Redis 未配置时 13 个测试跳过。将 `D:\Programs\w64devkit\bin` 加入 `PATH` 后 race 检测通过。
+> 最近一次完整运行:`tests/logs/20260806_*`;单元日志报告 344 个通过,Redis 未配置时 13 个测试跳过。将 `D:\Programs\w64devkit\bin` 加入 `PATH` 后 race 检测通过。
 
 ### 集成测试覆盖
 
@@ -349,7 +349,7 @@ b := api.NewBroker(
 
 ### 运行测试
 
-所有测试运行会自动把带时间戳的日志保存到 `logs/` 目录,格式为 JSON(原始 `go test -json` 输出)和 `.log`(解析后的报告)。
+所有测试运行会自动把带时间戳的日志保存到 `tests/logs/` 目录,格式为 JSON(原始 `go test -json` 输出)和 `.log`(解析后的报告)。
 
 #### 跨平台测试脚本
 
@@ -394,7 +394,7 @@ go run scripts/run_tests.go -mode cover -timeout 10m
 `all` 模式产出:
 
 ```
-logs/
+tests/logs/
 +-- 20260428_190627_unit.json
 +-- 20260428_190627_unit.log
 +-- 20260428_190635_integration.json
@@ -511,4 +511,5 @@ GitHub Actions CI 在每次 push / PR 时运行:
 ## 许可证
 
 MIT License
+
 

@@ -11,16 +11,16 @@
 #   bash scripts/run_tests.sh --all          # same as default
 #   bash scripts/run_tests.sh --save-json    # also save raw JSON from go test -json
 #
-# Readable text logs (.log) are always saved to ./logs/.
+# Readable text logs (.log) are always saved to ./tests/logs/.
 # Raw JSON (.json) files are only saved when --save-json is used.
-# Example: logs/20260428_190627_unit.log
+# Example: tests/logs/20260428_190627_unit.log
 #
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-LOGDIR="$PROJECT_DIR/logs"
+LOGDIR="$PROJECT_DIR/tests/logs"
 
 mkdir -p "$LOGDIR"
 

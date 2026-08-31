@@ -21,7 +21,7 @@ go test -bench=BenchmarkPublishQos0 -benchmem ./tests/bench/...
 
 ## Latest Reference Run
 
-Latest full benchmark run: `logs/20260506_123128_benchmark.log` on AMD Ryzen 7 8845HS / Windows 11 / Go 1.26.1.
+Latest full benchmark run: `tests/logs/20260506_123128_benchmark.log` on AMD Ryzen 7 8845HS / Windows 11 / Go 1.26.1.
 
 | Benchmark | ns/op | B/op | allocs/op |
 |-----------|-------|------|-----------|
@@ -312,3 +312,4 @@ micro-benchmarks for the codec, topic tree, QoS engine, and session manager.
 - [Testing Guide](guides/TESTING)
 - [Development Guide](guides/DEVELOPMENT)
 - [Configuration Guide](guides/CONFIGURATION)
+

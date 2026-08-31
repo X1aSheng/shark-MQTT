@@ -7,6 +7,16 @@ This project uses semantic versioning. Pre-release tags use the form
 
 ## Unreleased
 
+### Project structure (2026-08-31)
+
+- **Test artifacts centralized under `tests/`:** test logs now default to
+  `tests/logs/` (`scripts/run_tests.go -logdir tests/logs`, run_tests.sh/bat
+  updated; historical logs moved from the repo-root `logs/`), and a new
+  `tests/artifacts/` directory is the agreed output location for coverage /
+  profile / benchmark process files. Both are gitignored; the convention is
+  documented in `docs/guides/TESTING.md` (repo root keeps source, config, and
+  docs only).
+
 ### Client / correctness (2026-08-29)
 
 - **Client Connect TOCTOU fixed (L-005):** the client now uses a

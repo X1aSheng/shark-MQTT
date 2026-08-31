@@ -1,6 +1,6 @@
 # Testing Guide
 
-Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。最新完整脚本运行为 `logs/20260806_*`：344 个单元测试运行通过、13 个 Redis 测试跳过（本地无 Redis）、96 个集成测试运行通过、65 个基准测试执行通过。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
+Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。最新完整脚本运行为 `tests/logs/20260806_*`：344 个单元测试运行通过、13 个 Redis 测试跳过（本地无 Redis）、96 个集成测试运行通过、65 个基准测试执行通过。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
 
 ---
 
@@ -68,7 +68,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 | 集成测试 | 96 latest passed runs | `tests/integration/` |
 | 缺陷回归测试 | `tests/defects` + package-level regressions | `tests/defects/`, `broker/`, `client/` |
 | 基准测试 | 65 executed | `tests/bench/`, `store/redis/`, `plugin/` |
-| **最新脚本运行** | **344 unit passed, 96 integration passed, 65 benchmarks passed** | `logs/20260806_*` |
+| **最新脚本运行** | **344 unit passed, 96 integration passed, 65 benchmarks passed** | `tests/logs/20260806_*` |
 
 ### 各包测试明细
 
@@ -392,10 +392,21 @@ Windows 说明：`BenchmarkConnectionEstablish`、`BenchmarkMQTTConnect` 与 `Be
 
 ## 测试脚本
 
-一个 Go 编写的跨平台测试运行器，搭配轻量级 shell 包装脚本，提供统一的测试执行体验。所有测试运行自动保存 JSON（原始 `go test -json` 输出）和 `.log`（解析后的报告）到 `logs/` 目录。
+一个 Go 编写的跨平台测试运行器，搭配轻量级 shell 包装脚本，提供统一的测试执行体验。所有测试运行自动保存 JSON（原始 `go test -json` 输出）和 `.log`（解析后的报告）到 `tests/logs/` 目录。
 脚本在底层 `go test` 或基准命令失败时返回非零退出码，同时保留 JSON 和解析报告，便于 CI 正确失败并保留诊断材料。
 
-日志格式：`logs/{YYYYMMDD_HHmmss}_{type}.{json,log}`
+日志格式：`tests/logs/{YYYYMMDD_HHmmss}_{type}.{json,log}`
+
+### 测试产物目录约定
+
+所有测试**过程文件**统一生成到 `tests/` 目录下，不落在项目根目录：
+
+| 目录 | 内容 | 说明 |
+|------|------|------|
+| `tests/logs/` | 测试日志（`{ts}_*.json` / `{ts}_*.log`） | `run_tests.go` 默认输出（`-logdir` 可覆盖）；已 gitignore |
+| `tests/artifacts/` | 覆盖率（`coverage*.out` / `*.html`）、profile（`*.prof`、`mem*.out`）、基准输出等过程产物 | 手动运行 `go test -coverprofile tests/artifacts/coverage.out` 等命令时的约定输出位置；已 gitignore |
+
+约定：**任何测试产生的临时/过程文件不得写入项目根目录**——根目录只保留源码、配置与文档。
 
 ### 脚本对应关系
 
@@ -439,7 +450,7 @@ go run scripts/run_tests.go -mode cover -timeout 10m
 ### `all` 模式日志结构
 
 ```
-logs/
+tests/logs/
 +-- 20260428_190627_unit.json
 +-- 20260428_190627_unit.log
 +-- 20260428_190635_integration.json
@@ -548,4 +559,5 @@ go run scripts/run_tests.go -mode cover
 - [性能指南](guides/PERFORMANCE)
 - [架构文档](architecture/ARCHITECTURE)
 - [最新审查报告](reports/PROJECT-REVIEW-260806-143527.md)
+
 

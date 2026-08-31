@@ -296,7 +296,7 @@ b := api.NewBroker(
 
 ## Performance
 
-Latest benchmarks run on **AMD Ryzen 7 8845HS / Windows 11 / Go 1.26.1** (`logs/20260506_123128_benchmark.log`):
+Latest benchmarks run on **AMD Ryzen 7 8845HS / Windows 11 / Go 1.26.1** (`tests/logs/20260506_123128_benchmark.log`):
 
 | Benchmark | ns/op | B/op | allocs/op |
 |-----------|-------|------|-----------|
@@ -326,10 +326,10 @@ Full results: `make bench` or see `docs/guides/PERFORMANCE.md`.
 | Unit Tests | 344 passed runs / 13 Redis skips | All pass |
 | Integration Tests | 96 passed runs | All pass |
 | Benchmarks | 65 executed | All pass |
-| **Latest scripted run** | `logs/20260806_140435_*` | **0 failures** |
+| **Latest scripted run** | `tests/logs/20260806_140435_*` | **0 failures** |
 
 > 13 Redis tests skipped when `MQTT_REDIS_ADDR` is not set.
-> Latest full run: `logs/20260806_*`; unit log reports 344 passed and 13 Redis tests skipped when Redis is not configured. Race detector passed after adding `D:\Programs\w64devkit\bin` to `PATH`.
+> Latest full run: `tests/logs/20260806_*`; unit log reports 344 passed and 13 Redis tests skipped when Redis is not configured. Race detector passed after adding `D:\Programs\w64devkit\bin` to `PATH`.
 
 ### Integration Test Coverage
 
@@ -349,7 +349,7 @@ All MQTT integration tests (53 MQTT data/security tests plus 36 deployment check
 
 ### Running Tests
 
-All test runs automatically save timestamped logs to the `logs/` directory in JSON (raw `go test -json` output) and `.log` (parsed report) formats.
+All test runs automatically save timestamped logs to the `tests/logs/` directory in JSON (raw `go test -json` output) and `.log` (parsed report) formats.
 
 #### Cross-Platform Test Scripts
 
@@ -394,7 +394,7 @@ go run scripts/run_tests.go -mode cover -timeout 10m
 The `all` mode produces:
 
 ```
-logs/
+tests/logs/
 +-- 20260428_190627_unit.json
 +-- 20260428_190627_unit.log
 +-- 20260428_190635_integration.json
@@ -511,4 +511,5 @@ See `docs/reports/PROJECT-REVIEW-260806-143527.md` for the latest project review
 ## License
 
 MIT License
+
 
