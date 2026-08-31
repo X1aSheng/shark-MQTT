@@ -25,11 +25,7 @@ type prometheusMetrics struct {
 	messagesPublished *prometheus.CounterVec
 	messagesDelivered *prometheus.CounterVec
 	messagesDropped   *prometheus.CounterVec
-	inflight          prometheus.Gauge
-	inflightDropped   prometheus.Counter
-	retries           prometheus.Counter
 	onlineSessions    prometheus.Gauge
-	offlineSessions   prometheus.Gauge
 	retainedMsgs      prometheus.Gauge
 	subscriptions     prometheus.Gauge
 	errors            *prometheus.CounterVec
@@ -110,34 +106,10 @@ func NewPrometheusMetrics(reg prometheus.Registerer) Metrics {
 		Help:      "Total number of messages dropped",
 	}, []string{"reason"}))
 
-	m.inflight = registerOrReuse(reg, prometheus.NewGauge(prometheus.GaugeOpts{
-		Namespace: "shark_mqtt",
-		Name:      "inflight_messages",
-		Help:      "Total number of inflight messages",
-	}))
-
-	m.inflightDropped = registerOrReuse(reg, prometheus.NewCounter(prometheus.CounterOpts{
-		Namespace: "shark_mqtt",
-		Name:      "inflight_dropped_total",
-		Help:      "Total number of inflight messages dropped",
-	}))
-
-	m.retries = registerOrReuse(reg, prometheus.NewCounter(prometheus.CounterOpts{
-		Namespace: "shark_mqtt",
-		Name:      "retries_total",
-		Help:      "Total number of message retries",
-	}))
-
 	m.onlineSessions = registerOrReuse(reg, prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace: "shark_mqtt",
 		Name:      "online_sessions",
 		Help:      "Number of online sessions",
-	}))
-
-	m.offlineSessions = registerOrReuse(reg, prometheus.NewGauge(prometheus.GaugeOpts{
-		Namespace: "shark_mqtt",
-		Name:      "offline_sessions",
-		Help:      "Number of offline sessions",
 	}))
 
 	m.retainedMsgs = registerOrReuse(reg, prometheus.NewGauge(prometheus.GaugeOpts{
@@ -188,26 +160,8 @@ func (m *prometheusMetrics) IncMessagesDelivered(qos uint8) {
 func (m *prometheusMetrics) IncMessagesDropped(reason string) {
 	m.messagesDropped.WithLabelValues(reason).Inc()
 }
-func (m *prometheusMetrics) IncInflight(_ string) {
-	m.inflight.Inc()
-}
-func (m *prometheusMetrics) DecInflight(_ string) {
-	m.inflight.Dec()
-}
-func (m *prometheusMetrics) DecInflightBatch(_ string, count int) {
-	m.inflight.Sub(float64(count))
-}
-func (m *prometheusMetrics) IncInflightDropped(_ string) {
-	m.inflightDropped.Inc()
-}
-func (m *prometheusMetrics) IncRetries(_ string) {
-	m.retries.Inc()
-}
 func (m *prometheusMetrics) SetOnlineSessions(count int) {
 	m.onlineSessions.Set(float64(count))
-}
-func (m *prometheusMetrics) SetOfflineSessions(count int) {
-	m.offlineSessions.Set(float64(count))
 }
 func (m *prometheusMetrics) SetRetainedMessages(count int) {
 	m.retainedMsgs.Set(float64(count))

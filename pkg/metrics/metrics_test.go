@@ -23,13 +23,7 @@ func TestDefaultMetrics(t *testing.T) {
 	m.IncMessagesPublished(1)
 	m.IncMessagesDelivered(0)
 	m.IncMessagesDropped("timeout")
-	m.IncInflight("client1")
-	m.DecInflight("client1")
-	m.DecInflightBatch("client1", 5)
-	m.IncInflightDropped("client1")
-	m.IncRetries("client1")
 	m.SetOnlineSessions(10)
-	m.SetOfflineSessions(5)
 	m.SetRetainedMessages(3)
 	m.SetSubscriptions(2)
 	m.IncErrors("broker")
@@ -50,13 +44,7 @@ func TestNoopMetricsDoesNotPanic(t *testing.T) {
 	m.IncMessagesPublished(0)
 	m.IncMessagesDelivered(1)
 	m.IncMessagesDropped("test")
-	m.IncInflight("c1")
-	m.DecInflight("c1")
-	m.DecInflightBatch("c1", 10)
-	m.IncInflightDropped("c1")
-	m.IncRetries("c1")
 	m.SetOnlineSessions(0)
-	m.SetOfflineSessions(0)
 	m.SetRetainedMessages(0)
 	m.SetSubscriptions(0)
 	m.IncErrors("test")
@@ -135,42 +123,12 @@ func TestPrometheusMetrics_AllMethods(t *testing.T) {
 		}
 	})
 
-	t.Run("inflight", func(t *testing.T) {
-		m.IncInflight("c1")
-		m.IncInflight("c2")
-		m.IncInflight("c3")
-		m.DecInflight("c1")
-		m.DecInflightBatch("c2", 1)
-		if got := testutil.ToFloat64(m.(*prometheusMetrics).inflight); got != 1 {
-			t.Errorf("inflight = %f, want 1 (inc 3, dec 1, decbatch 1)", got)
-		}
-	})
-
-	t.Run("inflight dropped", func(t *testing.T) {
-		m.IncInflightDropped("c1")
-		m.IncInflightDropped("c1")
-		if got := testutil.ToFloat64(m.(*prometheusMetrics).inflightDropped); got != 2 {
-			t.Errorf("inflight_dropped = %f, want 2", got)
-		}
-	})
-
-	t.Run("retries", func(t *testing.T) {
-		m.IncRetries("c1")
-		if got := testutil.ToFloat64(m.(*prometheusMetrics).retries); got != 1 {
-			t.Errorf("retries = %f, want 1", got)
-		}
-	})
-
 	t.Run("sessions", func(t *testing.T) {
 		m.SetOnlineSessions(42)
-		m.SetOfflineSessions(7)
 		m.SetRetainedMessages(100)
 		m.SetSubscriptions(500)
 		if got := testutil.ToFloat64(m.(*prometheusMetrics).onlineSessions); got != 42 {
 			t.Errorf("online_sessions = %f, want 42", got)
-		}
-		if got := testutil.ToFloat64(m.(*prometheusMetrics).offlineSessions); got != 7 {
-			t.Errorf("offline_sessions = %f, want 7", got)
 		}
 		if got := testutil.ToFloat64(m.(*prometheusMetrics).retainedMsgs); got != 100 {
 			t.Errorf("retained_messages = %f, want 100", got)
@@ -278,8 +236,6 @@ func BenchmarkPrometheusMetrics(b *testing.B) {
 		m.IncConnections()
 		m.IncMessagesPublished(1)
 		m.IncMessagesDropped("timeout")
-		m.IncInflight("c1")
-		m.DecInflight("c1")
 		m.SetOnlineSessions(i)
 		m.IncErrors("broker")
 		m.ObserveMessageLatency(0.001, 0)
