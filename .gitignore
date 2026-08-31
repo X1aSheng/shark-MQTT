@@ -19,8 +19,7 @@ go.work
 *.swo
 
 # ─── Coverage & profiling ────────────────────────────────
-coverage.out
-coverage.html
+coverage*
 *.cover
 *.prof
 
