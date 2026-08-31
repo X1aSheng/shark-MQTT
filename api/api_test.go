@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -235,6 +236,28 @@ func TestConfigValidationError(t *testing.T) {
 	err := b.Start()
 	if err == nil {
 		t.Fatal("expected Start() to fail with invalid config")
+	}
+}
+
+// TestStorageBackendRequiresExplicitStores verifies that configuring a
+// non-memory storage backend without wiring explicit stores fails at Start()
+// instead of silently running without persistence (a configuration mistake
+// must not degrade to a broker that never saves session state).
+func TestStorageBackendRequiresExplicitStores(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.StorageBackend = "redis" // valid value, but no stores wired
+
+	b := NewBroker(WithConfig(cfg))
+	if b.initErr == nil {
+		t.Fatal("expected initErr for redis backend without explicit stores")
+	}
+
+	err := b.Start()
+	if err == nil {
+		t.Fatal("expected Start() to fail when backend requires explicit stores")
+	}
+	if !strings.Contains(err.Error(), "requires explicit stores") {
+		t.Errorf("expected 'requires explicit stores' in error, got %v", err)
 	}
 }
 

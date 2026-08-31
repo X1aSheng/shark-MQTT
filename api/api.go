@@ -216,6 +216,17 @@ func NewBroker(opts ...Option) *Broker {
 		o.retainedStore = memory.NewRetainedStore()
 	}
 
+	// A non-memory backend with no explicitly wired stores must fail loudly
+	// instead of silently running without persistence: the broker would
+	// accept connections but never save sessions/messages/retained state,
+	// which is a configuration mistake, not a supported mode.
+	if o.cfg.StorageBackend != "" && o.cfg.StorageBackend != "memory" &&
+		o.sessionStore == nil && o.messageStore == nil && o.retainedStore == nil {
+		initErr = fmt.Errorf(
+			"storage_backend %q requires explicit stores (WithSessionStore/WithMessageStore/WithRetainedStore)",
+			o.cfg.StorageBackend)
+	}
+
 	if o.sessionStore != nil {
 		bopts = append(bopts, broker.WithSessionStore(o.sessionStore))
 	}
@@ -349,7 +360,9 @@ func (b *Broker) startHealthServer() {
 		fmt.Fprintf(w, "ok")
 	})
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		if b.srv.Addr() != nil {
+		// Ready only when the listener is up AND the broker's subsystems
+		// (QoS retry loop, session cleanup, etc.) are running.
+		if b.srv.Addr() != nil && b.broker.IsStarted() {
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprintf(w, "ok")
 		} else {
