@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -961,7 +962,15 @@ func (b *Broker) readLoop(clientID string, sess *Session, codec *protocol.Codec,
 	for {
 		pkt, err := codec.Decode(conn)
 		if err != nil {
-			b.logger.Debug("read error", "clientID", clientID, "error", err)
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				// MQTT keep-alive expired: no packet within 1.5x KeepAlive.
+				// This is the primary zombie-connection reaper — the peer is
+				// considered dead and the session is torn down.
+				b.logger.Info("keepalive timeout", "clientID", clientID)
+				b.metrics.IncRejections("keepalive_timeout")
+			} else {
+				b.logger.Debug("read error", "clientID", clientID, "error", err)
+			}
 			b.abnormalDisconnect(clientID, conn)
 			return
 		}
@@ -1806,6 +1815,11 @@ func (b *Broker) writePacket(clientID string, pkt protocol.Packet) {
 
 	if err := cs.writeOrEnqueue(pkt); err != nil {
 		b.logger.Warn("write error", "clientID", clientID, "error", err)
+		// A failed socket write means the peer is gone or unreachable: close
+		// the connection immediately so the readLoop unblocks and the session
+		// is cleaned up, instead of lingering as a phantom (zombie) connection
+		// until the keep-alive deadline.
+		cs.conn.Close()
 	}
 }
 
@@ -1837,12 +1851,17 @@ func (cs *clientState) writeLoop() {
 		select {
 		case pkt := <-cs.out:
 			if err := cs.codec.Encode(cs.conn, pkt); err != nil {
+				// Same zombie-connection guard as writePacket: a failed write
+				// closes the socket so the reader notices and tears the
+				// connection down promptly.
+				cs.conn.Close()
 				return
 			}
 			// Transports that frame packets (WebSocket) flush the buffered
 			// packet as one message after each Encode (R5).
 			if f, ok := cs.conn.(packetFlusher); ok {
 				if err := f.FlushPacket(); err != nil {
+					cs.conn.Close()
 					return
 				}
 			}
@@ -1867,6 +1886,11 @@ func (b *Broker) sendConnAck(clientID string, reasonCode byte, sessionPresent bo
 
 	if err := cs.writeOrEnqueue(pkt); err != nil {
 		b.logger.Warn("write error", "clientID", clientID, "error", err)
+		// A failed socket write means the peer is gone or unreachable: close
+		// the connection immediately so the readLoop unblocks and the session
+		// is cleaned up, instead of lingering as a phantom (zombie) connection
+		// until the keep-alive deadline.
+		cs.conn.Close()
 	}
 }
 

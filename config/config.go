@@ -34,6 +34,11 @@ type Config struct {
 	MaxPacketSize  int           `yaml:"max_packet_size" toml:"max_packet_size" env:"MQTT_MAX_PACKET_SIZE"`
 	MaxConnections int           `yaml:"max_connections" toml:"max_connections" env:"MQTT_MAX_CONNECTIONS"`
 	WriteQueueSize int           `yaml:"write_queue_size" toml:"write_queue_size" env:"MQTT_WRITE_QUEUE_SIZE"`
+	// TCPKeepAlivePeriod is the OS-level TCP keep-alive probe interval applied
+	// to accepted connections (0 = keep the Go runtime default). It bounds how
+	// long a dead peer that disables the MQTT keep-alive (KeepAlive=0) can
+	// stay registered as an online connection before being reaped.
+	TCPKeepAlivePeriod time.Duration `yaml:"tcp_keepalive_period" toml:"tcp_keepalive_period" env:"MQTT_TCP_KEEPALIVE_PERIOD"`
 
 	// QoS settings
 	QoSRetryInterval time.Duration `yaml:"qos_retry_interval" toml:"qos_retry_interval" env:"MQTT_QOS_RETRY_INTERVAL"`
@@ -76,6 +81,7 @@ func DefaultConfig() *Config {
 		MaxPacketSize:         256 * 1024,
 		MaxConnections:        10000,
 		WriteQueueSize:        256,
+		TCPKeepAlivePeriod:    60 * time.Second,
 		QoSRetryInterval:      10 * time.Second,
 		QoSMaxRetries:         3,
 		QoSMaxInflight:        100,
@@ -102,6 +108,9 @@ func (c *Config) Validate() error {
 	}
 	if c.WriteQueueSize < 0 {
 		return fmt.Errorf("write_queue_size must be >= 0, got %d", c.WriteQueueSize)
+	}
+	if c.TCPKeepAlivePeriod < 0 {
+		return fmt.Errorf("tcp_keepalive_period must be >= 0, got %v", c.TCPKeepAlivePeriod)
 	}
 	if c.SysInterval < 0 {
 		return fmt.Errorf("sys_interval must be >= 0, got %v", c.SysInterval)

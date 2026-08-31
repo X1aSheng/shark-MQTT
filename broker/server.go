@@ -250,6 +250,15 @@ func (s *MQTTServer) acceptLoop(ln net.Listener) {
 		s.conns[conn] = struct{}{}
 		s.mu.Unlock()
 
+		// Configure OS-level TCP keep-alive so a dead peer is detected even
+		// for clients that disable the MQTT keep-alive (KeepAlive=0). The
+		// probe interval is configurable; a zero period leaves the Go runtime
+		// default in place.
+		if tc, ok := conn.(*net.TCPConn); ok && s.cfg.TCPKeepAlivePeriod > 0 {
+			_ = tc.SetKeepAlive(true)
+			_ = tc.SetKeepAlivePeriod(s.cfg.TCPKeepAlivePeriod)
+		}
+
 		s.wg.Add(1)
 		go func(c net.Conn) {
 			defer s.wg.Done()
