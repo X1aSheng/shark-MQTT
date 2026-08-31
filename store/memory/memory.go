@@ -3,10 +3,10 @@ package memory
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/X1aSheng/shark-mqtt/protocol"
 	"github.com/X1aSheng/shark-mqtt/store"
 )
 
@@ -226,7 +226,7 @@ func (r *retainedStore) SaveRetained(ctx context.Context, topic string, qos uint
 }
 
 func (r *retainedStore) addToIndex(topic string, msg *store.RetainedMessage) {
-	parts := protocol.SplitTopic(topic)
+	parts := strings.Split(topic, "/")
 	node := r.index
 	for _, part := range parts {
 		if node.children[part] == nil {
@@ -238,7 +238,7 @@ func (r *retainedStore) addToIndex(topic string, msg *store.RetainedMessage) {
 }
 
 func (r *retainedStore) removeFromIndex(topic string) {
-	parts := protocol.SplitTopic(topic)
+	parts := strings.Split(topic, "/")
 	r.index.remove(parts, 0)
 }
 
@@ -289,7 +289,7 @@ func (r *retainedStore) MatchRetained(ctx context.Context, pattern string) ([]*s
 		return nil, nil
 	}
 
-	parts := protocol.SplitTopic(pattern)
+	parts := strings.Split(pattern, "/")
 	var result []*store.RetainedMessage
 	visited := make(map[string]struct{})
 	r.index.match(parts, 0, &result, visited)
