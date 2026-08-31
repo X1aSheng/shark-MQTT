@@ -309,7 +309,10 @@ micro-benchmarks for the codec, topic tree, QoS engine, and session manager.
 
 ## See Also
 
-- [Testing Guide](guides/TESTING)
-- [Development Guide](guides/DEVELOPMENT)
-- [Configuration Guide](guides/CONFIGURATION)
+- [Testing Guide](TESTING.md)
+- [Development Guide](DEVELOPMENT.md)
+- [Configuration Guide](CONFIGURATION.md)
+
+
+
 

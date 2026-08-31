@@ -247,7 +247,7 @@ make bench-cpu
 make bench-mem
 ```
 
-See [docs/performance.md](../docs/performance.md) for detailed profiling workflows.
+See [docs/guides/PERFORMANCE.md](docs/guides/PERFORMANCE.md) for detailed profiling workflows.
 
 ### Coverage Requirements
 
@@ -301,3 +301,4 @@ If you have questions or need help, please:
 - Review closed PRs for similar changes
 
 Thank you for contributing to Shark-MQTT!
+

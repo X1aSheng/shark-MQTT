@@ -47,7 +47,7 @@ Passwords are auto-detected as bcrypt when they start with `$2a$`, `$2b$`, or `$
 Plaintext passwords via `AddCredentials()` still work for backward compatibility but
 are **not recommended** for production.
 
-See [API.md](guides/API#authentication) for usage examples.
+See [API.md](../guides/API.md#authentication) for usage examples.
 
 Please include:
 - Description of the vulnerability
@@ -136,7 +136,7 @@ cfg.TLSCACertFile = "/path/to/ca.pem"
 ```
 
 When enabled, clients must present a certificate signed by the configured CA.
-See [Configuration Guide](guides/CONFIGURATION) for YAML/env var usage.
+See [Configuration Guide](../guides/CONFIGURATION.md) for YAML/env var usage.
 
 ### Certificate Rotation
 
@@ -345,3 +345,5 @@ Subscribe to GitHub releases for security notifications.
 - [OWASP MQTT Security](https://owasp.org/www-pdf-archive/OWASP_MQTT_Security.pdf)
 - [NIST TLS Guidelines](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-52r2.pdf)
 - [MQTT Security Fundamentals](https://www.hivemq.com/article/mqtt-security-fundamentals/)
+
+

@@ -361,9 +361,13 @@ curl http://localhost:18999/metrics
 
 ## See Also
 
-- [Testing Guide](guides/TESTING)
-- [Configuration Guide](guides/CONFIGURATION)
-- [API Reference](guides/API)
-- [Latest Review](reports/PROJECT-REVIEW-260806-143527.md)
+- [Testing Guide](TESTING.md)
+- [Configuration Guide](CONFIGURATION.md)
+- [API Reference](API.md)
+- [Latest Review](../reports/PROJECT-REVIEW-260806-143527.md)
 - [CONTRIBUTING.md](../README.md)
+
+
+
+
 

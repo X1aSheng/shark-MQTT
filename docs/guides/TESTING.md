@@ -397,6 +397,19 @@ Windows 说明：`BenchmarkConnectionEstablish`、`BenchmarkMQTTConnect` 与 `Be
 
 日志格式：`tests/logs/{YYYYMMDD_HHmmss}_{type}.{json,log}`
 
+### 文档链接检查
+
+文档相对链接（根目录 `*.md` 与 `docs/**`，排除 `docs/reports/archive/` 历史快照）由
+`scripts/check_links.go` 校验——任何指向不存在文件的链接都会使检查失败：
+
+```bash
+go run scripts/check_links.go
+```
+
+该检查已集成进 CI（`lint` job）。**约定**：文档链接使用相对当前文件的有效路径（含 `.md`
+后缀）；指向目录的链接需确保目录存在；`docs/reports/archive/` 下的历史文档不维护链接
+（视为历史快照）。
+
 ### 测试产物目录约定
 
 所有测试**过程文件**统一生成到 `tests/` 目录下，不落在项目根目录：
@@ -554,10 +567,15 @@ go run scripts/run_tests.go -mode cover
 
 ## 另见
 
-- [开发指南](guides/DEVELOPMENT)
-- [配置指南](guides/CONFIGURATION)
-- [性能指南](guides/PERFORMANCE)
-- [架构文档](architecture/ARCHITECTURE)
-- [最新审查报告](reports/PROJECT-REVIEW-260806-143527.md)
+- [开发指南](DEVELOPMENT.md)
+- [配置指南](CONFIGURATION.md)
+- [性能指南](PERFORMANCE.md)
+- [架构文档](../architecture/ARCHITECTURE.md)
+- [最新审查报告](../reports/PROJECT-REVIEW-260806-143527.md)
+
+
+
+
+
 
 

@@ -189,7 +189,7 @@ Environment variables with `MQTT_` prefix:
 - `MQTT_MAX_PACKET_SIZE`
 - `MQTT_LOG_LEVEL`
 
-See [configuration.md](guides/CONFIGURATION) for the full list.
+See [configuration.md](CONFIGURATION.md) for the full list.
 
 ---
 
@@ -543,7 +543,11 @@ func main() {
 
 ## See Also
 
-- [Configuration Guide](guides/CONFIGURATION)
-- [Testing Guide](guides/TESTING)
-- [Development Guide](guides/DEVELOPMENT)
-- [Examples](../examples/)
+- [Configuration Guide](CONFIGURATION.md)
+- [Testing Guide](TESTING.md)
+- [Development Guide](DEVELOPMENT.md)
+- [Examples](../../examples/)
+
+
+
+

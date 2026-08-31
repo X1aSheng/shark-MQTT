@@ -365,8 +365,12 @@ Recommended metrics to monitor:
 
 ## See Also
 
-- [Configuration Guide](guides/CONFIGURATION)
-- [API Reference](guides/API)
-- [Examples](../examples/)
-- [Latest Review](reports/PROJECT-REVIEW-260806-143527.md)
+- [Configuration Guide](../guides/CONFIGURATION.md)
+- [API Reference](../guides/API.md)
+- [Examples](../../examples/)
+- [Latest Review](../reports/PROJECT-REVIEW-260806-143527.md)
+
+
+
+
 
