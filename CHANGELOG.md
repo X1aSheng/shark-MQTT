@@ -7,6 +7,23 @@ This project uses semantic versioning. Pre-release tags use the form
 
 ## Unreleased
 
+### Reliability: zombie-connection handling (2026-08-31)
+
+- **Write failures now close the connection:** `writePacket` and `writeLoop`
+  close the socket on an encode/write error instead of only logging, so a dead
+  or unreachable peer is reaped immediately instead of lingering as a phantom
+  connection until the keep-alive deadline.
+- **Configurable OS TCP keep-alive:** new `tcp_keepalive_period` config
+  (default 60s) applies `SetKeepAlivePeriod` to accepted TCP connections,
+  bounding how long a peer that disables the MQTT keep-alive (KeepAlive=0)
+  stays registered as online.
+- **Keep-alive timeouts are observable:** the read loop now distinguishes an
+  MQTT keep-alive expiry (read deadline exceeded) — logged at info and counted
+  via `rejections{reason="keepalive_timeout"}` — from other read errors.
+- **Test fix:** `TestBroker_SysStatusTopics` now uses a well-formed SUBSCRIBE
+  (PacketID) and starts its reader before subscribing; previously a malformed
+  SUBACK silently masked both issues.
+
 ### Design / reliability (2026-08-31)
 
 - **Deduped system-topic matcher:** `matchSysProtected` is now the single MQTT

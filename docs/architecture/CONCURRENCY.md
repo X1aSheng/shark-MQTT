@@ -57,3 +57,22 @@
   goroutines call `publishWill` (→ `publishWill` → broker) without `wh.mu`.
 - `Session.Save` snapshots under `s.mu.RLock`, deep-copies payloads after
   releasing it (no large copy under lock).
+
+## Zombie-connection detection (MQTT link reliability)
+
+An MQTT link can become a "phantom"/zombie connection: the OS socket stays
+ESTABLISHED while the peer is dead or unreachable (network cut, powered-off
+device, crashed process without a FIN). The broker must not treat such
+connections as online. Detection layers:
+
+| Layer | Mechanism | Coverage |
+| --- | --- | --- |
+| MQTT keep-alive | Read deadline refreshed to 1.5x KeepAlive after every packet; a timeout tears the session down (`abnormalDisconnect`), logged at info and counted as `rejections{reason="keepalive_timeout"}` | Clients with KeepAlive > 0 |
+| OS TCP keep-alive | `tcp_keepalive_period` (default 60s) applies `SetKeepAlivePeriod` on accepted connections | Clients with KeepAlive = 0 (deadline disabled) |
+| CONNECT deadline | 10s read deadline during the handshake | Half-open connections that never send CONNECT |
+| Write-failure reap | A failed encode/write in `writePacket` or `writeLoop` closes the socket immediately, unblocking the reader | Peers that close with RST or become unreachable |
+
+Design rule: **any socket write error closes the connection** — a peer that
+cannot receive is considered dead, and lingering state (session, subscriptions,
+write queue) is torn down promptly rather than waiting for a keep-alive
+deadline.
