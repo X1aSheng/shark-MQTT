@@ -2,514 +2,199 @@
 
 > **English** | [简体中文](README.zh-CN.md)
 
-A high-performance MQTT Broker written in Go, supporting both **MQTT 3.1.1** and **MQTT 5.0** protocols.
+## Project Overview
 
-**Project version baseline: 1.0.0**
+Shark-MQTT is a high-performance MQTT broker written in Go, implementing the
+**MQTT 3.1.1 and 5.0** specifications end to end. It is engineered for
+predictable behavior under load:
+
+- **Zero external dependencies to run** — in-memory storage by default;
+  Redis and BadgerDB are opt-in backends compiled behind build tags.
+- **Bounded concurrency** — every queue and buffer has a hard cap
+  (write queue, flow-control buffer, inflight, retained count), and the
+  publish hot path is allocation-tuned (pooled codecs, tiered buffer pool).
+- **Prompt dead-link detection** — MQTT keep-alive deadlines, configurable
+  OS TCP keep-alive, and write-failure reaping keep zombie connections from
+  lingering as "online".
+- **Pluggable and observable** — auth/authorization chains, hook-based
+  plugins, custom storage/metrics, structured logging, and Prometheus
+  metrics with health/readiness endpoints.
+
+On an AMD Ryzen 7 8845HS, the end-to-end QoS 0 round trip runs at ~68 µs/message
+with 34 allocs; 128 KB payloads encode at ~103 µs with 135 KB allocated per
+message.
 
 ## Features
 
-- **Protocol Support**: Full MQTT 3.1.1 & 5.0 with 15 packet types, complete property encoding/decoding
-- **QoS Levels**: QoS 0, 1, 2 with automatic retry, inflight tracking, and state machine
-- **Persistent Sessions**: Cross-connection session persistence (`CleanSession=false`) with MQTT 5.0 Session Expiry Interval support
-- **Session Takeover**: Safe client ID takeover - new connection kicks old, old cleanup does not corrupt new state
-- **Topic Wildcards**: Full `+` and `#` wildcard support with spec-compliant `$SYS` system topic protection
-- **Retained Messages**: Store-and-forward last message per topic with wildcard delivery, QoS downgrade, and MQTT 5.0 Retain Handling
-- **Will Messages**: Automatic last-will delivery on abnormal disconnect, with MQTT 5.0 Will Delay Interval support
-- **Pluggable Auth**: Chain authentication - `AllowAll`, `DenyAll`, `StaticAuth` (credentials + ACL), `FileAuth` (YAML), `ChainAuth`, or custom `Authenticator`/`Authorizer` interfaces
-- **Plugin System**: Extensible hooks for `OnAccept`, `OnConnected`, `OnMessage`, `OnClose` - continues dispatching after plugin errors
-- **Multiple Storage Backends**: In-memory (default), Redis, BadgerDB for sessions, messages, and retained messages
-- **Connection Limit**: Configurable max connections with pre-auth enforcement
-- **TLS Support**: Secure connections with configurable TLS (min TLS 1.2)
-- **MQTT 5.0 CONNACK Capabilities**: Server advertises ReceiveMaximum, MaximumQoS, RetainAvailable, WildcardSubAvailable, etc.
-- **MQTT 5.0 Subscription Options**: Supports No Local and Retain Handling semantics while preserving MQTT default self-publish delivery
-- **Observability**: Structured logging (`slog`) + Prometheus metrics (17+ methods) + `/healthz`/`/readyz` endpoints
-- **Safe Concurrency**: Per-connection write mutex, atomic ID generation, thread-safe session management, conn-identity-checked cleanup
-- **Config Validation**: Built-in `Validate()` for all config fields, YAML/ENV/CLI configuration
-- **Independent Runtime**: Runs as an independent MQTT broker; cross-system interoperability is handled through shared databases, Redis/cache, and explicit data contracts
+**Protocol (MQTT 3.1.1 & 5.0)**
+- All 15 packet types with complete property encoding/decoding
+- Enhanced authentication (§4.12), Topic Alias, Message/Session Expiry,
+  RequestResponseInformation, ReceiveMaximum flow control, shared
+  subscriptions, spec-compliant `$SYS` topic protection
+
+**QoS & Delivery**
+- QoS 0/1/2 state machines with automatic retry and inflight tracking
+- Overlapping subscriptions deliver once at the **maximum** matching QoS (§3.3.5)
+- Offline message queue for persistent sessions; Message Expiry enforced
+  across queue, flow-control buffer, and inflight retries
+
+**Sessions**
+- Persistent sessions with MQTT 5.0 Session Expiry Interval (honored on
+  CONNECT and DISCONNECT); safe client-ID takeover with identity-checked
+  cleanup
+
+**Messages**
+- Retained messages (with TTL), will messages (with delay interval),
+  wildcard `+`/`#` matching, MQTT 5.0 subscription options
+  (No Local, Retain Handling, Subscription Identifier)
+
+**Reliability**
+- Zombie-connection reaping: keep-alive deadlines, configurable OS TCP
+  keep-alive (`tcp_keepalive_period`), and immediate socket close on write
+  failure
+- Connection limits enforced before authentication; CONNECT handshake
+  deadline; per-connection bounded write queues
+
+**Security**
+- Pluggable auth chains (AllowAll, DenyAll, StaticAuth with ACL, FileAuth,
+  ChainAuth) with **fail-closed defaults**; TLS 1.2+ / mTLS; publish/subscribe
+  authorization, including will-message authorization
+
+**Storage & Extensibility**
+- `store` interfaces with memory (default), Redis, and BadgerDB backends
+- Hook-based plugin system (OnAccept/OnConnected/OnMessage/OnClose) with panic
+  isolation; custom authenticators, authorizers, stores, and metrics
+
+**Observability**
+- Structured logging (`slog`), Prometheus metrics, `/healthz`/`/readyz`
+  (readiness requires both listener and broker subsystems)
 
 ## Architecture
 
 ```
-+----------------------------------------------------------+
-|                       cmd/main.go                        |
-|                   CLI Entry Point                        |
-+------------------------+---------------------------------+
-                         |
-                         v
-+----------------------------------------------------------+
-|                      api/api.go                          |
-|             Unified Public API & Factory                 |
-|            (Start / Stop / Addr / ConnCount)             |
-|            + Health Server (/healthz, /readyz)           |
-+------------------------+---------------------------------+
-                         |
-                         v
-+----------------------------------------------------------+
-|                        broker/                           |
-|               Network + Business Logic                   |
-|  +-----------------+  +------------------------------+  |
-|  |  MQTTServer      |  |  Broker                      |  |
-|  |  TCP/TLS Accept  |<-+  TopicTree (wildcard match)  |  |
-|  |  Connection Mgmt |  |  QoSEngine (retry + inflight)|  |
-|  |  Per-conn Mutex  |  |  WillHandler (delay support) |  |
-|  +-----------------+  |  Manager (sessions)           |  |
-|                        |  Authenticator + Authorizer   |  |
-|                        |  Connection Limiter           |  |
-|                        +------------------------------+  |
-+----------------------------------------------------------+
-              |              |              |
-              v              v              v
-+----------------+ +--------------+ +--------------+
-|   protocol/    | |   store/     | |    pkg/      |
-|  MQTT Codec    | |  Memory      | |  Logger      |
-|  15 Packets    | |  Redis       | |  Metrics     |
-|  MQTT 5.0 Props| |  BadgerDB    | |  BufferPool  |
-+----------------+ +--------------+ +--------------+
+cmd (CLI) → api (public facade + health server)
+                 └─ broker: MQTTServer (TCP/TLS/WS) + Broker
+                      ├─ TopicTree (wildcard matching, $SYS protection)
+                      ├─ QoSEngine (retry + inflight)
+                      ├─ WillHandler (delayed wills)
+                      └─ Session Manager (persistence, takeover)
+                 ↓        ↓        ↓
+           protocol/  store/   pkg/
+           (codec)    (memory/ (logger/
+                      redis/   metrics/
+                      badger)  bufferpool)
 ```
 
-### Directory Structure
+Layers depend one-directionally; the network layer and business logic are
+separated, and connections are decoupled from sessions.
 
-| Directory | Description |
-|-----------|-------------|
-| `cmd/` | CLI entry point with signal handling and flag parsing |
-| `api/` | Unified public API, broker factory, health endpoints |
-| `broker/` | Core: MQTTServer, Broker, TopicTree, QoSEngine, WillHandler, Session, Auth |
-| `protocol/` | MQTT 3.1.1 & 5.0 codec - 15 packet types with property support |
-| `store/` | Storage interfaces + memory / redis / badger implementations |
-| `pkg/` | Infrastructure: logger (slog), metrics (Prometheus), bufferpool |
-| `config/` | Configuration loading (YAML / ENV) with validation |
-| `plugin/` | Plugin system with hook-based architecture |
-| `client/` | MQTT client implementation |
-| `errs/` | Centralized error definitions |
-| `tests/integration/` | 96 end-to-end integration tests including MQTT workflows and deploy verification |
-| `tests/bench/` | 65 executed benchmarks on Windows (broker + E2E data verify + micro + store) |
-| `examples/` | Runnable example programs (standalone, TLS, custom auth) |
-| `deploy/` | Docker, docker-compose, k8s, Helm chart deployment assets |
-| `docs/` | Architecture, deployment, performance, testing, and project status docs |
-| `testutils/` | Test utilities (mock connections, mock stores, helpers) |
-| `scripts/` | Test runner scripts (Windows/Linux/macOS) |
+### Directory Layout
+
+| Directory | Purpose |
+|-----------|---------|
+| `cmd/` `api/` | CLI entry; public API/factory and health endpoints |
+| `broker/` | Core: server, broker, TopicTree, QoSEngine, WillHandler, sessions, auth |
+| `protocol/` | MQTT 3.1.1 & 5.0 codec (15 packet types, properties) |
+| `store/` | Storage interfaces + memory (default); redis/badger behind build tags |
+| `client/` | MQTT 3.1.1/5.0 client |
+| `plugin/` `config/` `errs/` | Plugin system; configuration; error sentinels |
+| `pkg/` | logger, metrics, tiered buffer pool |
+| `tests/` | integration/, bench/, defects/ + logs & artifacts (gitignored) |
+| `examples/` `deploy/` `docs/` | Examples; Docker/K8s/Helm; documentation |
 
 ## Quick Start
 
-### Installation
-
 ```bash
-go get github.com/X1aSheng/shark-mqtt
+# Run the broker
+go run ./cmd -addr :18983 -allow-all        # development only
+
+# Or embed it
 ```
-
-### Standalone Broker
-
-```go
-package main
-
-import (
-    "context"
-    "log"
-    "os/signal"
-    "syscall"
-
-    "github.com/X1aSheng/shark-mqtt/api"
-    "github.com/X1aSheng/shark-mqtt/broker"
-    "github.com/X1aSheng/shark-mqtt/config"
-)
-
-func main() {
-    cfg := config.DefaultConfig()
-    cfg.ListenAddr = ":18983"
-
-    b := api.NewBroker(
-        api.WithConfig(cfg),
-        api.WithAuth(broker.AllowAllAuth{}),
-    )
-
-    if err := b.Start(); err != nil {
-        log.Fatal(err)
-    }
-
-    ctx, _ := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-    <-ctx.Done()
-    b.Stop()
-}
-```
-
-### Docker
-
-```bash
-# Build and run
-docker build -f deploy/docker/Dockerfile -t shark-mqtt .
-docker run -d -p 18983:18983 -p 18999:18999 shark-mqtt -addr=:18983 -allow-all
-
-# Verify
-curl http://localhost:18999/healthz
-```
-
-See `deploy/docker/docker-compose.yml` for Redis and multi-service setups.
-
-### Kubernetes
-
-```bash
-# Deploy
-kubectl apply -k deploy/k8s/app/
-
-# Optional Prometheus monitoring
-kubectl apply -k deploy/k8s/infra/prometheus/
-
-# Check
-kubectl -n shark-mqtt get pods
-```
-
-See `deploy/k8s/` for Kubernetes manifests and Helm chart configuration.
-
-### CLI
-
-```bash
-# Build and run
-go build -o shark-mqtt ./cmd/
-./shark-mqtt -addr :18983 -log-level info
-
-# With TLS
-./shark-mqtt -addr :18993 -tls -tls-cert cert.pem -tls-key key.pem
-
-# With connection limit
-./shark-mqtt -addr :18983 -max-conn 10000
-```
-
-### Authentication
-
-```go
-auth := broker.NewStaticAuth()
-auth.AddCredentials("admin", "secret")
-auth.AddCredentials("device-1", "token-abc")
-auth.AddPublishACL("admin", "sensor/#")   // admin can publish to sensor/*
-auth.AddSubscribeACL("admin", "#")        // admin can subscribe to everything
-
-b := api.NewBroker(api.WithAuth(auth))
-```
-
-### TLS
 
 ```go
 cfg := config.DefaultConfig()
-cfg.ListenAddr = ":18993"
-cfg.TLSEnabled = true
-cfg.TLSCertFile = "cert.pem"
-cfg.TLSKeyFile = "key.pem"
-
-b := api.NewBroker(api.WithConfig(cfg))
-```
-
-### Redis Storage
-
-```go
-import (
-    redisstore "github.com/X1aSheng/shark-mqtt/store/redis"
-    "github.com/redis/go-redis/v9"
-)
-
-client := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
-
-b := api.NewBroker(
-    api.WithSessionStore(redisstore.NewSessionStore(redisstore.SessionStoreConfig{
-        Client:    client,
-        KeyPrefix: "mqtt:session:",
-    })),
-)
-```
-
-### Plugin
-
-```go
-type LogPlugin struct{}
-
-func (p *LogPlugin) Name() string                          { return "log-plugin" }
-func (p *LogPlugin) Hooks() []plugin.Hook                  { return []plugin.Hook{plugin.OnMessage} }
-func (p *LogPlugin) Execute(hook plugin.Hook, data any) error {
-    if msg, ok := data.(*protocol.PublishPacket); ok {
-        log.Printf("message: topic=%s payload=%s", msg.Topic, msg.Payload)
-    }
-    return nil
-}
-
-pm := plugin.NewManager()
-pm.Register(&LogPlugin{})
-b := api.NewBroker(api.WithPluginManager(pm))
-```
-
-## Configuration
-
-### YAML
-
-```yaml
-listen_addr: ":18983"
-keep_alive: 60
-max_packet_size: 262144
-max_connections: 10000
-storage_backend: "memory"
-log_level: "info"
-log_format: "json"
-qos_retry_interval: "10s"
-qos_max_retries: 3
-qos_max_inflight: 100
-session_expiry_interval: 3600
-
-# TLS
-tls_enabled: false
-tls_cert_file: ""
-tls_key_file: ""
-
-# Redis
-redis_addr: "localhost:6379"
-redis_password: ""
-redis_db: 0
-
-# BadgerDB
-badger_path: "./data"
-
-# Metrics
-metrics_enabled: true
-metrics_addr: ":18999"
-```
-
-### Environment Variables
-
-All config options support the `MQTT_` prefix:
-
-```bash
-MQTT_LISTEN_ADDR=:18983 MQTT_MAX_CONNECTIONS=5000 ./shark-mqtt
-```
-
-### Options API
-
-```go
+cfg.ListenAddr = ":18983"
 b := api.NewBroker(
     api.WithConfig(cfg),
-    api.WithAuth(myAuth),
-    api.WithMaxConnections(5000),
-    api.WithSessionStore(ss),
-    api.WithMessageStore(ms),
-    api.WithRetainedStore(rs),
-    api.WithLogger(logger),
-    api.WithMetrics(metrics),
-    api.WithPluginManager(pm),
+    api.WithAuth(broker.AllowAllAuth{}), // replace with a real authenticator
 )
+if err := b.Start(); err != nil {
+    log.Fatal(err)
+}
+defer b.Stop()
 ```
+
+> The broker defaults to **deny-all** authentication; without an explicit
+> authenticator (or `-allow-all`), connections are rejected.
+
+More: [Examples](examples/) · [Configuration](docs/guides/CONFIGURATION.md) ·
+[Docker & K8s](docs/architecture/DEPLOY.md)
 
 ## Performance
 
-Latest benchmarks run on **AMD Ryzen 7 8845HS / Windows 11 / Go 1.26.1** (`tests/logs/20260506_123128_benchmark.log`):
+Measured on AMD Ryzen 7 8845HS / Windows 11 / Go 1.26.1 (`go test -bench . ./tests/bench/`).
 
-| Benchmark | ns/op | B/op | allocs/op |
-|-----------|-------|------|-----------|
-| Connection Establish | 305k | 4,079 | 65 |
-| MQTT Connect | 408k | 6,227 | 123 |
-| Publish QoS 0 | 24.0k | 1,760 | 27 |
-| Publish QoS 1 | 74.1k | 1,948 | 37 |
-| Publish QoS 2 | 201k | 2,548 | 52 |
-| Concurrent Publish | 43.5k | 1,717 | 26 |
-| Payload 128KB | 1.82M | 548,663 | 29 |
-| TopicTree Subscribe | 132 | 51 | 0 |
-| TopicTree Match (exact) | 244 | 88 | 2 |
-| TopicTree Match (wildcard #) | 236 | 88 | 2 |
-| TopicTree Match (wildcard +) | 354 | 136 | 3 |
-| Codec Encode Publish | 336 | 422 | 6 |
-| Codec Decode Publish | 536 | 736 | 10 |
-| QoS Engine Track QoS 1 | 19.2 | 0 | 0 |
-| BufferPool Get/Put | 29.8 | 24 | 1 |
-| MemoryStore Session Get | 5.7 | 0 | 0 |
+| Benchmark | Time | B/op | allocs/op |
+|---|---|---|---|
+| Codec Encode Publish | 153 ns | 94 | 5 |
+| Codec Decode Publish | 446 ns | 429 | 7 |
+| Codec RoundTrip Publish | 565 ns | 528 | 12 |
+| E2E QoS 0 (full round trip) | 68 µs | 956 | 34 |
+| E2E QoS 1 | 105 µs | 1,705 | 54 |
+| E2E QoS 2 | 226 µs | 2,876 | 87 |
+| E2E 64 KB payload | 226 µs | 181 KB | 36 |
+| Codec 128 KB payload encode | 103 µs | 135 KB | 24 |
+| TopicTree match (exact) | 280 ns | 160 | 2 |
+| Buffer pool Get/Put | 34 ns | 24 | 1 |
 
-Full results: `make bench` or see `docs/guides/PERFORMANCE.md`.
+Details: [docs/guides/PERFORMANCE.md](docs/guides/PERFORMANCE.md)
 
 ## Testing
 
-| Type | Count | Status |
-|------|-------|--------|
-| Unit Tests | 344 passed runs / 13 Redis skips | All pass |
-| Integration Tests | 96 passed runs | All pass |
-| Benchmarks | 65 executed | All pass |
-| **Latest scripted run** | `tests/logs/20260806_140435_*` | **0 failures** |
+| Suite | Count | Status |
+|---|---|---|
+| Unit tests (incl. defect regressions) | 375 | Pass |
+| Integration tests (end-to-end, incl. deploy verification) | 111 | Pass |
+| Benchmarks | 65 | Pass |
+| Race detector | full suite | Clean |
+| Protocol fuzz (2 fuzzers) | 8.4M+ executions | No crashes |
 
-> 13 Redis tests skipped when `MQTT_REDIS_ADDR` is not set.
-> Latest full run: `tests/logs/20260806_*`; unit log reports 344 passed and 13 Redis tests skipped when Redis is not configured. Race detector passed after adding `D:\Programs\w64devkit\bin` to `PATH`.
-
-### Integration Test Coverage
-
-| Category | Tests | Details |
-|----------|-------|---------|
-| Connect & Session | 6 | CONNECT flow, persistent session, reconnect, kick, QoS1 ACK |
-| Pub/Sub | 6 | Basic, QoS 0/1/2, default self-publish delivery, MQTT 5.0 No Local suppression |
-| Will Messages | 3 | Abnormal/graceful disconnect, QoS 0/1 |
-| Topic Wildcards | 5 | `+`, `#`, root, mixed, multiple subscribers |
-| Retained Messages | 7 | New subscriber, update, delete, wildcard, QoS downgrade, MQTT 5.0 Retain Handling 1/2 |
-| Multi-subscriber | 12 | Same topic, mixed QoS, ordering, burst, large/binary/empty/unicode payload, overlapping, publish-to-self, structured binary |
-| Unsubscribe & QoS | 8 | Stop delivery, multi-topic, wildcard, resubscribe, system topic, QoS 1 ACK, QoS 2 handshake, no-subscriber publish |
-| Edge Cases | 6 | Auth failure, duplicate clientID, invalid filter, empty clientID, max connections, system-topic isolation |
-| Deploy Verification | 30 | Dockerfile, docker-compose, k8s manifests, Helm chart structure, security context, probes |
-
-All MQTT integration tests (53 MQTT data/security tests plus 36 deployment checks) verify **end-to-end data delivery**, security handshake behavior, or deployment artifact correctness.
-
-### Running Tests
-
-All test runs automatically save timestamped logs to the `tests/logs/` directory in JSON (raw `go test -json` output) and `.log` (parsed report) formats.
-
-#### Cross-Platform Test Scripts
-
-A single Go-based runner provides identical functionality across all platforms, with thin shell wrappers for convenience.
-All runners return a non-zero exit code when the underlying `go test` or benchmark command fails, while still writing the parsed log report.
-
-| Platform | Script |
-|----------|--------|
-| Any (Go runner) | `go run scripts/run_tests.go -mode <mode>` |
-| Linux / macOS / Git Bash / WSL | `bash scripts/run_tests.sh [--unit\|--integration\|--benchmark\|--cover\|--all]` |
-| Windows CMD | `scripts\run_tests.bat [--unit\|--integration\|--benchmark\|--cover\|--all]` |
-
-**Modes:**
-
-| Mode | Description | Log Files |
-|------|-------------|-----------|
-| `all` (default) | Unit + integration + benchmark | `{ts}_unit.{json,log}`, `{ts}_integration.{json,log}`, `{ts}_benchmark.{json,log}` |
-| `unit` | Run all unit tests | `{ts}_unit.{json,log}` |
-| `integration` | Run integration tests | `{ts}_integration.{json,log}` |
-| `benchmark` | Run benchmarks | `{ts}_benchmark.{json,log}` |
-| `cover` | Generate coverage report | `{ts}_cover.log` |
-
-```bash
-# Run all tests (default)
-bash scripts/run_tests.sh
-
-# Individual modes
-bash scripts/run_tests.sh --unit
-bash scripts/run_tests.sh --integration
-bash scripts/run_tests.sh --benchmark
-bash scripts/run_tests.sh --cover
-
-# Windows CMD
-scripts\run_tests.bat --all
-scripts\run_tests.bat --unit
-
-# Or use the Go runner directly (any platform)
-go run scripts/run_tests.go -mode unit
-go run scripts/run_tests.go -mode cover -timeout 10m
-```
-
-The `all` mode produces:
-
-```
-tests/logs/
-+-- 20260428_190627_unit.json
-+-- 20260428_190627_unit.log
-+-- 20260428_190635_integration.json
-+-- 20260428_190635_integration.log
-+-- 20260428_190642_benchmark.json
-+-- 20260428_190642_benchmark.log
-+-- 20260426_194205_summary.log
-```
-
-#### Makefile Targets
-
-```bash
-make test              # Unit tests
-make test-integration  # Integration tests
-make test-race         # With race detector
-make bench-quick       # 1s per benchmark
-make bench             # 5s x 3 runs
-make test-coverage     # Coverage report
-make ci                # Full CI pipeline
-```
-
-## Examples
-
-Each example is in its own directory and can be run independently:
-
-```bash
-# Standalone broker
-go run ./examples/standalone
-
-# TLS broker
-go run ./examples/tls_broker
-
-# Custom authentication
-go run ./examples/custom_auth
-```
-
-## CI
-
-GitHub Actions CI runs on every push/PR:
-
-- **Unit Tests**: Go 1.26 / stable x Ubuntu / macOS / Windows
-- **Plugin Tests**: Dedicated plugin manager test job
-- **Scripted Tests**: `scripts/run_tests.go` unit and integration entrypoints
-- **Lint**: `go vet` + `gofmt` formatting check
-- **Build**: Cross-platform build verification
-- **Coverage**: 55% minimum threshold with Codecov upload (checked on Ubuntu + Redis)
-
-See `.github/workflows/ci.yml` for details.
+Cross-platform runner: `go run scripts/run_tests.go -mode all` (unit, integration,
+benchmark, cover). Logs go to `tests/logs/`, artifacts to `tests/artifacts/`.
+Documentation links are checked in CI by `scripts/check_links.go`.
 
 ## Project Status
 
-**Overall: Production-ready core**
+**Production-ready core.** MQTT 3.1.1/5.0 compliance, QoS state machines,
+persistent sessions, retained/will messages, plugin system, and observability
+are implemented and covered by regression tests. Recent reliability work:
+zombie-connection reaping, storage-backend fail-fast validation, and
+observable keep-alive timeouts.
 
-All critical and high-severity issues resolved. Latest service-side review completed on 2026-05-20.
+Open items (see [docs/reports/PROJECT-REVIEW-260806-143527.md](docs/reports/PROJECT-REVIEW-260806-143527.md)):
 
-### Completed
-
-- Full MQTT 3.1.1 & 5.0 protocol support (15 packet types + properties)
-- MQTT topic filters support valid zero-length topic levels such as `/finance`, `finance/`, and `finance//usd`
-- MQTT 5.0 property encoding returns errors for overlength UTF-8 strings instead of emitting malformed packets
-- QoS 0/1/2 with automatic retry, inflight tracking, and send error handling
-- Spec-compliant topic filter validation
-- Retained messages and Will messages (with delay interval)
-- Persistent session management with graceful shutdown drain
-- Session takeover safe cleanup (conn identity check)
-- MQTT 5.0 Session Expiry Interval with CONNACK capability property advertising
-- Per-connection write mutex (concurrent frame safety)
-- Configurable connection limits with pre-auth enforcement
-- Pluggable auth/authz (AllowAll, DenyAll, StaticAuth, FileAuth, ChainAuth)
-- Plugin system (error-collecting dispatch continues after plugin failures)
-- Memory / Redis / BadgerDB storage
-- TLS support (min TLS 1.2)
-- Health endpoints (`/healthz`, `/readyz`)
-- Config validation (YAML/ENV/CLI)
-- Centralized error definitions (`errs` package)
-- Comprehensive test suite with dedicated defect regressions in `tests/defects/`
-- Static analysis baseline: `go vet ./...` and `golangci-lint run ./...` pass
-- Retained message metrics are exact across overwrite/delete paths
-- MQTT fixed-header flags and CONNECT Will flag combinations are rejected when malformed
-- Configurable QoS inflight limit enforcement with MQTT 5.0 ReceiveMaximum advertising
-- Client-side QoS 2 PUBLISH duplicate detection
-- Thread-safe packet ID generation
-- Invalid Will Topic CONNECT packets are rejected before session/connection registration, so rejected clients cannot consume broker connection slots
-
-### Remaining Work
-
-| ID | Priority | Description |
-|----|----------|-------------|
-| M-002 | Medium | Implement offline message queueing |
-| M-005 | Medium | Document StaticAuth ACL behavior |
-| M-006 | Medium | TopicTree match caching |
-| M-007 | Medium | Run actual Kubernetes rollout on a larger node or managed cluster |
-| M-008 | Medium | Raise total coverage toward the documented 60% target |
-| L-005 | Low | Fix client Connect TOCTOU |
-| L-007 | Low | Use named timeout constants in tests |
-| L-008 | Low | Add protocol fuzz tests |
-
-See `docs/reports/PROJECT-REVIEW-260806-143527.md` for the latest project review report.
+| Priority | Item |
+|---|---|
+| Medium | TopicTree match caching (optional, measured as low value at current scale) |
+| Medium | Large-cluster Kubernetes rollout verification |
+| Medium | Raise total coverage toward the 60% target |
+| Low | Named timeout constants in tests |
 
 ## Documentation
 
 | Document | Description |
-|----------|-------------|
-| [Architecture](docs/architecture/ARCHITECTURE.md) | Detailed architecture design |
-| [API Reference](docs/guides/API.md) | Public API documentation |
-| [Configuration](docs/guides/CONFIGURATION.md) | Full configuration guide |
-| [Performance](docs/guides/PERFORMANCE.md) | Benchmarking and profiling |
-| [Deployment](docs/architecture/DEPLOY.md) | Deployment instructions |
-| [Security](docs/architecture/SECURITY.md) | Security considerations |
-| [Testing](docs/guides/TESTING.md) | Testing guide |
-| [Development](docs/guides/DEVELOPMENT.md) | Development workflow |
-| [Review Report](docs/reports/PROJECT-REVIEW-260806-143527.md) | Latest project review |
+|---|---|
+| [Architecture](docs/architecture/ARCHITECTURE.md) | Layered design and data flow |
+| [Concurrency](docs/architecture/CONCURRENCY.md) | Lock inventory, ordering rules, zombie-connection detection |
+| [API Reference](docs/guides/API.md) | Public API |
+| [Configuration](docs/guides/CONFIGURATION.md) | YAML/ENV/CLI reference |
+| [Performance](docs/guides/PERFORMANCE.md) | Benchmarks and profiling |
+| [Deployment](docs/architecture/DEPLOY.md) | Docker, K8s, Helm |
+| [Security](docs/architecture/SECURITY.md) | Threat model and hardening |
+| [Testing](docs/guides/TESTING.md) | Test strategy and tooling |
+| [Development](docs/guides/DEVELOPMENT.md) | Workflow and conventions |
 
 ## License
 
 MIT License
-
 
