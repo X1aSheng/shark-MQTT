@@ -34,13 +34,9 @@ func TestBroker_SysStatusTopics(t *testing.T) {
 	b.sessions.sessions["sys-sub"] = sess
 	b.sessions.mu.Unlock()
 
-	b.handleSubscribe("sys-sub", sess, &protocol.SubscribePacket{
-		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe},
-		Topics:      []protocol.TopicFilter{{Topic: "$SYS/#", QoS: 0}},
-	})
-
-	// Decode the delivered publishes as they arrive (writes are synchronous on
-	// this directly-registered clientState).
+	// Start the reader BEFORE subscribing: writes on this directly-registered
+	// clientState are synchronous (net.Pipe writes block until the peer
+	// reads), so the SUBACK and every delivered publish need a live reader.
 	topics := make(chan string, 8)
 	go func() {
 		codec := protocol.NewCodec(0)
@@ -54,6 +50,12 @@ func TestBroker_SysStatusTopics(t *testing.T) {
 			}
 		}
 	}()
+
+	b.handleSubscribe("sys-sub", sess, &protocol.SubscribePacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe},
+		PacketID:    1, // required for a well-formed SUBACK
+		Topics:      []protocol.TopicFilter{{Topic: "$SYS/#", QoS: 0}},
+	})
 
 	b.publishSystemStatus()
 
