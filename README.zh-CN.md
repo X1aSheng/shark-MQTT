@@ -317,7 +317,7 @@ b := api.NewBroker(
 | 缓冲池 Get/Put | 29.8 | 24 | 1 |
 | 内存存储 会话获取 | 5.7 | 0 | 0 |
 
-完整结果:`make bench` 或参见 `docs/performance.md`。
+完整结果:`make bench` 或参见 `docs/guides/PERFORMANCE.md`。
 
 ## 测试
 
@@ -492,22 +492,23 @@ GitHub Actions CI 在每次 push / PR 时运行:
 | L-007 | 低 | 在测试中使用命名超时常量 |
 | L-008 | 低 | 增加协议 fuzz 测试 |
 
-最新项目审查报告参见 `docs/PROJECT-REVIEW-260520-233509.md`。
+最新项目审查报告参见 `docs/reports/PROJECT-REVIEW-260806-143527.md`。
 
 ## 文档
 
 | 文档 | 说明 |
 |----------|-------------|
-| [架构](docs/Architecture.md) | 详细架构设计 |
-| [API 参考](docs/API.md) | 公共 API 文档 |
-| [配置](docs/configuration.md) | 完整配置指南 |
-| [性能](docs/performance.md) | 基准测试与性能分析 |
-| [部署](docs/DEPLOY.md) | 部署说明 |
-| [安全](docs/SECURITY.md) | 安全考量 |
-| [测试](docs/testing.md) | 测试指南 |
-| [开发](docs/development.md) | 开发工作流 |
-| [审查报告](docs/PROJECT-REVIEW-260520-233509.md) | 最新项目审查 |
+| [架构](docs/architecture/ARCHITECTURE.md) | 详细架构设计 |
+| [API 参考](docs/guides/API.md) | 公共 API 文档 |
+| [配置](docs/guides/CONFIGURATION.md) | 完整配置指南 |
+| [性能](docs/guides/PERFORMANCE.md) | 基准测试与性能分析 |
+| [部署](docs/architecture/DEPLOY.md) | 部署说明 |
+| [安全](docs/architecture/SECURITY.md) | 安全考量 |
+| [测试](docs/guides/TESTING.md) | 测试指南 |
+| [开发](docs/guides/DEVELOPMENT.md) | 开发工作流 |
+| [审查报告](docs/reports/PROJECT-REVIEW-260806-143527.md) | 最新项目审查 |
 
 ## 许可证
 
 MIT License
+

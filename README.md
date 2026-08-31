@@ -317,7 +317,7 @@ Latest benchmarks run on **AMD Ryzen 7 8845HS / Windows 11 / Go 1.26.1** (`logs/
 | BufferPool Get/Put | 29.8 | 24 | 1 |
 | MemoryStore Session Get | 5.7 | 0 | 0 |
 
-Full results: `make bench` or see `docs/performance.md`.
+Full results: `make bench` or see `docs/guides/PERFORMANCE.md`.
 
 ## Testing
 
@@ -492,22 +492,23 @@ All critical and high-severity issues resolved. Latest service-side review compl
 | L-007 | Low | Use named timeout constants in tests |
 | L-008 | Low | Add protocol fuzz tests |
 
-See `docs/PROJECT-REVIEW-260520-233509.md` for the latest project review report.
+See `docs/reports/PROJECT-REVIEW-260806-143527.md` for the latest project review report.
 
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
-| [Architecture](docs/Architecture.md) | Detailed architecture design |
-| [API Reference](docs/API.md) | Public API documentation |
-| [Configuration](docs/configuration.md) | Full configuration guide |
-| [Performance](docs/performance.md) | Benchmarking and profiling |
-| [Deployment](docs/DEPLOY.md) | Deployment instructions |
-| [Security](docs/SECURITY.md) | Security considerations |
-| [Testing](docs/testing.md) | Testing guide |
-| [Development](docs/development.md) | Development workflow |
-| [Review Report](docs/PROJECT-REVIEW-260520-233509.md) | Latest project review |
+| [Architecture](docs/architecture/ARCHITECTURE.md) | Detailed architecture design |
+| [API Reference](docs/guides/API.md) | Public API documentation |
+| [Configuration](docs/guides/CONFIGURATION.md) | Full configuration guide |
+| [Performance](docs/guides/PERFORMANCE.md) | Benchmarking and profiling |
+| [Deployment](docs/architecture/DEPLOY.md) | Deployment instructions |
+| [Security](docs/architecture/SECURITY.md) | Security considerations |
+| [Testing](docs/guides/TESTING.md) | Testing guide |
+| [Development](docs/guides/DEVELOPMENT.md) | Development workflow |
+| [Review Report](docs/reports/PROJECT-REVIEW-260806-143527.md) | Latest project review |
 
 ## License
 
 MIT License
+
