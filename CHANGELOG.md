@@ -7,6 +7,38 @@ This project uses semantic versioning. Pre-release tags use the form
 
 ## Unreleased
 
+### Design / reliability (2026-08-31)
+
+- **Deduped system-topic matcher:** `matchSysProtected` is now the single MQTT
+  §4.7.2 system-topic protection implementation shared by the topic tree,
+  session matching, and ACL checks (the duplicated
+  `matchWithSysProtection` in auth.go was removed), eliminating a correctness
+  drift risk.
+- **Non-memory backend now fails loudly:** configuring `storage_backend:
+  redis|badger` without explicitly wiring stores makes `Start()` fail with a
+  clear error instead of silently running without persistence.
+- **Storage errors observable:** 13 persistence/cleanup error paths (session
+  save, offline queue, retained save/delete, expiry cleanup) upgraded from
+  debug to warn-level logs, so store failures are visible in production logs.
+- **Removed dead delivery duplication:** `Session.matchesSubscriptions` is the
+  shared core of `MatchesSubscription`/`MatchesRetainedSubscription`;
+  `Broker.deliverWithQoS` is the shared core of
+  `deliverToClient`/`deliverToSharedClient`; CONNACK construction is unified in
+  `buildConnAck`; keep-alive deadline refresh is unified in
+  `Broker.setKeepAliveDeadline`.
+- **Store decoupled from protocol:** `store/memory` now uses `strings.Split`
+  instead of `protocol.SplitTopic` (identical semantics for MQTT topic levels),
+  removing the storage→protocol dependency.
+- **Metrics interface cleaned:** removed six never-called methods
+  (`IncInflight`, `DecInflight`, `DecInflightBatch`, `IncInflightDropped`,
+  `IncRetries`, `SetOfflineSessions`) and their never-populated Prometheus
+  metrics (`inflight_messages`, `inflight_dropped_total`, `retries_total`,
+  `offline_sessions`).
+- **Readiness probe strengthened:** `/readyz` now requires both the listener
+  and the broker subsystems to be running (`Broker.IsStarted()`).
+- **Concurrency documentation:** `docs/architecture/CONCURRENCY.md` documents
+  the full lock inventory, ordering rules, and a deadlock audit.
+
 ### Project structure (2026-08-31)
 
 - **Test artifacts centralized under `tests/`:** test logs now default to
