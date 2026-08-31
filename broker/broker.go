@@ -478,12 +478,7 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 	b.deliverQueuedMessages(clientID, sess)
 
 	// Set initial keep-alive deadline so idle clients are detected
-	if sess.KeepAlive > 0 {
-		timeout := time.Duration(sess.KeepAlive) * time.Second * 3 / 2
-		if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
-			b.logger.Debug("failed to set keep-alive deadline", "clientID", clientID, "error", err)
-		}
-	}
+	b.setKeepAliveDeadline(conn, clientID, sess.KeepAlive)
 
 	// Run read loop (handles its own cleanup via abnormalDisconnect/gracefulDisconnect)
 	b.readLoop(clientID, sess, c, conn)
@@ -625,7 +620,7 @@ func (b *Broker) rebuildRetainedExpirations() {
 	}
 	msgs, err := b.retainedStore.MatchRetained(b.ctx, "#")
 	if err != nil {
-		b.logger.Debug("failed to list retained messages on start", "error", err)
+		b.logger.Warn("failed to list retained messages on start", "error", err)
 		return
 	}
 	b.retainedMu.Lock()
@@ -646,6 +641,12 @@ func (b *Broker) rebuildRetainedExpirations() {
 // Metrics returns the broker's metrics collector.
 func (b *Broker) Metrics() metrics.Metrics {
 	return b.metrics
+}
+
+// IsStarted reports whether the broker's internal subsystems are running
+// (Start has completed and Stop has not). Used by readiness probes.
+func (b *Broker) IsStarted() bool {
+	return b.started.Load()
 }
 
 // sessionCleanupLoop periodically removes expired sessions from the store.
@@ -671,7 +672,7 @@ func (b *Broker) cleanupExpiredSessions() {
 
 	clientIDs, err := b.sessionStore.ListSessions(b.ctx)
 	if err != nil {
-		b.logger.Debug("failed to list sessions for cleanup", "error", err)
+		b.logger.Warn("failed to list sessions for cleanup", "error", err)
 		return
 	}
 
@@ -692,7 +693,7 @@ func (b *Broker) cleanupExpiredSessions() {
 
 		if data.ExpiryInterval > 0 && !data.ExpiryTime.IsZero() && now.After(data.ExpiryTime) {
 			if err := b.sessionStore.DeleteSession(b.ctx, clientID); err != nil {
-				b.logger.Debug("failed to delete expired session", "clientID", clientID, "error", err)
+				b.logger.Warn("failed to delete expired session", "clientID", clientID, "error", err)
 			} else {
 				// Release the expired session's topic-tree subscriptions so
 				// they do not leak after the session is gone (P2-13).
@@ -734,7 +735,7 @@ func (b *Broker) cleanupExpiredRetained() {
 	for topic, expiry := range b.retainedExpirations {
 		if now.After(expiry) {
 			if err := b.retainedStore.DeleteRetained(b.ctx, topic); err != nil {
-				b.logger.Debug("failed to delete expired retained message", "topic", topic, "error", err)
+				b.logger.Warn("failed to delete expired retained message", "topic", topic, "error", err)
 				b.metrics.IncErrors("retained_store")
 				continue
 			}
@@ -878,12 +879,12 @@ func (b *Broker) disconnect(clientID string, conn net.Conn) {
 	if sess, ok := b.sessions.GetSession(clientID); ok && !sess.IsClean && b.sessionStore != nil {
 		if sess.ExpiryInterval > 0 {
 			if err := sess.Save(b.ctx, b.sessionStore); err != nil {
-				b.logger.Debug("failed to save session", "clientID", clientID, "error", err)
+				b.logger.Warn("failed to save session", "clientID", clientID, "error", err)
 				b.metrics.IncErrors("session_save")
 			}
 		} else {
 			if err := b.sessionStore.DeleteSession(b.ctx, clientID); err != nil {
-				b.logger.Debug("failed to delete expired session", "clientID", clientID, "error", err)
+				b.logger.Warn("failed to delete expired session", "clientID", clientID, "error", err)
 				b.metrics.IncErrors("session_save")
 			}
 			if b.messageStore != nil {
@@ -943,6 +944,19 @@ func (b *Broker) disconnect(clientID string, conn net.Conn) {
 	b.logger.Info("client disconnected", "clientID", clientID)
 }
 
+// setKeepAliveDeadline refreshes the connection's read deadline to 1.5x the
+// negotiated keep-alive so idle clients are detected (on CONNECT and after
+// every received packet). keepAlive == 0 disables the deadline.
+func (b *Broker) setKeepAliveDeadline(conn net.Conn, clientID string, keepAlive uint16) {
+	if keepAlive == 0 {
+		return
+	}
+	timeout := time.Duration(keepAlive) * time.Second * 3 / 2
+	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		b.logger.Debug("failed to set keep-alive deadline", "clientID", clientID, "error", err)
+	}
+}
+
 func (b *Broker) readLoop(clientID string, sess *Session, codec *protocol.Codec, conn net.Conn) {
 	for {
 		pkt, err := codec.Decode(conn)
@@ -955,16 +969,9 @@ func (b *Broker) readLoop(clientID string, sess *Session, codec *protocol.Codec,
 		// Plugin hook: OnMessage
 		b.dispatch(plugin.OnMessage, &plugin.Context{ClientID: clientID})
 
-		// Update activity
+		// Update activity and refresh the keep-alive deadline
 		sess.UpdateActivity()
-
-		// Set keep-alive deadline
-		if sess.KeepAlive > 0 {
-			timeout := time.Duration(sess.KeepAlive) * time.Second * 3 / 2
-			if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
-				b.logger.Debug("failed to refresh keep-alive deadline", "clientID", clientID, "error", err)
-			}
-		}
+		b.setKeepAliveDeadline(conn, clientID, sess.KeepAlive)
 
 		switch p := pkt.(type) {
 		case *protocol.PublishPacket:
@@ -1235,7 +1242,7 @@ func (b *Broker) handleRetainedMessage(pkt *protocol.PublishPacket) {
 		if errors.Is(err, store.ErrRetainedNotFound) {
 			existed = false
 		} else {
-			b.logger.Debug("failed to check retained message", "topic", pkt.Topic, "error", err)
+			b.logger.Warn("failed to check retained message", "topic", pkt.Topic, "error", err)
 			b.metrics.IncErrors("retained_store")
 			return
 		}
@@ -1254,7 +1261,7 @@ func (b *Broker) handleRetainedMessage(pkt *protocol.PublishPacket) {
 
 	if len(pkt.Payload) == 0 {
 		if err := b.retainedStore.DeleteRetained(b.ctx, pkt.Topic); err != nil {
-			b.logger.Debug("failed to delete retained message", "topic", pkt.Topic, "error", err)
+			b.logger.Warn("failed to delete retained message", "topic", pkt.Topic, "error", err)
 			b.metrics.IncErrors("retained_store")
 			return
 		}
@@ -1267,7 +1274,7 @@ func (b *Broker) handleRetainedMessage(pkt *protocol.PublishPacket) {
 	}
 
 	if err := b.retainedStore.SaveRetained(b.ctx, pkt.Topic, pkt.FixedHeader.QoS, pkt.Payload); err != nil {
-		b.logger.Debug("failed to save retained message", "topic", pkt.Topic, "error", err)
+		b.logger.Warn("failed to save retained message", "topic", pkt.Topic, "error", err)
 		b.metrics.IncErrors("retained_store")
 		return
 	}
@@ -1441,10 +1448,9 @@ func messageExpiresAt(pkt *protocol.PublishPacket) time.Time {
 // persistent-session subscriber has its message queued for later delivery
 // instead of silently dropped (P1-5).
 func (b *Broker) deliverToClient(clientID, sourceClientID string, pkt *protocol.PublishPacket) {
-	expiresAt := messageExpiresAt(pkt)
 	sess, ok := b.sessions.GetSession(clientID)
 	if !ok {
-		b.queueOfflineMessage(clientID, pkt, expiresAt)
+		b.queueOfflineMessage(clientID, pkt, messageExpiresAt(pkt))
 		return
 	}
 	if sourceClientID != "" && clientID == sourceClientID && !sess.AllowsLocalPublish(pkt.Topic) {
@@ -1457,17 +1463,12 @@ func (b *Broker) deliverToClient(clientID, sourceClientID string, pkt *protocol.
 	if !matches {
 		return
 	}
-	deliverQoS := pkt.FixedHeader.QoS
-	if subQoS < deliverQoS {
-		deliverQoS = subQoS
-	}
-	b.doDeliver(clientID, pkt, deliverQoS, expiresAt, subOpts)
+	b.deliverWithQoS(sess, pkt, subQoS, subOpts)
 }
 
 // deliverToSharedClient delivers a PUBLISH to a shared subscription member.
 // MatchesSubscription is skipped — the match was already done by MatchShared.
 func (b *Broker) deliverToSharedClient(clientID, sourceClientID string, pkt *protocol.PublishPacket, subQoS uint8) {
-	expiresAt := messageExpiresAt(pkt)
 	sess, ok := b.sessions.GetSession(clientID)
 	if !ok {
 		return
@@ -1475,11 +1476,18 @@ func (b *Broker) deliverToSharedClient(clientID, sourceClientID string, pkt *pro
 	if sourceClientID != "" && clientID == sourceClientID && !sess.AllowsLocalPublish(pkt.Topic) {
 		return
 	}
+	b.deliverWithQoS(sess, pkt, subQoS, SubscriptionOptions{QoS: subQoS})
+}
+
+// deliverWithQoS is the shared delivery core of deliverToClient and
+// deliverToSharedClient: it applies the subscription QoS downgrade rule
+// (deliver at min(publish QoS, subscription QoS)) and performs the delivery.
+func (b *Broker) deliverWithQoS(sess *Session, pkt *protocol.PublishPacket, subQoS uint8, subOpts SubscriptionOptions) {
 	deliverQoS := pkt.FixedHeader.QoS
 	if subQoS < deliverQoS {
 		deliverQoS = subQoS
 	}
-	b.doDeliver(clientID, pkt, deliverQoS, expiresAt, SubscriptionOptions{QoS: subQoS})
+	b.doDeliver(sess.ClientID, pkt, deliverQoS, messageExpiresAt(pkt), subOpts)
 }
 
 // queueOfflineMessage stores a QoS 1/2 message for an offline persistent
@@ -1511,7 +1519,7 @@ func (b *Broker) queueOfflineMessage(clientID string, pkt *protocol.PublishPacke
 	}
 	if err := b.messageStore.SaveMessage(b.ctx, clientID, msg); err != nil {
 		b.metrics.IncErrors("message_store")
-		b.logger.Debug("failed to queue offline message", "clientID", clientID, "error", err)
+		b.logger.Warn("failed to queue offline message", "clientID", clientID, "error", err)
 	}
 }
 
@@ -1525,7 +1533,7 @@ func (b *Broker) deliverQueuedMessages(clientID string, sess *Session) {
 	}
 	msgs, err := b.messageStore.ListMessages(b.ctx, clientID)
 	if err != nil {
-		b.logger.Debug("failed to list queued messages", "clientID", clientID, "error", err)
+		b.logger.Warn("failed to list queued messages", "clientID", clientID, "error", err)
 		return
 	}
 	for _, msg := range msgs {
@@ -1534,7 +1542,7 @@ func (b *Broker) deliverQueuedMessages(clientID string, sess *Session) {
 		if !msg.ExpiresAt.IsZero() && time.Now().After(msg.ExpiresAt) {
 			b.metrics.IncMessagesDropped("message_expired")
 			if err := b.messageStore.DeleteMessage(b.ctx, clientID, msg.ID); err != nil {
-				b.logger.Debug("failed to delete expired queued message", "clientID", clientID, "error", err)
+				b.logger.Warn("failed to delete expired queued message", "clientID", clientID, "error", err)
 			}
 			continue
 		}
@@ -1567,7 +1575,7 @@ func (b *Broker) deliverQueuedMessages(clientID string, sess *Session) {
 		}
 		b.doDeliver(clientID, pubPkt, deliverQoS, msg.ExpiresAt, subOpts)
 		if err := b.messageStore.DeleteMessage(b.ctx, clientID, msg.ID); err != nil {
-			b.logger.Debug("failed to delete queued message", "clientID", clientID, "error", err)
+			b.logger.Warn("failed to delete queued message", "clientID", clientID, "error", err)
 		}
 	}
 }
@@ -1736,7 +1744,7 @@ func (b *Broker) deliverRetainedMessages(clientID string, sess *Session, topicFi
 
 	retained, err := b.retainedStore.MatchRetained(b.ctx, topicFilter)
 	if err != nil {
-		b.logger.Debug("failed to match retained messages", "filter", topicFilter, "error", err)
+		b.logger.Warn("failed to match retained messages", "filter", topicFilter, "error", err)
 		return
 	}
 	if len(retained) == 0 {
@@ -1851,15 +1859,8 @@ func (b *Broker) sendConnAck(clientID string, reasonCode byte, sessionPresent bo
 	if !ok {
 		return
 	}
-	pkt := &protocol.ConnAckPacket{
-		FixedHeader: protocol.FixedHeader{
-			PacketType: protocol.PacketTypeConnAck,
-		},
-		ReasonCode:     reasonCode,
-		SessionPresent: sessionPresent,
-	}
 
-	// MQTT 5.0: advertise server capabilities
+	pkt := buildConnAck(reasonCode, sessionPresent)
 	if sess != nil && sess.ProtocolVer == protocol.Version50 {
 		pkt.Properties = b.buildConnAckProperties(sess)
 	}
@@ -1930,14 +1931,23 @@ func (b *Broker) buildConnAckProperties(sess *Session) *protocol.Properties {
 	return props
 }
 
-func (b *Broker) sendConnAckRaw(conn net.Conn, codec *protocol.Codec, reasonCode byte, sessionPresent bool) {
-	pkt := &protocol.ConnAckPacket{
+// buildConnAck constructs a CONNACK packet for a given reason code and session
+// present flag, without session-specific properties. sendConnAck (registered
+// connection, via the write queue) and sendConnAckRaw (unregistered connection,
+// direct encode) both use it; the former additionally attaches MQTT 5.0
+// capability properties.
+func buildConnAck(reasonCode byte, sessionPresent bool) *protocol.ConnAckPacket {
+	return &protocol.ConnAckPacket{
 		FixedHeader: protocol.FixedHeader{
 			PacketType: protocol.PacketTypeConnAck,
 		},
 		ReasonCode:     reasonCode,
 		SessionPresent: sessionPresent,
 	}
+}
+
+func (b *Broker) sendConnAckRaw(conn net.Conn, codec *protocol.Codec, reasonCode byte, sessionPresent bool) {
+	pkt := buildConnAck(reasonCode, sessionPresent)
 	if err := codec.Encode(conn, pkt); err != nil {
 		b.logger.Debug("failed to send CONNACK", "error", err)
 	}

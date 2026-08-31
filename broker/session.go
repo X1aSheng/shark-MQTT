@@ -302,14 +302,14 @@ func (s *Session) HasSubscription(topic string) bool {
 	return ok
 }
 
-// MatchesSubscription checks if a topic matches any of the session's subscriptions.
-// Returns matched status, the maximum QoS across all matching subscriptions
-// (MQTT 3.1.1 §3.3.5 / 5.0 §3.3.5: deliver once at the max QoS of matching
-// filters), and the subscription options of the highest-QoS match (including
-// MQTT 5.0 SubscriptionIdentifier which must be forwarded in delivered
-// PUBLISH packets). Previously the first map-order-random match won, making
-// the delivered QoS nondeterministic when filters overlapped.
-func (s *Session) MatchesSubscription(topic string) (bool, uint8, SubscriptionOptions) {
+// matchSubscriptions is the shared core of MatchesSubscription and
+// MatchesRetainedSubscription. It returns matched status, the maximum QoS
+// across all matching subscriptions (MQTT 3.1.1 §3.3.5 / 5.0 §3.3.5: deliver
+// once at the max QoS of matching filters), and the subscription options of
+// the highest-QoS match. When sysProtect is set, MQTT §4.7.2 system-topic
+// protection is applied (a retained $SYS message is only delivered to a
+// filter whose first level begins with $).
+func (s *Session) matchSubscriptions(topic string, sysProtect bool) (bool, uint8, SubscriptionOptions) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	matched := false
@@ -327,39 +327,7 @@ func (s *Session) MatchesSubscription(topic string) (bool, uint8, SubscriptionOp
 			}
 			realPattern = realFilter
 		}
-		if protocol.MatchTopic(realPattern, topic) {
-			matched = true
-			if qos > bestQoS {
-				bestQoS = qos
-				bestOpts = s.SubOptions[pattern]
-			}
-		}
-	}
-	return matched, bestQoS, bestOpts
-}
-
-// MatchesRetainedSubscription is MatchesSubscription but applies MQTT §4.7.2
-// system-topic protection, so a retained $SYS message is only delivered to a
-// filter whose first level begins with $ (P3-4). Live routing already applies
-// this protection in the topic tree; retained delivery goes through the store,
-// so it needs the check here. QoS selection follows the same max rule as
-// MatchesSubscription.
-func (s *Session) MatchesRetainedSubscription(topic string) (bool, uint8, SubscriptionOptions) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	matched := false
-	var bestQoS uint8
-	var bestOpts SubscriptionOptions
-	for pattern, qos := range s.Subscriptions {
-		realPattern := pattern
-		if IsSharedSubscription(pattern) {
-			_, realFilter, ok := ParseSharedFilter(pattern)
-			if !ok {
-				continue
-			}
-			realPattern = realFilter
-		}
-		if !matchSysProtected(realPattern, topic) {
+		if sysProtect && !matchSysProtected(realPattern, topic) {
 			continue
 		}
 		if protocol.MatchTopic(realPattern, topic) {
@@ -371,6 +339,24 @@ func (s *Session) MatchesRetainedSubscription(topic string) (bool, uint8, Subscr
 		}
 	}
 	return matched, bestQoS, bestOpts
+}
+
+// MatchesSubscription checks if a topic matches any of the session's
+// subscriptions, returning the maximum QoS of the matching filters and the
+// subscription options of the highest-QoS match (including MQTT 5.0
+// SubscriptionIdentifier which must be forwarded in delivered PUBLISH
+// packets). Previously the first map-order-random match won, making the
+// delivered QoS nondeterministic when filters overlapped.
+func (s *Session) MatchesSubscription(topic string) (bool, uint8, SubscriptionOptions) {
+	return s.matchSubscriptions(topic, false)
+}
+
+// MatchesRetainedSubscription is MatchesSubscription with MQTT §4.7.2
+// system-topic protection (P3-4). Live routing applies this protection in the
+// topic tree; retained delivery goes through the store, so it needs the check
+// here.
+func (s *Session) MatchesRetainedSubscription(topic string) (bool, uint8, SubscriptionOptions) {
+	return s.matchSubscriptions(topic, true)
 }
 
 // AllowsLocalPublish reports whether a matching subscription accepts messages

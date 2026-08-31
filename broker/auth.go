@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	"github.com/X1aSheng/shark-mqtt/errs"
-	"github.com/X1aSheng/shark-mqtt/protocol"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -174,7 +173,7 @@ func (s *StaticAuth) CanPublish(ctx context.Context, username, topic string) boo
 		return false
 	}
 	for _, t := range acl.PublishTopics {
-		if matchWithSysProtection(t, topic) {
+		if matchSysProtected(t, topic) {
 			return true
 		}
 	}
@@ -190,28 +189,17 @@ func (s *StaticAuth) CanSubscribe(ctx context.Context, username, topic string) b
 		return false
 	}
 	for _, t := range acl.SubscribeTopics {
-		if matchWithSysProtection(t, topic) {
+		if matchSysProtected(t, topic) {
 			return true
 		}
 	}
 	return false
 }
 
-// matchWithSysProtection wraps protocol.MatchTopic with MQTT §4.7.2
-// system topic protection: root-level + and # wildcards must not
-// match topics starting with $.
-func matchWithSysProtection(pattern, topic string) bool {
-	if len(topic) > 0 && topic[0] == '$' {
-		firstLevel := pattern
-		if i := strings.IndexByte(pattern, '/'); i >= 0 {
-			firstLevel = pattern[:i]
-		}
-		if firstLevel == "#" || firstLevel == "+" {
-			return false
-		}
-	}
-	return protocol.MatchTopic(pattern, topic)
-}
+// matchSysProtected is defined in topic_tree.go — it wraps protocol.MatchTopic
+// with MQTT §4.7.2 system topic protection (root-level + and # wildcards must
+// not match topics starting with $) and is shared by the topic tree, session
+// matching, and ACL checks.
 
 // AllowAllAuth allows all authentication (development only).
 type AllowAllAuth struct{}
