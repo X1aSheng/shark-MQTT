@@ -268,6 +268,10 @@ func TestDisconnectWhenNotConnected(t *testing.T) {
 
 func TestHandlePublish_QoS0(t *testing.T) {
 	c := New()
+	conn := &mockConn{}
+	c.mu.Lock()
+	c.conn = conn
+	c.mu.Unlock()
 
 	msgChan := make(chan struct {
 		topic   string
@@ -289,7 +293,7 @@ func TestHandlePublish_QoS0(t *testing.T) {
 	pkt.Topic = "test/qos0"
 	pkt.Payload = []byte("hello-qos0")
 
-	c.handlePublish(pkt)
+	c.handlePublish(conn, pkt)
 
 	select {
 	case msg := <-msgChan:
@@ -323,7 +327,7 @@ func TestHandlePublish_QoS1(t *testing.T) {
 	pkt.Topic = "test/qos1"
 	pkt.Payload = []byte("hello-qos1")
 
-	c.handlePublish(pkt)
+	c.handlePublish(conn, pkt)
 
 	// Verify onMessage was called
 	select {
@@ -361,7 +365,7 @@ func TestHandlePublish_QoS2_Dedup(t *testing.T) {
 	pkt.Payload = []byte("dup-test")
 
 	// First call: should deliver message
-	c.handlePublish(pkt)
+	c.handlePublish(conn, pkt)
 	if callCount != 1 {
 		t.Errorf("expected onMessage called once, got %d", callCount)
 	}
@@ -369,7 +373,7 @@ func TestHandlePublish_QoS2_Dedup(t *testing.T) {
 	pubrecCount := conn.pubrecCount
 
 	// Second call with same PacketID: duplicate, should NOT deliver
-	c.handlePublish(pkt)
+	c.handlePublish(conn, pkt)
 	if callCount != 1 {
 		t.Errorf("expected onMessage still called once (dup), got %d", callCount)
 	}
@@ -900,7 +904,7 @@ func TestHandlePubRelSendsPubComp(t *testing.T) {
 	c.mu.Unlock()
 
 	// Simulate the readLoop receiving a PUBREL for packet 7.
-	c.handlePubRel(7)
+	c.handlePubRel(conn, 7)
 
 	if conn.pubcompCount != 1 {
 		t.Errorf("expected 1 PUBCOMP written, got %d", conn.pubcompCount)
@@ -1062,9 +1066,14 @@ func TestKeepAliveSendsPing(t *testing.T) {
 	}
 }
 
-// TestReceivedQoS2ClearedOnReadLoopError verifies the dedup map is cleared when
-// the connection dies (NEW-17: no unbounded leak on abnormal disconnect).
-func TestReceivedQoS2ClearedOnReadLoopError(t *testing.T) {
+// TestReceivedQoS2KeptOnReadLoopError verifies the dedup map SURVIVES an
+// abnormal disconnect: it is session state that the broker may rely on when
+// the client reconnects a persistent session and the broker re-sends an
+// unacknowledged QoS 2 PUBLISH with the same packet id (audit). It is reset
+// on the next Connect for clean sessions / fresh broker sessions only, so the
+// map stays bounded (<= 65535 entries per packet id space) and cannot leak
+// across sessions.
+func TestReceivedQoS2KeptOnReadLoopError(t *testing.T) {
 	conn := newBlockingReadConn()
 	c := New()
 	connCtx, connCancel := context.WithCancel(context.Background())
@@ -1081,10 +1090,10 @@ func TestReceivedQoS2ClearedOnReadLoopError(t *testing.T) {
 	<-connDone
 
 	c.mu.Lock()
-	remaining := len(c.receivedQoS2)
+	_, kept := c.receivedQoS2[7]
 	c.mu.Unlock()
-	if remaining != 0 {
-		t.Errorf("expected receivedQoS2 cleared after readLoop error, got %d entries", remaining)
+	if !kept {
+		t.Error("receivedQoS2 entry should survive a read-loop error for a persistent session")
 	}
 }
 

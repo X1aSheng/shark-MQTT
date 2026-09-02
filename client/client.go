@@ -104,7 +104,14 @@ func (c *MQTTClient) Connect(ctx context.Context) error {
 	c.inflight = make(map[uint16]*inflightEntry)
 	c.inflightMu.Unlock()
 	c.mu.Lock()
-	c.receivedQoS2 = make(map[uint16]struct{})
+	// QoS 2 duplicate tracking is session state: it survives reconnects of a
+	// persistent session (the broker may re-send an unacknowledged QoS 2
+	// PUBLISH with the same packet id) and is only reset for clean sessions
+	// or when the broker reports a fresh session (audit: resetting it on
+	// every Connect re-delivered duplicates after a reconnect).
+	if c.opts.CleanSession {
+		c.receivedQoS2 = make(map[uint16]struct{})
+	}
 	c.lastRead.Store(time.Now().UnixNano())
 	// Create this connection's generation context. It is registered before
 	// the dial so that a concurrent Disconnect can cancel the in-progress
@@ -175,8 +182,19 @@ func (c *MQTTClient) Connect(ctx context.Context) error {
 		return fmt.Errorf("send CONNECT: %w", err)
 	}
 
-	// Read CONNACK
+	// Read CONNACK. Bound the wait with a read deadline (audit): ctx only
+	// governed the dial, so a peer that accepted the TCP connection but never
+	// answered left Connect blocked forever with a leaked goroutine/socket.
+	readDeadline := time.Now().Add(c.opts.ConnectTimeout)
+	if dl, ok := ctx.Deadline(); ok && dl.Before(readDeadline) {
+		readDeadline = dl
+	}
+	if err := conn.SetReadDeadline(readDeadline); err != nil {
+		_ = conn.Close()
+		return fmt.Errorf("set CONNACK deadline: %w", err)
+	}
 	resp, err := c.codec.Decode(conn)
+	_ = conn.SetReadDeadline(time.Time{})
 	if err != nil {
 		_ = conn.Close()
 		return fmt.Errorf("read CONNACK: %w", err)
@@ -197,6 +215,12 @@ func (c *MQTTClient) Connect(ctx context.Context) error {
 	c.conn = conn
 	c.connected = true
 	c.sessionPresent = connack.SessionPresent
+	// A fresh broker session has no memory of our packet ids: drop stale
+	// QoS 2 duplicate markers so a reused id is not wrongly suppressed
+	// (audit). Persistent resumed sessions keep them.
+	if !connack.SessionPresent {
+		c.receivedQoS2 = make(map[uint16]struct{})
+	}
 	c.lastRead.Store(time.Now().UnixNano())
 	c.mu.Unlock()
 
@@ -461,9 +485,9 @@ func (c *MQTTClient) Disconnect(ctx context.Context) error {
 	c.inflightMu.Lock()
 	c.inflight = make(map[uint16]*inflightEntry)
 	c.inflightMu.Unlock()
-	c.mu.Lock()
-	c.receivedQoS2 = make(map[uint16]struct{})
-	c.mu.Unlock()
+	// NB: the QoS 2 duplicate set is deliberately NOT cleared here — it is
+	// session state that must survive reconnects of a persistent session
+	// (audit); Connect resets it for clean/new sessions.
 
 	// Wait for this generation's readLoop to exit (it closes connDone).
 	if ctx == nil {
@@ -531,7 +555,6 @@ func (c *MQTTClient) readLoop(conn net.Conn, connCtx context.Context, connCancel
 			if c.conn == conn {
 				c.connected = false
 			}
-			c.receivedQoS2 = make(map[uint16]struct{})
 			c.mu.Unlock()
 			// Cancel this generation's context to wake up pending QoS
 			// publish/response waiters blocked on connCtx.
@@ -552,7 +575,7 @@ func (c *MQTTClient) readLoop(conn net.Conn, connCtx context.Context, connCancel
 
 		switch p := pkt.(type) {
 		case *protocol.PublishPacket:
-			c.handlePublish(p)
+			c.handlePublish(conn, p)
 		case *protocol.PubAckPacket:
 			c.deliverResponse(p.PacketID, p)
 		case *protocol.PubRecPacket:
@@ -562,7 +585,7 @@ func (c *MQTTClient) readLoop(conn net.Conn, connCtx context.Context, connCancel
 		case *protocol.PubRelPacket:
 			// Broker is completing an inbound QoS 2 exchange: send PUBCOMP
 			// and clear the duplicate-tracking entry.
-			c.handlePubRel(p.PacketID)
+			c.handlePubRel(conn, p.PacketID)
 		case *protocol.SubAckPacket:
 			c.deliverResponse(p.PacketID, p)
 		case *protocol.UnsubAckPacket:
@@ -573,24 +596,39 @@ func (c *MQTTClient) readLoop(conn net.Conn, connCtx context.Context, connCancel
 	}
 }
 
+// ackOnGen acknowledges a packet on the connection generation that received
+// it. If that generation has already been superseded by a newer connection,
+// the ack is dropped: writing it through c.conn could inject the bytes into
+// the new connection's stream, e.g. between CONNECT and CONNACK (audit).
+func (c *MQTTClient) ackOnGen(conn net.Conn, pkt protocol.Packet) {
+	c.mu.Lock()
+	current := c.conn == conn
+	c.mu.Unlock()
+	if !current {
+		return
+	}
+	c.wmu.Lock()
+	defer c.wmu.Unlock()
+	if err := c.codec.Encode(conn, pkt); err != nil {
+		c.logError("failed to send %T for packet: %v", pkt, err)
+	}
+}
+
 // handlePublish processes an incoming PUBLISH packet.
-func (c *MQTTClient) handlePublish(pkt *protocol.PublishPacket) {
+func (c *MQTTClient) handlePublish(conn net.Conn, pkt *protocol.PublishPacket) {
 	// Detect duplicate QoS 2 PUBLISH (MQTT 3.1.1 §4.3.3, MQTT 5.0 §4.3.3)
 	if pkt.FixedHeader.QoS == 2 {
 		c.mu.Lock()
 		if _, dup := c.receivedQoS2[pkt.PacketID]; dup {
 			c.mu.Unlock()
 			// Duplicate detected; still send PUBREC but skip onMessage delivery
-			if conn := c.conn; conn != nil {
-				pubrec := &protocol.PubRecPacket{PacketID: pkt.PacketID}
-				pubrec.FixedHeader.PacketType = protocol.PacketTypePubRec
-				pubrec.FixedHeader.QoS = 1
-				c.wmu.Lock()
-				if err := c.codec.Encode(conn, pubrec); err != nil {
-					c.logError("failed to send PUBREC for packet %d: %v", pkt.PacketID, err)
-				}
-				c.wmu.Unlock()
-			}
+			c.ackOnGen(conn, &protocol.PubRecPacket{
+				FixedHeader: protocol.FixedHeader{
+					PacketType: protocol.PacketTypePubRec,
+					QoS:        1,
+				},
+				PacketID: pkt.PacketID,
+			})
 			return
 		}
 		c.receivedQoS2[pkt.PacketID] = struct{}{}
@@ -607,61 +645,34 @@ func (c *MQTTClient) handlePublish(pkt *protocol.PublishPacket) {
 
 	// Send PUBACK for QoS 1
 	if pkt.FixedHeader.QoS == 1 {
-		c.mu.Lock()
-		conn := c.conn
-		c.mu.Unlock()
-		if conn != nil {
-			puback := &protocol.PubAckPacket{
-				PacketID: pkt.PacketID,
-			}
-			puback.FixedHeader.PacketType = protocol.PacketTypePubAck
-			c.wmu.Lock()
-			if err := c.codec.Encode(conn, puback); err != nil {
-				c.logError("failed to send PUBACK for packet %d: %v", pkt.PacketID, err)
-			}
-			c.wmu.Unlock()
-		}
+		c.ackOnGen(conn, &protocol.PubAckPacket{
+			FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePubAck},
+			PacketID:    pkt.PacketID,
+		})
 	}
 
 	// Send PUBREC for QoS 2
 	if pkt.FixedHeader.QoS == 2 {
-		c.mu.Lock()
-		conn := c.conn
-		c.mu.Unlock()
-		if conn != nil {
-			pubrec := &protocol.PubRecPacket{
-				PacketID: pkt.PacketID,
-			}
-			pubrec.FixedHeader.PacketType = protocol.PacketTypePubRec
-			pubrec.FixedHeader.QoS = 1
-			c.wmu.Lock()
-			if err := c.codec.Encode(conn, pubrec); err != nil {
-				c.logError("failed to send PUBREC for packet %d: %v", pkt.PacketID, err)
-			}
-			c.wmu.Unlock()
-		}
+		c.ackOnGen(conn, &protocol.PubRecPacket{
+			FixedHeader: protocol.FixedHeader{
+				PacketType: protocol.PacketTypePubRec,
+				QoS:        1,
+			},
+			PacketID: pkt.PacketID,
+		})
 	}
 }
 
 // handlePubRel completes an inbound QoS 2 exchange: the broker sent PUBREL
 // after our PUBREC, so we send PUBCOMP and drop the duplicate-tracking entry.
-func (c *MQTTClient) handlePubRel(packetID uint16) {
+func (c *MQTTClient) handlePubRel(conn net.Conn, packetID uint16) {
 	c.mu.Lock()
-	conn := c.conn
 	delete(c.receivedQoS2, packetID)
 	c.mu.Unlock()
-	if conn == nil {
-		return
-	}
-	pubcomp := &protocol.PubCompPacket{
-		PacketID: packetID,
-	}
-	pubcomp.FixedHeader.PacketType = protocol.PacketTypePubComp
-	c.wmu.Lock()
-	if err := c.codec.Encode(conn, pubcomp); err != nil {
-		c.logError("failed to send PUBCOMP for packet %d: %v", packetID, err)
-	}
-	c.wmu.Unlock()
+	c.ackOnGen(conn, &protocol.PubCompPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePubComp},
+		PacketID:    packetID,
+	})
 }
 
 // deliverResponse delivers a packet to a waiting response channel.
