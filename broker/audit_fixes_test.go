@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/X1aSheng/shark-mqtt/config"
 	"github.com/X1aSheng/shark-mqtt/protocol"
 	"github.com/X1aSheng/shark-mqtt/store"
 	"github.com/X1aSheng/shark-mqtt/store/memory"
@@ -320,5 +321,288 @@ func TestBroker_ClientCannotForgeSysRetainedMessage(t *testing.T) {
 	}
 	if msg, err := retained.GetRetained(context.Background(), "normal/retained"); err != nil || string(msg.Payload) != "ok" {
 		t.Fatalf("normal retained message not stored: msg=%v err=%v", msg, err)
+	}
+}
+
+// ---------- C4: ACL filter coverage & session identity binding ----------
+
+func TestStaticAuthACLCoverage(t *testing.T) {
+	auth := NewStaticAuth()
+	auth.AddCredentials("u", "p")
+	auth.AddACL("u", &ACL{
+		PublishTopics:   []string{"a/+", "sensors/#"},
+		SubscribeTopics: []string{"a/+", "sensors/#"},
+	})
+	// A second user whose only grant is a root wildcard must not cover
+	// $-prefixed topics (MQTT §4.7.2).
+	auth.AddCredentials("w", "p")
+	auth.AddACL("w", &ACL{
+		SubscribeTopics: []string{"#"},
+		PublishTopics:   []string{"#"},
+	})
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		name    string
+		allowed bool
+		topic   string
+	}{
+		{"sub exact under +", true, "a/b"},
+		{"sub + itself", true, "a/+"},
+		{"sub # under + must be denied", false, "a/#"},
+		{"sub deeper under + denied", false, "a/b/c"},
+		{"sub +/x under + denied", false, "a/+/x"},
+		{"sub root # denied", false, "#"},
+		{"sub exact sensors", true, "sensors"},
+		{"sub deep under #", true, "sensors/temp/1"},
+		{"sub # under #", true, "sensors/#"},
+		{"sub sibling denied", false, "b/c"},
+		{"wildcard cannot cover $SYS", false, "$SYS/uptime"},
+	} {
+		if got := auth.CanSubscribe(ctx, "u", tc.topic); got != tc.allowed {
+			t.Errorf("CanSubscribe(%q) = %v, want %v", tc.topic, got, tc.allowed)
+		}
+	}
+
+	for _, tc := range []struct {
+		name    string
+		allowed bool
+		topic   string
+	}{
+		{"pub under +", true, "a/x"},
+		{"pub deeper than + denied", false, "a/x/y"},
+		{"pub sibling denied", false, "b/x"},
+		{"pub under #", true, "sensors/x/y"},
+	} {
+		if got := auth.CanPublish(ctx, "u", tc.topic); got != tc.allowed {
+			t.Errorf("CanPublish(%q) = %v, want %v", tc.topic, got, tc.allowed)
+		}
+	}
+
+	for _, tc := range []struct {
+		name    string
+		allowed bool
+		topic   string
+	}{
+		{"root # cannot publish $SYS", false, "$SYS/broker/version"},
+		{"normal publish under root #", true, "data/x"},
+	} {
+		if got := auth.CanPublish(ctx, "w", tc.topic); got != tc.allowed {
+			t.Errorf("CanPublish(%q) = %v, want %v", tc.topic, got, tc.allowed)
+		}
+	}
+}
+
+// v5Connect builds an MQTT 5.0 CONNECT packet with credentials.
+func v5Connect(clientID, username, password string, clean bool) *protocol.ConnectPacket {
+	flags := protocol.ConnectFlags{}
+	if clean {
+		flags.CleanSession = true
+	}
+	if username != "" {
+		flags.UsernameFlag = true
+	}
+	if password != "" {
+		flags.PasswordFlag = true
+	}
+	return &protocol.ConnectPacket{
+		FixedHeader:     protocol.FixedHeader{PacketType: protocol.PacketTypeConnect},
+		ProtocolName:    protocol.ProtocolNameMQTT,
+		ProtocolVersion: protocol.Version50,
+		Flags:           flags,
+		KeepAlive:       60,
+		ClientID:        clientID,
+		Username:        username,
+		Password:        []byte(password),
+	}
+}
+
+func TestBroker_PersistentSessionBoundToUsername(t *testing.T) {
+	auth := NewStaticAuth()
+	if err := auth.SetHashedPassword("alice", "alice-pw"); err != nil {
+		t.Fatalf("SetHashedPassword alice: %v", err)
+	}
+	if err := auth.SetHashedPassword("bob", "bob-pw"); err != nil {
+		t.Fatalf("SetHashedPassword bob: %v", err)
+	}
+	b := New(
+		WithAuth(auth),
+		WithSessionStore(memory.NewSessionStore()),
+		WithMessageStore(memory.NewMessageStore()),
+	)
+	if err := b.Start(); err != nil {
+		t.Fatalf("broker start: %v", err)
+	}
+	t.Cleanup(b.Stop)
+
+	addr := startTcpBroker(t, b)
+	connect := func(clientID, username, password string) (net.Conn, *protocol.Codec) {
+		t.Helper()
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		cc := protocol.NewCodec(0)
+		if err := cc.Encode(conn, v5Connect(clientID, username, password, false)); err != nil {
+			t.Fatalf("CONNECT: %v", err)
+		}
+		pkt, err := cc.Decode(conn)
+		if err != nil {
+			t.Fatalf("CONNACK: %v", err)
+		}
+		if _, ok := pkt.(*protocol.ConnAckPacket); !ok {
+			t.Fatalf("CONNACK type %T", pkt)
+		}
+		return conn, cc
+	}
+
+	// 1. Alice opens a persistent session, subscribes, and disconnects
+	// gracefully (the session is persisted with owner "alice").
+	aliceConn, aliceCodec := connect("shared-client", "alice", "alice-pw")
+	sub := &protocol.SubscribePacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe},
+		PacketID:    1,
+		Topics:      []protocol.TopicFilter{{Topic: "persist/t", QoS: 1}},
+	}
+	if err := aliceCodec.Encode(aliceConn, sub); err != nil {
+		t.Fatalf("alice SUBSCRIBE: %v", err)
+	}
+	pkt, err := aliceCodec.Decode(aliceConn)
+	if err != nil {
+		t.Fatalf("alice SUBACK: %v", err)
+	}
+	if s, ok := pkt.(*protocol.SubAckPacket); !ok || len(s.ReasonCodes) != 1 || s.ReasonCodes[0] != 1 {
+		t.Fatalf("alice SUBACK = %#v, want granted QoS 1", pkt)
+	}
+	if err := aliceCodec.Encode(aliceConn, &protocol.DisconnectPacket{FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeDisconnect}}); err != nil {
+		t.Fatalf("alice DISCONNECT: %v", err)
+	}
+	waitForClose(t, aliceConn)
+
+	// 2. Bob attempts to resume the same clientID: rejected with reason 0x87
+	// (not authorized) and the connection is closed; the stored session stays
+	// untouched.
+	bobConn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("bob dial: %v", err)
+	}
+	defer bobConn.Close()
+	bobCodec := protocol.NewCodec(0)
+	if err := bobCodec.Encode(bobConn, v5Connect("shared-client", "bob", "bob-pw", false)); err != nil {
+		t.Fatalf("bob CONNECT: %v", err)
+	}
+	_ = bobConn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	pkt, err = bobCodec.Decode(bobConn)
+	if err != nil {
+		t.Fatalf("bob CONNACK: %v", err)
+	}
+	if ack, ok := pkt.(*protocol.ConnAckPacket); !ok || ack.ReasonCode != protocol.ConnAckNotAuthorized5 {
+		t.Fatalf("bob CONNACK = %#v, want reason 0x87 (not authorized)", pkt)
+	}
+
+	// 3. Alice can still resume her session with SessionPresent=1.
+	alice2Conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("alice2 dial: %v", err)
+	}
+	defer alice2Conn.Close()
+	alice2Codec := protocol.NewCodec(0)
+	if err := alice2Codec.Encode(alice2Conn, v5Connect("shared-client", "alice", "alice-pw", false)); err != nil {
+		t.Fatalf("alice2 CONNECT: %v", err)
+	}
+	_ = alice2Conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	pkt, err = alice2Codec.Decode(alice2Conn)
+	if err != nil {
+		t.Fatalf("alice2 CONNACK: %v", err)
+	}
+	ack2, ok := pkt.(*protocol.ConnAckPacket)
+	if !ok {
+		t.Fatalf("alice2 CONNACK type %T", pkt)
+	}
+	if ack2.ReasonCode != protocol.ConnAckAccepted || !ack2.SessionPresent {
+		t.Fatalf("alice2 CONNACK = reason 0x%02X present=%v, want accepted + SessionPresent", ack2.ReasonCode, ack2.SessionPresent)
+	}
+}
+
+// startTcpBroker serves b through a real TCP listener (127.0.0.1:0) and
+// returns the dial address.
+func startTcpBroker(t *testing.T, b *Broker) string {
+	t.Helper()
+	cfg := config.DefaultConfig()
+	cfg.ListenAddr = "127.0.0.1:0"
+	srv := NewMQTTServer(cfg)
+	srv.SetHandler(b)
+	if err := srv.Start(); err != nil {
+		t.Fatalf("mqtt server start: %v", err)
+	}
+	t.Cleanup(srv.Stop)
+	return srv.Addr().String()
+}
+
+// waitForClose blocks until the given connection reports EOF/close.
+func waitForClose(t *testing.T, conn net.Conn) {
+	t.Helper()
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	buf := make([]byte, 64)
+	for {
+		if _, err := conn.Read(buf); err != nil {
+			return
+		}
+	}
+}
+
+func TestBroker_SharedSubscriptionAuthorizedByRealFilter(t *testing.T) {
+	auth := NewStaticAuth()
+	auth.AddCredentials("u", "p")
+	auth.AddACL("u", &ACL{SubscribeTopics: []string{"team/+"}})
+	b := New(WithAuth(auth), WithAuthorizer(auth))
+
+	clientConn, cc := runRawClient(t, b)
+	if err := cc.Encode(clientConn, v5Connect("worker", "u", "p", true)); err != nil {
+		t.Fatalf("CONNECT: %v", err)
+	}
+	if pkt, err := cc.Decode(clientConn); err != nil {
+		t.Fatalf("CONNACK: %v", err)
+	} else if _, ok := pkt.(*protocol.ConnAckPacket); !ok {
+		t.Fatalf("CONNACK type %T", pkt)
+	}
+
+	// A shared subscription whose real filter is covered by the ACL must be
+	// granted (the ACL is evaluated against "team/station", not the raw
+	// "$share/g1/team/station").
+	sub := &protocol.SubscribePacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe},
+		PacketID:    1,
+		Topics:      []protocol.TopicFilter{{Topic: "$share/g1/team/station", QoS: 1}},
+	}
+	if err := cc.Encode(clientConn, sub); err != nil {
+		t.Fatalf("SUBSCRIBE shared: %v", err)
+	}
+	pkt, err := cc.Decode(clientConn)
+	if err != nil {
+		t.Fatalf("SUBACK shared: %v", err)
+	}
+	s, ok := pkt.(*protocol.SubAckPacket)
+	if !ok || len(s.ReasonCodes) != 1 || s.ReasonCodes[0] != 1 {
+		t.Fatalf("shared SUBACK = %#v, want granted QoS 1", pkt)
+	}
+
+	// A shared subscription whose real filter is wider than the ACL ("team/#"
+	// under "team/+") must be refused.
+	sub2 := &protocol.SubscribePacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe},
+		PacketID:    2,
+		Topics:      []protocol.TopicFilter{{Topic: "$share/g1/team/#", QoS: 1}},
+	}
+	if err := cc.Encode(clientConn, sub2); err != nil {
+		t.Fatalf("SUBSCRIBE shared wide: %v", err)
+	}
+	pkt, err = cc.Decode(clientConn)
+	if err != nil {
+		t.Fatalf("SUBACK shared wide: %v", err)
+	}
+	s2, ok := pkt.(*protocol.SubAckPacket)
+	if !ok || len(s2.ReasonCodes) != 1 || s2.ReasonCodes[0] != protocol.SubAckFailure {
+		t.Fatalf("wide shared SUBACK = %#v, want failure", pkt)
 	}
 }

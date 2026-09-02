@@ -277,6 +277,39 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 		return fmt.Errorf("broker: will topic %q contains wildcards", connectPkt.WillTopic)
 	}
 
+	// Bind a clientID to its owning username (audit H6). A session — with its
+	// subscriptions, inflight state and queued offline messages — belongs to
+	// the user that created it. Connecting with a different username to an
+	// existing session (in memory or in the store) would otherwise let any
+	// authenticated user hijack another user's session state (or wipe it with
+	// a clean start), so the attempt is rejected with a not-authorized
+	// CONNACK and the original session is left untouched.
+	if connectPkt.ClientID != "" {
+		if existing, ok := b.sessions.GetSession(connectPkt.ClientID); ok && existing.Username != connectPkt.Username {
+			b.metrics.IncRejections("session_user_mismatch")
+			reason := byte(protocol.ConnAckNotAuthorized)
+			if connectPkt.ProtocolVersion == protocol.Version50 {
+				reason = protocol.ConnAckNotAuthorized5
+			}
+			b.sendConnAckRaw(conn, c, reason, false)
+			return fmt.Errorf("broker: client ID %q belongs to a different user", connectPkt.ClientID)
+		}
+		if b.sessionStore != nil {
+			data, err := b.sessionStore.GetSession(ctx, connectPkt.ClientID)
+			if err != nil && !errors.Is(err, store.ErrSessionNotFound) {
+				b.logger.Debug("session store check failed", "clientID", connectPkt.ClientID, "error", err)
+			} else if err == nil && data != nil && data.Username != connectPkt.Username {
+				b.metrics.IncRejections("session_user_mismatch")
+				reason := byte(protocol.ConnAckNotAuthorized)
+				if connectPkt.ProtocolVersion == protocol.Version50 {
+					reason = protocol.ConnAckNotAuthorized5
+				}
+				b.sendConnAckRaw(conn, c, reason, false)
+				return fmt.Errorf("broker: client ID %q belongs to a different user", connectPkt.ClientID)
+			}
+		}
+	}
+
 	// Allocate assigned client ID if empty (MQTT 5.0 §3.1.3.6).
 	// Must happen before session creation so the session uses the assigned ID.
 	var assignedClientID string
@@ -1399,24 +1432,42 @@ func (b *Broker) handleSubscribe(clientID string, sess *Session, pkt *protocol.S
 	reasonCodes := make([]byte, len(pkt.Topics))
 	deliverRetained := make([]bool, len(pkt.Topics))
 	for i, topic := range pkt.Topics {
-		// Check authorization
 		username := ""
 		if sess != nil {
 			username = sess.Username
 		}
-		if b.opts.authorizer != nil && !b.opts.authorizer.CanSubscribe(b.ctx, username, topic.Topic) {
+
+		// Resolve shared subscriptions to their real filter first: the ACL
+		// must be evaluated against "team/+" and not the literal
+		// "$share/group/team/+" string, which no ACL pattern could match or
+		// restrict correctly (audit H7).
+		shared := false
+		shareName := ""
+		aclFilter := topic.Topic
+		if IsSharedSubscription(topic.Topic) {
+			var realFilter string
+			var ok bool
+			shareName, realFilter, ok = ParseSharedFilter(topic.Topic)
+			if !ok || !protocol.ValidateTopicFilter(realFilter) {
+				reasonCodes[i] = protocol.SubAckFailure
+				continue
+			}
+			aclFilter = realFilter
+			shared = true
+		} else if !protocol.ValidateTopicFilter(topic.Topic) {
+			reasonCodes[i] = protocol.SubAckFailure
+			continue
+		}
+
+		// Check authorization against the effective (non-shared) filter.
+		if b.opts.authorizer != nil && !b.opts.authorizer.CanSubscribe(b.ctx, username, aclFilter) {
 			reasonCodes[i] = protocol.SubAckFailure
 			continue
 		}
 
 		// Handle shared subscriptions ($share/{ShareName}/{filter})
-		if IsSharedSubscription(topic.Topic) {
-			shareName, realFilter, ok := ParseSharedFilter(topic.Topic)
-			if !ok || !protocol.ValidateTopicFilter(realFilter) {
-				reasonCodes[i] = protocol.SubAckFailure
-				continue
-			}
-			b.topics.SubscribeShared(shareName, realFilter, clientID, topic.QoS)
+		if shared {
+			b.topics.SubscribeShared(shareName, aclFilter, clientID, topic.QoS)
 			sess.AddSubscriptionFilter(topic)
 			reasonCodes[i] = topic.QoS
 			deliverRetained[i] = shouldDeliverRetained(topic.RetainHandling, false)

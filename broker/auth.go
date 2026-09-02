@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/X1aSheng/shark-mqtt/errs"
+	"github.com/X1aSheng/shark-mqtt/protocol"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -173,7 +174,7 @@ func (s *StaticAuth) CanPublish(ctx context.Context, username, topic string) boo
 		return false
 	}
 	for _, t := range acl.PublishTopics {
-		if matchSysProtected(t, topic) {
+		if aclCovers(t, topic) {
 			return true
 		}
 	}
@@ -189,11 +190,64 @@ func (s *StaticAuth) CanSubscribe(ctx context.Context, username, topic string) b
 		return false
 	}
 	for _, t := range acl.SubscribeTopics {
-		if matchSysProtected(t, topic) {
+		if aclCovers(t, topic) {
 			return true
 		}
 	}
 	return false
+}
+
+// aclCovers reports whether the ACL pattern covers the requested topic or
+// topic filter, i.e. every topic matched by the request is also matched by
+// the ACL pattern. Matching the request *filter* literally against the ACL
+// pattern was wrong: wildcard-to-wildcard comparison let an ACL of "a/+"
+// authorize a subscription to "a/#" (a strictly wider set), and vice versa
+// (audit H7).
+//
+// Rules (per level):
+//   - an ACL '#' level covers the request and everything below it;
+//   - an exact ACL level covers only the same exact request level;
+//   - an ACL '+' level covers a literal request level or another '+', but
+//     never a request '#' (which is wider) and never a longer request;
+//   - a request cannot be wider than the ACL: extra request levels are only
+//     allowed under an ACL '#'.
+//
+// MQTT §4.7.2 system-topic protection applies first: a root-level '+' or '#'
+// ACL never covers a request whose first level starts with '$'.
+func aclCovers(aclPattern, requested string) bool {
+	ap := protocol.SplitTopic(aclPattern)
+	rp := protocol.SplitTopic(requested)
+	if len(ap) == 0 {
+		return false
+	}
+	if len(rp) > 0 && len(rp[0]) > 0 && rp[0][0] == '$' && (ap[0] == "+" || ap[0] == "#") {
+		return false
+	}
+	for i := 0; i < len(ap); i++ {
+		if ap[i] == "#" {
+			return true
+		}
+		if i >= len(rp) {
+			return false
+		}
+		if rp[i] == "#" {
+			// Only an ACL '#' level can cover a request '#' level.
+			return false
+		}
+		if rp[i] == "+" {
+			// A request '+' level matches any single level; only an ACL '+'
+			// covers exactly the same set (an ACL literal is narrower, an
+			// ACL '#' was already handled above).
+			if ap[i] != "+" {
+				return false
+			}
+			continue
+		}
+		if ap[i] != "+" && ap[i] != rp[i] {
+			return false
+		}
+	}
+	return len(ap) == len(rp)
 }
 
 // matchSysProtected is defined in topic_tree.go — it wraps protocol.MatchTopic
