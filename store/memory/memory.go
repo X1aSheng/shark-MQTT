@@ -102,6 +102,11 @@ func (s *sessionStore) IsSessionExists(ctx context.Context, clientID string) (bo
 	return ok, nil
 }
 
+// RefreshSession is a no-op for the in-memory backend, which has no TTLs.
+func (s *sessionStore) RefreshSession(ctx context.Context, clientID string, ttl time.Duration) error {
+	return nil
+}
+
 // messageStore implements store.MessageStore using in-memory maps.
 type messageStore struct {
 	mu       sync.RWMutex

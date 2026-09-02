@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/X1aSheng/shark-mqtt/store"
 	"github.com/dgraph-io/badger/v4"
@@ -113,4 +114,9 @@ func (s *SessionStore) IsSessionExists(ctx context.Context, clientID string) (bo
 		return false, fmt.Errorf("check session exists: %w", err)
 	}
 	return true, nil
+}
+
+// RefreshSession is a no-op for the BadgerDB backend, which has no per-key TTLs.
+func (s *SessionStore) RefreshSession(ctx context.Context, clientID string, ttl time.Duration) error {
+	return nil
 }

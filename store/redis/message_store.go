@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/X1aSheng/shark-mqtt/store"
@@ -46,12 +47,16 @@ func NewMessageStore(cfg MessageStoreConfig) *MessageStore {
 	}
 }
 
+// clientID is length-prefixed in keys because it may legally contain ':'
+// (e.g. "tenant:device"). Without the prefix, scanning "<clientID>:*" for
+// client "a" also matched the keys of client "a:1", letting one client read
+// or clear another's offline queue (audit H3).
 func (s *MessageStore) messageKey(clientID, id string) string {
-	return s.keyPrefix + clientID + ":" + id
+	return s.keyPrefix + strconv.Itoa(len(clientID)) + ":" + clientID + ":" + id
 }
 
 func (s *MessageStore) clientPattern(clientID string) string {
-	return s.keyPrefix + clientID + ":*"
+	return s.keyPrefix + strconv.Itoa(len(clientID)) + ":" + clientID + ":"
 }
 
 func (s *MessageStore) SaveMessage(ctx context.Context, clientID string, msg *store.StoredMessage) error {

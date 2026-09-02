@@ -745,11 +745,16 @@ func (b *Broker) cleanupExpiredSessions() {
 
 	now := time.Now()
 	for _, clientID := range clientIDs {
-		// Skip connected clients
+		// Connected clients: keep their storage key alive on TTL backends
+		// (Redis) so a live session can never expire under the broker and
+		// then silently disappear after a crash (audit).
 		b.mu.RLock()
 		_, connected := b.connections[clientID]
 		b.mu.RUnlock()
 		if connected {
+			if err := b.sessionStore.RefreshSession(b.ctx, clientID, b.opts.sessionExpiry); err != nil {
+				b.logger.Debug("failed to refresh session TTL", "clientID", clientID, "error", err)
+			}
 			continue
 		}
 

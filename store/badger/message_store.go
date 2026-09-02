@@ -40,12 +40,16 @@ func NewMessageStore(cfg MessageStoreConfig) *MessageStore {
 	}
 }
 
+// clientID is length-prefixed in keys because it may legally contain ':'
+// (e.g. "tenant:device"). Without the prefix, prefix iteration for client
+// "a" also matched the keys of client "a:1", letting one client read or
+// clear another's offline queue (audit H3).
 func (s *MessageStore) messageKey(clientID, id string) []byte {
-	return []byte(s.keyPrefix + clientID + ":" + id)
+	return []byte(s.keyPrefix + strconv.Itoa(len(clientID)) + ":" + clientID + ":" + id)
 }
 
 func (s *MessageStore) clientPrefix(clientID string) []byte {
-	return []byte(s.keyPrefix + clientID + ":")
+	return []byte(s.keyPrefix + strconv.Itoa(len(clientID)) + ":" + clientID + ":")
 }
 
 func (s *MessageStore) SaveMessage(ctx context.Context, clientID string, msg *store.StoredMessage) error {

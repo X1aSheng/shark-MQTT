@@ -456,11 +456,12 @@ func (s *Session) Save(ctx context.Context, sessionStore store.SessionStore) err
 	for topic, qos := range s.Subscriptions {
 		opts := s.SubOptions[topic]
 		subscriptions = append(subscriptions, store.Subscription{
-			Topic:             topic,
-			QoS:               qos,
-			NoLocal:           opts.NoLocal,
-			RetainAsPublished: opts.RetainAsPublished,
-			RetainHandling:    opts.RetainHandling,
+			Topic:                  topic,
+			QoS:                    qos,
+			NoLocal:                opts.NoLocal,
+			RetainAsPublished:      opts.RetainAsPublished,
+			RetainHandling:         opts.RetainHandling,
+			SubscriptionIdentifier: opts.SubscriptionIdentifier,
 		})
 	}
 	data.Subscriptions = subscriptions
@@ -533,10 +534,11 @@ func (m *Manager) Restore(ctx context.Context, clientID string) (*Session, error
 	for _, sub := range data.Subscriptions {
 		sess.Subscriptions[sub.Topic] = sub.QoS
 		sess.SubOptions[sub.Topic] = SubscriptionOptions{
-			QoS:               sub.QoS,
-			NoLocal:           sub.NoLocal,
-			RetainAsPublished: sub.RetainAsPublished,
-			RetainHandling:    sub.RetainHandling,
+			QoS:                    sub.QoS,
+			NoLocal:                sub.NoLocal,
+			RetainAsPublished:      sub.RetainAsPublished,
+			RetainHandling:         sub.RetainHandling,
+			SubscriptionIdentifier: sub.SubscriptionIdentifier,
 		}
 	}
 

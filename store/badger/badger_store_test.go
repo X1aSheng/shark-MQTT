@@ -3,6 +3,7 @@
 package badger
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"testing"
@@ -221,5 +222,24 @@ func TestBadgerRetainedStore_EmptyPayload(t *testing.T) {
 	_, err := r.GetRetained(ctx, "test/topic")
 	if err == nil {
 		t.Fatal("expected ErrRetainedNotFound after deleting with empty payload")
+	}
+}
+
+// TestMessageKeyClientIDIsolation guards the length-prefixed key scheme:
+// a clientID containing ':' (e.g. "a:1") must never fall under the key
+// prefix of a shorter clientID ("a") and vice versa (audit H3).
+func TestMessageKeyClientIDIsolation(t *testing.T) {
+	ms := &MessageStore{keyPrefix: "mqtt:message:"}
+	if bytes.Equal(ms.messageKey("a", "1"), ms.messageKey("a:1", "1")) {
+		t.Fatal("keys of clients a and a:1 collide")
+	}
+	prefixA := ms.clientPrefix("a")
+	if !bytes.HasPrefix(ms.messageKey("a", "1"), prefixA) {
+		t.Error("client a's own key must match its prefix")
+	}
+	for _, id := range []string{"1", "2"} {
+		if bytes.HasPrefix(ms.messageKey("a:1", id), prefixA) {
+			t.Errorf("key of a:1 (id %s) matches prefix of a", id)
+		}
 	}
 }

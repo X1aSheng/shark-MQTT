@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/X1aSheng/shark-mqtt/protocol"
 	"github.com/X1aSheng/shark-mqtt/store"
@@ -50,9 +51,10 @@ func (s *RetainedStore) SaveRetained(ctx context.Context, topic string, qos uint
 		return s.DeleteRetained(ctx, topic)
 	}
 	retained := &store.RetainedMessage{
-		Topic:   topic,
-		QoS:     qos,
-		Payload: payload,
+		Topic:     topic,
+		QoS:       qos,
+		Payload:   payload,
+		Timestamp: time.Now(), // persist the store time so retained TTLs survive restarts (audit)
 	}
 	serialized, err := json.Marshal(retained)
 	if err != nil {

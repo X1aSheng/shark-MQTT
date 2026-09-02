@@ -725,3 +725,35 @@ func TestBroker_ExpiredSessionCleanupCascadesToQueue(t *testing.T) {
 		t.Fatalf("%d messages outlived their expired session", len(left))
 	}
 }
+
+// TestSessionPersistenceKeepsSubscriptionIdentifier guards the MQTT 5
+// SubscriptionIdentifier across session persistence: it used to be dropped,
+// so restored sessions silently lost request/response correlation (audit).
+func TestSessionPersistenceKeepsSubscriptionIdentifier(t *testing.T) {
+	sessStore := memory.NewSessionStore()
+	m := NewManager(sessStore)
+	ctx := context.Background()
+	sess := m.CreateSession("cid", &protocol.ConnectPacket{
+		KeepAlive: 60,
+	}, false)
+	id := uint32(42)
+	sess.AddSubscriptionFilter(protocol.TopicFilter{
+		Topic:                  "req/res/#",
+		QoS:                    1,
+		SubscriptionIdentifier: &id,
+	})
+	if err := sess.Save(ctx, sessStore); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	restored, err := m.Restore(ctx, "cid")
+	if err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	opts, ok := restored.SubOptions["req/res/#"]
+	if !ok {
+		t.Fatal("restored session lost the subscription")
+	}
+	if opts.SubscriptionIdentifier == nil || *opts.SubscriptionIdentifier != 42 {
+		t.Fatalf("restored SubscriptionIdentifier = %v, want 42", opts.SubscriptionIdentifier)
+	}
+}

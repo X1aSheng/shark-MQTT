@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -439,5 +440,28 @@ func TestMessageStore_ListMessages_Many(t *testing.T) {
 		if !seen[id] {
 			t.Errorf("message %s missing from ListMessages result", id)
 		}
+	}
+}
+
+// TestMessageKeyClientIDIsolation guards the length-prefixed key scheme:
+// a clientID containing ':' (e.g. "a:1") must never fall under the key
+// pattern of a shorter clientID ("a") and vice versa (audit H3). Pure
+// function test, no Redis server needed.
+func TestMessageKeyClientIDIsolation(t *testing.T) {
+	ms := &MessageStore{keyPrefix: "mqtt:message:"}
+	if ms.messageKey("a", "1") == ms.messageKey("a:1", "1") {
+		t.Fatal("keys of clients a and a:1 collide")
+	}
+	patA := ms.clientPattern("a")
+	if !strings.HasPrefix(ms.messageKey("a", "1"), patA) {
+		t.Error("client a's own key must match its pattern")
+	}
+	for _, id := range []string{"1", "2"} {
+		if strings.HasPrefix(ms.messageKey("a:1", id), patA) {
+			t.Errorf("key of a:1 (id %s) matches pattern of a", id)
+		}
+	}
+	if ms.clientPattern("a") == ms.clientPattern("a:1") {
+		t.Error("patterns of a and a:1 are identical")
 	}
 }

@@ -1,6 +1,9 @@
 package store
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // SessionStore handles session persistence.
 type SessionStore interface {
@@ -9,6 +12,12 @@ type SessionStore interface {
 	DeleteSession(ctx context.Context, clientID string) error
 	ListSessions(ctx context.Context) ([]string, error)
 	IsSessionExists(ctx context.Context, clientID string) (bool, error)
+	// RefreshSession extends the storage lifetime of a session while its
+	// client is connected. Backends without per-key TTLs (memory, badger)
+	// are no-ops; TTL backends (Redis) must never delete the key of a live
+	// session, otherwise a later broker crash silently loses the session
+	// (audit).
+	RefreshSession(ctx context.Context, clientID string, ttl time.Duration) error
 }
 
 // MessageStore handles message persistence.

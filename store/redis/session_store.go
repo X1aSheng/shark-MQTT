@@ -127,3 +127,17 @@ func (s *SessionStore) IsSessionExists(ctx context.Context, clientID string) (bo
 	}
 	return exists > 0, nil
 }
+
+// RefreshSession extends the Redis key TTL while the client is connected. The
+// broker refreshes every connected persistent session on its cleanup cadence
+// so the key cannot expire mid-connection and silently lose the session on a
+// later broker crash (audit).
+func (s *SessionStore) RefreshSession(ctx context.Context, clientID string, ttl time.Duration) error {
+	if ttl <= 0 {
+		ttl = s.ttl
+	}
+	if ttl <= 0 {
+		return nil
+	}
+	return s.client.Expire(ctx, s.sessionKey(clientID), ttl).Err()
+}

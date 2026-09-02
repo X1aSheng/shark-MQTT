@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/X1aSheng/shark-mqtt/protocol"
 	"github.com/X1aSheng/shark-mqtt/store"
@@ -50,9 +51,10 @@ func (s *RetainedStore) SaveRetained(ctx context.Context, topic string, qos uint
 		return s.DeleteRetained(ctx, topic)
 	}
 	retained := &store.RetainedMessage{
-		Topic:   topic,
-		QoS:     qos,
-		Payload: payload,
+		Topic:     topic,
+		QoS:       qos,
+		Payload:   payload,
+		Timestamp: time.Now(), // persist the store time so retained TTLs survive restarts (audit)
 	}
 	serialized, err := json.Marshal(retained)
 	if err != nil {
@@ -128,15 +130,23 @@ func (s *RetainedStore) MatchRetained(ctx context.Context, pattern string) ([]*s
 }
 
 // topicPatternToRedis converts an MQTT topic pattern to a Redis glob pattern.
+// MQTT literal topic characters that are Redis glob metacharacters ('\', '*',
+// '?', '[') are escaped first so an exact or '#'-free subscription still
+// matches a stored topic such as "a[0]" or "b?x" (audit). '+' and '#' are
+// MQTT wildcards (legal topics never contain them), so they map to '*'; the
+// secondary protocol.MatchTopic call in MatchRetained filters false positives.
 func topicPatternToRedis(pattern string) string {
-	// MQTT: # matches everything below, + matches single level
-	// Redis: * matches anything including /, ? matches single char.
-	// For # at the end (most common pattern), use * to narrow the scan;
-	// the secondary MQTT match in MatchRetained filters false positives.
-	result := strings.ReplaceAll(pattern, "#", "*")
-	// MQTT "+" matches an entire topic level (chars not including "/").
-	// Redis "[^/]" only matches a single character, so we use "*" instead.
-	// The secondary protocol.MatchTopic call in MatchRetained filters false positives.
-	result = strings.ReplaceAll(result, "+", "*")
-	return result
+	var b strings.Builder
+	for i := 0; i < len(pattern); i++ {
+		switch pattern[i] {
+		case '#', '+':
+			b.WriteByte('*')
+		case '\\', '*', '?', '[':
+			b.WriteByte('\\')
+			b.WriteByte(pattern[i])
+		default:
+			b.WriteByte(pattern[i])
+		}
+	}
+	return b.String()
 }

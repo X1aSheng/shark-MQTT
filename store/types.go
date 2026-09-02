@@ -25,6 +25,10 @@ type Subscription struct {
 	NoLocal           bool
 	RetainAsPublished bool
 	RetainHandling    uint8
+	// SubscriptionIdentifier persists the MQTT 5 subscription identifier so
+	// restored sessions keep echoing it in delivered PUBLISH packets (audit:
+	// it was lost on reconnect, breaking request/response correlation).
+	SubscriptionIdentifier *uint32
 }
 
 // InflightMessage represents a message awaiting acknowledgment.

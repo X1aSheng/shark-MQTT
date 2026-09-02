@@ -76,6 +76,11 @@ func (s *MockSessionStore) IsSessionExists(ctx context.Context, clientID string)
 	return ok, nil
 }
 
+// RefreshSession is a no-op for the mock store (no TTL semantics).
+func (s *MockSessionStore) RefreshSession(ctx context.Context, clientID string, ttl time.Duration) error {
+	return nil
+}
+
 // MockMessageStore implements store.MessageStore.
 type MockMessageStore struct {
 	data    map[string]map[string]*store.StoredMessage
