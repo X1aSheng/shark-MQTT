@@ -3,6 +3,7 @@ package broker
 
 import (
 	"context"
+	"net"
 	"sync"
 	"time"
 )
@@ -16,6 +17,11 @@ type WillMessage struct {
 	QoS      uint8
 	Retain   bool
 	Delay    time.Duration // Delayed will message delivery
+	// Conn is the network connection that registered this will. TriggerWill
+	// only fires a will owned by the given connection: after a session
+	// takeover the old connection's late abnormal-disconnect must not trigger
+	// the NEW connection's freshly-registered will (audit).
+	Conn net.Conn
 }
 
 // WillHandler manages last will messages for clients that disconnect abnormally.
@@ -57,7 +63,7 @@ func (wh *WillHandler) SetPublishCallback(fn func(username string, topic string,
 
 // RegisterWill registers a will message for a client.
 // Cancels any pending delayed will for the same client.
-func (wh *WillHandler) RegisterWill(clientID string, username string, topic string, payload []byte, qos uint8, retain bool, delay time.Duration) error {
+func (wh *WillHandler) RegisterWill(clientID string, username string, topic string, payload []byte, qos uint8, retain bool, delay time.Duration, conn net.Conn) error {
 	wh.mu.Lock()
 	defer wh.mu.Unlock()
 
@@ -75,15 +81,25 @@ func (wh *WillHandler) RegisterWill(clientID string, username string, topic stri
 		QoS:      qos,
 		Retain:   retain,
 		Delay:    delay,
+		Conn:     conn,
 	}
 	return nil
 }
 
 // TriggerWill triggers the will message for a client (on abnormal disconnect).
-func (wh *WillHandler) TriggerWill(clientID string) error {
+// When conn is non-nil it must match the connection that registered the will:
+// a stale disconnect from a superseded connection must not fire the will of
+// the connection that took over the clientID (audit).
+func (wh *WillHandler) TriggerWill(clientID string, conn net.Conn) error {
 	wh.mu.Lock()
 	will, exists := wh.wills[clientID]
 	if !exists {
+		wh.mu.Unlock()
+		return nil
+	}
+	if conn != nil && will.Conn != nil && will.Conn != conn {
+		// Different owner (a newer connection registered its will): not ours
+		// to trigger.
 		wh.mu.Unlock()
 		return nil
 	}

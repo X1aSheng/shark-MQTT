@@ -961,3 +961,50 @@ func TestBroker_ConnectTimeout(t *testing.T) {
 		t.Fatalf("handshake timeout took %v", elapsed)
 	}
 }
+
+// TestWillTriggerScopedToOwningConnection verifies that after a session
+// takeover only the connection that registered a will can trigger it: a late
+// abnormal-disconnect from the superseded connection must not fire the new
+// connection's freshly registered will (audit).
+func TestWillTriggerScopedToOwningConnection(t *testing.T) {
+	wh := NewWillHandler()
+	connA, _ := net.Pipe()
+	connB, _ := net.Pipe()
+	defer connA.Close()
+	defer connB.Close()
+
+	fired := make(chan string, 1)
+	wh.SetPublishCallback(func(username, topic string, payload []byte, qos uint8, retain bool) error {
+		fired <- topic
+		return nil
+	})
+
+	// New connection B registered its will (the takeover already fired A's
+	// will and removed it; only B's will remains).
+	if err := wh.RegisterWill("cid", "user", "b/will", []byte("x"), 1, false, 0, connB); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	// Late abnormal-disconnect of the OLD connection A must not fire B's will.
+	if err := wh.TriggerWill("cid", connA); err != nil {
+		t.Fatalf("trigger (stale): %v", err)
+	}
+	select {
+	case topic := <-fired:
+		t.Fatalf("stale connection triggered the new will (%s)", topic)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	// The owning connection still fires it.
+	if err := wh.TriggerWill("cid", connB); err != nil {
+		t.Fatalf("trigger (owner): %v", err)
+	}
+	select {
+	case topic := <-fired:
+		if topic != "b/will" {
+			t.Fatalf("will topic = %q, want b/will", topic)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("owner-triggered will was not published")
+	}
+}

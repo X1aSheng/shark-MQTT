@@ -28,7 +28,7 @@ func TestWillHandler_RegisterWill(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			wh.RegisterWill(tc.clientID, "user-"+tc.clientID, tc.topic, tc.payload, tc.qos, tc.retain, tc.delay)
+			wh.RegisterWill(tc.clientID, "user-"+tc.clientID, tc.topic, tc.payload, tc.qos, tc.retain, tc.delay, nil)
 
 			info, ok := wh.GetWillInfo(tc.clientID)
 			if !ok {
@@ -56,8 +56,8 @@ func TestWillHandler_RegisterWill(t *testing.T) {
 func TestWillHandler_RegisterWill_Overwrites(t *testing.T) {
 	wh := NewWillHandler()
 
-	wh.RegisterWill("client1", "user1", "old/topic", []byte("old"), 0, false, 0)
-	wh.RegisterWill("client1", "user1", "new/topic", []byte("new"), 1, true, 0)
+	wh.RegisterWill("client1", "user1", "old/topic", []byte("old"), 0, false, 0, nil)
+	wh.RegisterWill("client1", "user1", "new/topic", []byte("new"), 1, true, 0, nil)
 
 	info, ok := wh.GetWillInfo("client1")
 	if !ok {
@@ -105,8 +105,8 @@ func TestWillHandler_TriggerWill_Immediate(t *testing.T) {
 		return nil
 	})
 
-	wh.RegisterWill("client1", "user1", "client1/status", []byte("offline"), 1, true, 0)
-	err := wh.TriggerWill("client1")
+	wh.RegisterWill("client1", "user1", "client1/status", []byte("offline"), 1, true, 0, nil)
+	err := wh.TriggerWill("client1", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestWillHandler_TriggerWill_NonExistent(t *testing.T) {
 	wh := NewWillHandler()
 
 	// Should not error for non-existent client
-	err := wh.TriggerWill("nonexistent")
+	err := wh.TriggerWill("nonexistent", nil)
 	if err != nil {
 		t.Errorf("unexpected error for non-existent will: %v", err)
 	}
@@ -145,10 +145,10 @@ func TestWillHandler_TriggerWill_NonExistent(t *testing.T) {
 
 func TestWillHandler_TriggerWill_NoCallback(t *testing.T) {
 	wh := NewWillHandler()
-	wh.RegisterWill("client1", "user1", "topic", []byte("data"), 0, false, 0)
+	wh.RegisterWill("client1", "user1", "topic", []byte("data"), 0, false, 0, nil)
 
 	// No publish callback set - should not panic
-	err := wh.TriggerWill("client1")
+	err := wh.TriggerWill("client1", nil)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -162,8 +162,8 @@ func TestWillHandler_TriggerWill_EmptyTopic(t *testing.T) {
 		return nil
 	})
 
-	wh.RegisterWill("client1", "user1", "", []byte("data"), 0, false, 0)
-	wh.TriggerWill("client1")
+	wh.RegisterWill("client1", "user1", "", []byte("data"), 0, false, 0, nil)
+	wh.TriggerWill("client1", nil)
 
 	if published {
 		t.Error("should not publish will with empty topic")
@@ -185,8 +185,8 @@ func TestWillHandler_TriggerWill_Delayed(t *testing.T) {
 	})
 
 	delay := 100 * time.Millisecond
-	wh.RegisterWill("client1", "user1", "client1/status", []byte("delayed"), 0, false, delay)
-	wh.TriggerWill("client1")
+	wh.RegisterWill("client1", "user1", "client1/status", []byte("delayed"), 0, false, delay, nil)
+	wh.TriggerWill("client1", nil)
 
 	// Should not be published immediately
 	mu.Lock()
@@ -218,8 +218,8 @@ func TestWillHandler_TriggerWill_Delayed_CancelBeforeFiring(t *testing.T) {
 	})
 
 	delay := 200 * time.Millisecond
-	wh.RegisterWill("client1", "user1", "client1/status", []byte("data"), 0, false, delay)
-	wh.TriggerWill("client1")
+	wh.RegisterWill("client1", "user1", "client1/status", []byte("data"), 0, false, delay, nil)
+	wh.TriggerWill("client1", nil)
 
 	// Cancel before the delay elapses
 	wh.CancelWill("client1")
@@ -238,7 +238,7 @@ func TestWillHandler_TriggerWill_Delayed_CancelBeforeFiring(t *testing.T) {
 
 func TestWillHandler_RemoveWill(t *testing.T) {
 	wh := NewWillHandler()
-	wh.RegisterWill("client1", "user1", "client1/status", []byte("offline"), 0, false, 0)
+	wh.RegisterWill("client1", "user1", "client1/status", []byte("offline"), 0, false, 0, nil)
 
 	wh.RemoveWill("client1")
 
@@ -268,7 +268,7 @@ func TestWillHandler_RemoveWill_Delayed(t *testing.T) {
 	})
 
 	delay := 100 * time.Millisecond
-	wh.RegisterWill("client1", "user1", "client1/status", []byte("data"), 0, false, delay)
+	wh.RegisterWill("client1", "user1", "client1/status", []byte("data"), 0, false, delay, nil)
 
 	// Graceful disconnect: remove will (cancels delayed will)
 	wh.RemoveWill("client1")
@@ -286,7 +286,7 @@ func TestWillHandler_RemoveWill_Delayed(t *testing.T) {
 
 func TestWillHandler_CancelWill(t *testing.T) {
 	wh := NewWillHandler()
-	wh.RegisterWill("client1", "user1", "client1/status", []byte("data"), 0, false, 0)
+	wh.RegisterWill("client1", "user1", "client1/status", []byte("data"), 0, false, 0, nil)
 
 	wh.CancelWill("client1")
 
@@ -307,8 +307,8 @@ func TestWillHandler_CancelWill_NonExistent(t *testing.T) {
 
 func TestWillHandler_Stop(t *testing.T) {
 	wh := NewWillHandler()
-	wh.RegisterWill("client1", "user1", "client1/status", []byte("data"), 0, false, 0)
-	wh.RegisterWill("client2", "user2", "client2/status", []byte("data"), 0, false, 0)
+	wh.RegisterWill("client1", "user1", "client1/status", []byte("data"), 0, false, 0, nil)
+	wh.RegisterWill("client2", "user2", "client2/status", []byte("data"), 0, false, 0, nil)
 
 	wh.Stop()
 
@@ -332,8 +332,8 @@ func TestWillHandler_Stop_CancelsDelayed(t *testing.T) {
 	})
 
 	delay := 100 * time.Millisecond
-	wh.RegisterWill("client1", "user1", "t1", []byte("data"), 0, false, delay)
-	wh.RegisterWill("client2", "user2", "t2", []byte("data"), 0, false, delay)
+	wh.RegisterWill("client1", "user1", "t1", []byte("data"), 0, false, delay, nil)
+	wh.RegisterWill("client2", "user2", "t2", []byte("data"), 0, false, delay, nil)
 
 	wh.Stop()
 
@@ -379,14 +379,14 @@ func TestWillHandler_FullLifecycle(t *testing.T) {
 	})
 
 	// Register wills
-	wh.RegisterWill("client1", "user1", "client1/status", []byte("offline"), 0, false, 0)
-	wh.RegisterWill("client2", "user2", "client2/status", []byte("offline"), 1, true, 0)
+	wh.RegisterWill("client1", "user1", "client1/status", []byte("offline"), 0, false, 0, nil)
+	wh.RegisterWill("client2", "user2", "client2/status", []byte("offline"), 1, true, 0, nil)
 
 	// Graceful disconnect for client2 (no will published)
 	wh.RemoveWill("client2")
 
 	// Abnormal disconnect for client1 (will published)
-	wh.TriggerWill("client1")
+	wh.TriggerWill("client1", nil)
 
 	mu.Lock()
 	if len(publishedMessages) != 1 {
