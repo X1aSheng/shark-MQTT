@@ -882,3 +882,49 @@ func TestBroker_QoS2InboundStageSurvivesReconnect(t *testing.T) {
 		t.Fatalf("subscriber received a duplicate delivery: %T %v", pkt, pkt)
 	}
 }
+
+// TestBroker_WriteLoopReapsStalledPeer verifies the per-write deadline: a peer
+// that stops reading must not wedge the writer goroutine (and, with a full
+// queue, every publisher delivering QoS 1/2 to it) forever (audit).
+func TestBroker_WriteLoopReapsStalledPeer(t *testing.T) {
+	serverConn, clientConn := net.Pipe()
+	defer clientConn.Close()
+
+	cs := &clientState{
+		conn:         serverConn,
+		codec:        protocol.NewCodec(0),
+		writeTimeout: 100 * time.Millisecond,
+		out:          make(chan protocol.Packet, 1),
+		stopWrites:   make(chan struct{}),
+	}
+	done := make(chan struct{})
+	go func() {
+		cs.writeLoop()
+		close(done)
+	}()
+
+	payload := make([]byte, 512*1024)
+	cs.out <- &protocol.PublishPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 1},
+		PacketID:    1,
+		Topic:       "stall/t",
+		Payload:     payload,
+	}
+
+	// The peer never reads. The writer's per-write deadline must fire and
+	// close the connection instead of wedging the goroutine forever.
+	start := time.Now()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("writeLoop goroutine did not exit after the write deadline")
+	}
+	if elapsed := time.Since(start); elapsed < 50*time.Millisecond || elapsed > 1500*time.Millisecond {
+		t.Fatalf("writer reaped the stalled peer after %v (expect ~writeTimeout)", elapsed)
+	}
+	buf := make([]byte, 512)
+	_ = clientConn.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := clientConn.Read(buf); err == nil {
+		t.Fatal("expected the stalled peer's connection to be closed")
+	}
+}

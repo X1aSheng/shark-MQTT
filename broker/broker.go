@@ -27,6 +27,9 @@ type clientState struct {
 	codec *protocol.Codec
 	wmu   sync.Mutex // serializes writes when no async write queue is configured
 
+	// writeTimeout bounds each socket write; 0 disables the deadline (audit).
+	writeTimeout time.Duration
+
 	// out is the bounded per-connection outbound write queue. When non-nil,
 	// writePacket/sendConnAck enqueue here and writeLoop drains it on a single
 	// goroutine, so a slow consumer cannot block the producing client's read
@@ -498,6 +501,7 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 	cs := &clientState{
 		conn:         conn,
 		codec:        c,
+		writeTimeout: b.opts.writeTimeout,
 		out:          make(chan protocol.Packet, qcap),
 		stopWrites:   make(chan struct{}),
 		enhancedAuth: enhancedAuth,
@@ -999,12 +1003,13 @@ func (b *Broker) disconnect(clientID string, conn net.Conn) {
 	// Persistent sessions keep theirs for offline queueing and are
 	// re-subscribed on reconnect; any flow-control-buffered deliveries are
 	// persisted so they are not lost (P1-5 + P2-14).
+	var persistSess *Session
 	if sess, ok := b.sessions.GetSession(clientID); ok {
 		sess.ResetOutboundUnacked()
 		if sess.IsClean {
 			b.unsubscribeSessionTopics(sess)
-		} else if b.messageStore != nil {
-			b.persistBufferedOutbound(clientID, sess)
+		} else {
+			persistSess = sess
 		}
 	}
 
@@ -1019,6 +1024,14 @@ func (b *Broker) disconnect(clientID string, conn net.Conn) {
 	}
 	online := len(b.connections)
 	b.mu.Unlock()
+
+	// Persist flow-control-buffered deliveries OUTSIDE the global lock: store
+	// writes (badger disk / redis network) must not stall connection
+	// registration or teardown for every client (audit). The session is no
+	// longer reachable at this point, so no takeover can race these writes.
+	if persistSess != nil && b.messageStore != nil {
+		b.persistBufferedOutbound(clientID, persistSess)
+	}
 
 	b.metrics.SetOnlineSessions(online)
 	// Plugin hook
@@ -2111,6 +2124,14 @@ func (cs *clientState) writeLoop() {
 	for {
 		select {
 		case pkt := <-cs.out:
+			// Bound each socket write (audit): without a deadline a peer that
+			// stops reading wedges this goroutine in the TCP write forever,
+			// and with the queue full, every publisher delivering QoS 1/2
+			// messages to it stalls behind the enqueue. On expiry the socket
+			// is closed like any other write failure.
+			if cs.writeTimeout > 0 {
+				_ = cs.conn.SetWriteDeadline(time.Now().Add(cs.writeTimeout))
+			}
 			if err := cs.codec.Encode(cs.conn, pkt); err != nil {
 				// Same zombie-connection guard as writePacket: a failed write
 				// closes the socket so the reader notices and tears the

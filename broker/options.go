@@ -35,11 +35,12 @@ type brokerOptions struct {
 	keepAlive              uint16
 
 	// Resource limits
-	maxClientIDLength       int // max bytes for MQTT client ID (0 = unlimited)
-	maxTopicFiltersPerSub   int // max topic filters per SUBSCRIBE packet
-	maxRetainedTopics       int // max retained messages (0 = unlimited)
-	maxOfflineQueue         int // max QoS 1/2 messages queued per offline session (0 = unlimited)
-	writeQueueSize          int // per-connection outbound write queue capacity (R1)
+	maxClientIDLength       int           // max bytes for MQTT client ID (0 = unlimited)
+	maxTopicFiltersPerSub   int           // max topic filters per SUBSCRIBE packet
+	maxRetainedTopics       int           // max retained messages (0 = unlimited)
+	maxOfflineQueue         int           // max QoS 1/2 messages queued per offline session (0 = unlimited)
+	writeQueueSize          int           // per-connection outbound write queue capacity (R1)
+	writeTimeout            time.Duration // max duration of a single socket write before the connection is reaped
 	maxWillDelay            time.Duration
 	retainedExpiry          time.Duration
 	retainedCleanupInterval time.Duration
@@ -71,6 +72,7 @@ func defaultBrokerOptions() brokerOptions {
 		maxRetainedTopics:       10000,
 		maxOfflineQueue:         1000,
 		writeQueueSize:          256,
+		writeTimeout:            30 * time.Second,
 		maxWillDelay:            24 * time.Hour,
 		retainedExpiry:          0,
 		retainedCleanupInterval: 10 * time.Minute,
@@ -279,6 +281,17 @@ func WithRetainedCleanupInterval(d time.Duration) Option {
 func WithWriteQueueSize(n int) Option {
 	return func(o *brokerOptions) {
 		o.writeQueueSize = n
+	}
+}
+
+// WithWriteTimeout sets how long a single socket write to a client may take
+// before the connection is considered dead and closed (audit: writes had no
+// deadline, so a peer that stopped reading could wedge the writer goroutine
+// forever and, with a full queue, stall every publisher delivering QoS 1/2
+// messages to it). Default is 30s; 0 disables the deadline.
+func WithWriteTimeout(d time.Duration) Option {
+	return func(o *brokerOptions) {
+		o.writeTimeout = d
 	}
 }
 
