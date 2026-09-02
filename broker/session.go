@@ -26,8 +26,8 @@ type Session struct {
 	Inflight      map[uint16]*InflightMsg
 	// inboundQoS2 tracks QoS 2 publishes accepted from this client that are
 	// still awaiting PUBREL (see InboundQoS2).
-	inboundQoS2 map[uint16]*InboundQoS2
-	packetIDSeq uint16
+	inboundQoS2   map[uint16]*InboundQoS2
+	packetIDSeq   uint16
 	ReceiveMax    uint16
 	TopicAliasMax uint16
 	mu            sync.RWMutex
