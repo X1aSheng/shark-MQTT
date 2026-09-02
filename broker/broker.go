@@ -195,8 +195,13 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 		RemoteAddr: conn.RemoteAddr().String(),
 	})
 
-	// Set read deadline for CONNECT
-	if err := conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+	// Set read deadline for CONNECT (audit: the deadline used to be a
+	// hard-coded 10s; WithConnectTimeout/config now control it).
+	timeout := b.opts.connectTimeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
 		b.metrics.IncErrors("deadline")
 		return fmt.Errorf("broker: set CONNECT deadline failed: %w", err)
 	}
@@ -583,7 +588,11 @@ func (b *Broker) enhancedAuthHandshake(conn net.Conn, codec *protocol.Codec, con
 	}
 
 	// Bound the exchange so a stalled client cannot hold the connection open.
-	if err := conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+	authTimeout := b.opts.connectTimeout
+	if authTimeout <= 0 {
+		authTimeout = 10 * time.Second
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(authTimeout)); err != nil {
 		b.logger.Debug("failed to set enhanced-auth read deadline", "error", err)
 	}
 	defer conn.SetReadDeadline(time.Time{})

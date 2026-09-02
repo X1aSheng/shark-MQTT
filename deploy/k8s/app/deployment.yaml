@@ -38,6 +38,11 @@ spec:
           image: x1asheng/shark-mqtt:latest
           imagePullPolicy: IfNotPresent
           args:
+            - "-config=/etc/shark-mqtt/config.yaml"
+            # NOTE: -allow-all disables authentication entirely. The sample
+            # config file has no user store; for production replace this flag
+            # with "-auth-file=/etc/shark-mqtt/users.yaml" (mounted Secret)
+            # and remove -allow-all (audit).
             - "-addr=:18983"
             - "-allow-all"
           ports:
@@ -52,6 +57,12 @@ spec:
               value: "info"
             - name: MQTT_LOG_FORMAT
               value: "json"
+            - name: MQTT_METRICS_ENABLED
+              value: "true"
+          volumeMounts:
+            - name: shark-mqtt-config
+              mountPath: /etc/shark-mqtt
+              readOnly: true
           resources:
             requests:
               cpu: 100m
@@ -97,3 +108,7 @@ spec:
                       values:
                         - shark-mqtt
                 topologyKey: kubernetes.io/hostname
+      volumes:
+        - name: shark-mqtt-config
+          configMap:
+            name: shark-mqtt-config

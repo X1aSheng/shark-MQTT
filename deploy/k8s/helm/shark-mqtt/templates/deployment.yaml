@@ -48,6 +48,8 @@ spec:
               value: {{ .Values.config.logLevel | quote }}
             - name: MQTT_LOG_FORMAT
               value: {{ .Values.config.logFormat | quote }}
+            - name: MQTT_METRICS_ENABLED
+              value: {{ .Values.config.metricsEnabled | default true | quote }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           securityContext:

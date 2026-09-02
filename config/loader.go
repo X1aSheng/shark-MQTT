@@ -42,6 +42,15 @@ func (l *Loader) Load() (*Config, error) {
 	return cfg, nil
 }
 
+// ApplyEnv overlays the MQTT_* environment variables onto cfg. The CLI calls
+// this even when no config file is given (audit: the shipped deployments set
+// MQTT_LOG_LEVEL / MQTT_METRICS_ENABLED etc. via env vars that were never
+// read unless a config file was passed). Explicit CLI flags and config-file
+// values take precedence over env in the CLI's load order.
+func ApplyEnv(cfg *Config) error {
+	return (&Loader{}).loadEnv(cfg)
+}
+
 // loadFile loads configuration from a YAML file.
 func (l *Loader) loadFile(cfg *Config) error {
 	data, err := os.ReadFile(l.filePath)

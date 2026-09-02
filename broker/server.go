@@ -251,13 +251,8 @@ func (s *MQTTServer) acceptLoop(ln net.Listener) {
 		s.mu.Unlock()
 
 		// Configure OS-level TCP keep-alive so a dead peer is detected even
-		// for clients that disable the MQTT keep-alive (KeepAlive=0). The
-		// probe interval is configurable; a zero period leaves the Go runtime
-		// default in place.
-		if tc, ok := conn.(*net.TCPConn); ok && s.cfg.TCPKeepAlivePeriod > 0 {
-			_ = tc.SetKeepAlive(true)
-			_ = tc.SetKeepAlivePeriod(s.cfg.TCPKeepAlivePeriod)
-		}
+		// for clients that disable the MQTT keep-alive (KeepAlive=0).
+		configureTCPKeepAlive(conn, s.cfg.TCPKeepAlivePeriod)
 
 		s.wg.Add(1)
 		go func(c net.Conn) {
@@ -298,6 +293,31 @@ func isEarlyClose(err error) bool {
 		return true
 	}
 	return false
+}
+
+// configureTCPKeepAlive enables OS-level TCP keep-alive on an accepted
+// connection. Plain TCP is configured directly; TLS connections are unwrapped
+// through tls.Conn.NetConn() — previously the *tls.Conn returned by the
+// tls-wrapped listener failed the plain *net.TCPConn type assertion, so
+// tcp_keepalive_period silently did nothing for TLS/WSS endpoints (audit).
+func configureTCPKeepAlive(conn net.Conn, period time.Duration) {
+	if period <= 0 {
+		return
+	}
+	var tc *net.TCPConn
+	switch c := conn.(type) {
+	case *net.TCPConn:
+		tc = c
+	case *tls.Conn:
+		if nc, ok := c.NetConn().(*net.TCPConn); ok {
+			tc = nc
+		}
+	}
+	if tc == nil {
+		return
+	}
+	_ = tc.SetKeepAlive(true)
+	_ = tc.SetKeepAlivePeriod(period)
 }
 
 // wsUpgrader negotiates MQTT-over-WebSocket connections (R5). The "mqtt"
@@ -356,6 +376,9 @@ func (s *MQTTServer) wsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	conn := newWSConn(ws)
+	// WebSocket connections bypass the accept-loop path above, so apply the
+	// OS TCP keep-alive configuration to the upgraded socket here (audit).
+	configureTCPKeepAlive(ws.UnderlyingConn(), s.cfg.TCPKeepAlivePeriod)
 	s.connCount.Add(1)
 	s.mu.Lock()
 	s.conns[conn] = struct{}{}

@@ -88,3 +88,42 @@ func TestBrokerMetricsEndpointByDefault(t *testing.T) {
 		t.Errorf("expected 200 for default Prometheus metrics, got %d", resp.StatusCode)
 	}
 }
+
+// TestBrokerMetricsDisabledByConfig verifies metrics_enabled actually gates
+// the /metrics endpoint (audit: the switch was a no-op and /metrics was
+// always exposed), while /healthz and /readyz stay available for probes.
+func TestBrokerMetricsDisabledByConfig(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.ListenAddr = ":0"
+	cfg.MetricsAddr = ":0"
+	cfg.MetricsEnabled = false
+
+	b := NewBroker(
+		WithConfig(cfg),
+		WithAuth(broker.AllowAllAuth{}),
+	)
+	if err := b.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer b.Stop()
+
+	time.Sleep(50 * time.Millisecond)
+
+	resp, err := http.Get("http://" + b.MetricsAddr() + "/healthz")
+	if err != nil {
+		t.Fatalf("healthz request failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("healthz: expected 200, got %d", resp.StatusCode)
+	}
+
+	resp2, err := http.Get("http://" + b.MetricsAddr() + "/metrics")
+	if err != nil {
+		t.Fatalf("metrics request failed: %v", err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusNotFound {
+		t.Errorf("metrics with MetricsEnabled=false: expected 404, got %d", resp2.StatusCode)
+	}
+}

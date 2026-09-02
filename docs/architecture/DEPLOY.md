@@ -358,7 +358,7 @@ Recommended metrics to monitor:
 | `MQTT_BADGER_PATH` | BadgerDB data directory | `badger-data` |
 | `MQTT_LOG_LEVEL` | Log level (debug/info/warn/error) | `info` |
 | `MQTT_LOG_FORMAT` | Log format (text/json) | `text` |
-| `MQTT_METRICS_ENABLED` | Enable Prometheus metrics | `false` |
+| `MQTT_METRICS_ENABLED` | Serve the Prometheus /metrics endpoint (healthz/readyz always served) | `true` |
 | `MQTT_METRICS_ADDR` | Metrics server address | `:18999` |
 
 ---
@@ -369,6 +369,7 @@ Recommended metrics to monitor:
 - [API Reference](../guides/API.md)
 - [Examples](../../examples/)
 - [Latest Review](../reports/PROJECT-REVIEW-260806-143527.md)
+
 
 
 

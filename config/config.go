@@ -66,7 +66,18 @@ type Config struct {
 	LogLevel  string `yaml:"log_level" toml:"log_level" env:"MQTT_LOG_LEVEL"`
 	LogFormat string `yaml:"log_format" toml:"log_format" env:"MQTT_LOG_FORMAT"`
 
+	// AuthFile points to a YAML/JSON user credential file (see
+	// broker.NewFileAuth). When set, the CLI authenticates clients against
+	// it instead of denying everything (the CLI's default). An explicit
+	// --allow-all flag overrides this.
+	AuthFile string `yaml:"auth_file" toml:"auth_file" env:"MQTT_AUTH_FILE"`
+
 	// Metrics
+	// MetricsEnabled controls whether the /metrics endpoint is served on the
+	// metrics listener. /healthz and /readyz are always served so probes and
+	// deployments relying on them keep working. Default true to match the
+	// documented out-of-the-box Prometheus behavior; set false to reduce the
+	// network exposure.
 	MetricsEnabled bool   `yaml:"metrics_enabled" toml:"metrics_enabled" env:"MQTT_METRICS_ENABLED"`
 	MetricsAddr    string `yaml:"metrics_addr" toml:"metrics_addr" env:"MQTT_METRICS_ADDR"`
 }
@@ -90,7 +101,7 @@ func DefaultConfig() *Config {
 		StorageBackend:        "memory",
 		LogLevel:              "info",
 		LogFormat:             "text",
-		MetricsEnabled:        false,
+		MetricsEnabled:        true,
 		MetricsAddr:           DefaultMetricsAddr,
 	}
 }

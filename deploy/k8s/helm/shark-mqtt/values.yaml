@@ -83,3 +83,4 @@ affinity:
                 values:
                   - shark-mqtt
           topologyKey: kubernetes.io/hostname
+

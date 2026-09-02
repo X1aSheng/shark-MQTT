@@ -33,6 +33,7 @@ type brokerOptions struct {
 	sessionExpiry          time.Duration
 	sessionCleanupInterval time.Duration
 	keepAlive              uint16
+	connectTimeout         time.Duration // read deadline for the CONNECT handshake
 
 	// Resource limits
 	maxClientIDLength       int           // max bytes for MQTT client ID (0 = unlimited)
@@ -73,6 +74,7 @@ func defaultBrokerOptions() brokerOptions {
 		maxOfflineQueue:         1000,
 		writeQueueSize:          256,
 		writeTimeout:            30 * time.Second,
+		connectTimeout:          10 * time.Second,
 		maxWillDelay:            24 * time.Hour,
 		retainedExpiry:          0,
 		retainedCleanupInterval: 10 * time.Minute,
@@ -191,6 +193,16 @@ func WithSessionCleanupInterval(d time.Duration) Option {
 func WithBrokerKeepAlive(seconds uint16) Option {
 	return func(o *brokerOptions) {
 		o.keepAlive = seconds
+	}
+}
+
+// WithBrokerConnectTimeout sets how long a connection may wait for its
+// CONNECT handshake before being closed (audit: the deadline was hard-coded
+// at 10s and the config value was never consumed). Default is 10s; 0
+// disables the handshake deadline.
+func WithBrokerConnectTimeout(d time.Duration) Option {
+	return func(o *brokerOptions) {
+		o.connectTimeout = d
 	}
 }
 

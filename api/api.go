@@ -186,6 +186,15 @@ func NewBroker(opts ...Option) *Broker {
 	if o.cfg.SessionExpiryInterval > 0 {
 		bopts = append(bopts, broker.WithSessionExpiry(o.cfg.SessionExpiryInterval))
 	}
+	// Wire the config values that used to be dead: server-enforced keep-alive
+	// (config.keep_alive) and the CONNECT handshake timeout
+	// (config.connect_timeout) (audit).
+	if o.cfg.KeepAlive > 0 {
+		bopts = append(bopts, broker.WithBrokerKeepAlive(o.cfg.KeepAlive))
+	}
+	if o.cfg.ConnectTimeout > 0 {
+		bopts = append(bopts, broker.WithBrokerConnectTimeout(o.cfg.ConnectTimeout))
+	}
 	if o.cfg.QoSMaxInflight > 0 || o.cfg.QoSRetryInterval > 0 || o.cfg.QoSMaxRetries > 0 {
 		var qosOpts []broker.QoSOption
 		if o.cfg.QoSMaxInflight > 0 {
@@ -371,9 +380,14 @@ func (b *Broker) startHealthServer() {
 		}
 	})
 
-	// Register /metrics if the metrics implementation provides a handler
-	if m, ok := interface{}(b.broker.Metrics()).(interface{ Handler() http.Handler }); ok {
-		mux.Handle("/metrics", m.Handler())
+	// Register /metrics only when metrics are enabled (audit:
+	// metrics_enabled used to be a dead switch and /metrics was always
+	// exposed on the metrics listener). /healthz and /readyz stay available
+	// for probes regardless.
+	if b.cfg.MetricsEnabled {
+		if m, ok := interface{}(b.broker.Metrics()).(interface{ Handler() http.Handler }); ok {
+			mux.Handle("/metrics", m.Handler())
+		}
 	}
 
 	ln, err := net.Listen("tcp", b.cfg.MetricsAddr)

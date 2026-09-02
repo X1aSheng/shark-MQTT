@@ -146,7 +146,7 @@ log_format: json
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `metrics_enabled` | bool | `false` | Enable Prometheus metrics |
+| `metrics_enabled` | bool | `true` | Serve the Prometheus /metrics endpoint (healthz/readyz always served) |
 | `metrics_addr` | string | `:18999` | Metrics server address |
 
 **Examples:**
@@ -418,6 +418,7 @@ Shark-MQTT validates configuration on startup:
 - [Testing Guide](TESTING.md)
 - [API Reference](API.md)
 - [SECURITY.md](../architecture/SECURITY.md)
+
 
 
 

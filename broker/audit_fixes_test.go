@@ -928,3 +928,36 @@ func TestBroker_WriteLoopReapsStalledPeer(t *testing.T) {
 		t.Fatal("expected the stalled peer's connection to be closed")
 	}
 }
+
+// TestBroker_ConnectTimeout verifies the CONNECT handshake deadline is
+// honored (audit: it used to be a hard-coded 10s that ignored the
+// configuration).
+func TestBroker_ConnectTimeout(t *testing.T) {
+	b := New(
+		WithAuth(AllowAllAuth{}),
+		WithBrokerConnectTimeout(150*time.Millisecond),
+	)
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+	defer clientConn.Close()
+
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		done <- b.HandleConnection(context.Background(), serverConn, protocol.NewCodec(0))
+	}()
+
+	// The peer never sends CONNECT; HandleConnection must give up after the
+	// configured timeout instead of blocking for the default 10s.
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected an error for a stalled CONNECT handshake")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("HandleConnection did not honor the connect timeout")
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("handshake timeout took %v", elapsed)
+	}
+}

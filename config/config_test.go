@@ -152,6 +152,41 @@ func TestInvalidDuration(t *testing.T) {
 	}
 }
 
+// TestApplyEnv verifies the standalone env overlay used by the CLI when no
+// config file is given (audit: MQTT_* variables used to be dead unless
+// -config was passed).
+func TestApplyEnv(t *testing.T) {
+	_ = os.Setenv("MQTT_LISTEN_ADDR", ":19999")
+	_ = os.Setenv("MQTT_LOG_LEVEL", "debug")
+	_ = os.Setenv("MQTT_LOG_FORMAT", "json")
+	_ = os.Setenv("MQTT_METRICS_ENABLED", "false")
+	_ = os.Setenv("MQTT_AUTH_FILE", "users.yaml")
+	defer func() {
+		os.Unsetenv("MQTT_LISTEN_ADDR")
+		os.Unsetenv("MQTT_LOG_LEVEL")
+		os.Unsetenv("MQTT_LOG_FORMAT")
+		os.Unsetenv("MQTT_METRICS_ENABLED")
+		os.Unsetenv("MQTT_AUTH_FILE")
+	}()
+
+	cfg := DefaultConfig()
+	if err := ApplyEnv(cfg); err != nil {
+		t.Fatalf("ApplyEnv: %v", err)
+	}
+	if cfg.ListenAddr != ":19999" {
+		t.Errorf("ListenAddr = %q, want :19999", cfg.ListenAddr)
+	}
+	if cfg.LogLevel != "debug" || cfg.LogFormat != "json" {
+		t.Errorf("log config = %q/%q, want debug/json", cfg.LogLevel, cfg.LogFormat)
+	}
+	if cfg.MetricsEnabled {
+		t.Error("MetricsEnabled should be false from env")
+	}
+	if cfg.AuthFile != "users.yaml" {
+		t.Errorf("AuthFile = %q, want users.yaml", cfg.AuthFile)
+	}
+}
+
 func TestValidate_Valid(t *testing.T) {
 	cfg := DefaultConfig()
 	if err := cfg.Validate(); err != nil {
