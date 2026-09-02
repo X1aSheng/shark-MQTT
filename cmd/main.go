@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 
 	"github.com/X1aSheng/shark-mqtt/api"
@@ -63,9 +64,13 @@ func main() {
 		case "addr":
 			cfg.ListenAddr = f.Value.String()
 		case "max-conn":
-			fmt.Sscan(f.Value.String(), &cfg.MaxConnections)
+			if n, err := strconv.Atoi(f.Value.String()); err == nil {
+				cfg.MaxConnections = n
+			}
 		case "tls":
-			fmt.Sscan(f.Value.String(), &cfg.TLSEnabled)
+			if b, err := strconv.ParseBool(f.Value.String()); err == nil {
+				cfg.TLSEnabled = b
+			}
 		case "tls-cert":
 			cfg.TLSCertFile = f.Value.String()
 		case "tls-key":

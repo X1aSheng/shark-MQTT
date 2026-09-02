@@ -12,8 +12,8 @@ type blockingPlugin struct {
 	name string
 }
 
-func (p blockingPlugin) Name() string      { return p.name }
-func (p blockingPlugin) Hooks() []Hook     { return []Hook{OnMessage} }
+func (p blockingPlugin) Name() string  { return p.name }
+func (p blockingPlugin) Hooks() []Hook { return []Hook{OnMessage} }
 func (p blockingPlugin) Execute(ctx context.Context, hook Hook, data *Context) error {
 	<-ctx.Done()
 	return nil

@@ -484,7 +484,9 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 	old, hadOld := b.connections[clientID]
 	b.mu.RUnlock()
 	if hadOld && old != nil {
-		b.will.TriggerWill(clientID, old.conn)
+		if err := b.will.TriggerWill(clientID, old.conn); err != nil {
+			b.logger.Debug("failed to trigger takeover will", "clientID", clientID, "error", err)
+		}
 	}
 
 	b.mu.Lock()
@@ -596,7 +598,7 @@ func (b *Broker) enhancedAuthHandshake(conn net.Conn, codec *protocol.Codec, con
 	if err := conn.SetReadDeadline(time.Now().Add(authTimeout)); err != nil {
 		b.logger.Debug("failed to set enhanced-auth read deadline", "error", err)
 	}
-	defer conn.SetReadDeadline(time.Time{})
+	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
 
 	continued := false
 	for reason == protocol.AuthContinueAuth {
@@ -1791,7 +1793,6 @@ func (b *Broker) adjustOfflineCount(clientID string, delta int) {
 	b.offlineMu.Lock()
 	n := b.offlineCount[clientID] + delta
 	if n <= 0 {
-		n = 0
 		delete(b.offlineCount, clientID)
 	} else {
 		b.offlineCount[clientID] = n
