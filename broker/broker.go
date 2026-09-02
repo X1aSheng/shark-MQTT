@@ -477,13 +477,14 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 	//
 	// Takeover: the previous connection ends abnormally, so its will must be
 	// triggered before the new connection registers its own will under the
-	// same clientID (P2-10). TriggerWill is idempotent per client, so the old
-	// readLoop firing later is a no-op.
+	// same clientID (P2-10). The trigger is scoped to the old connection so a
+	// late abnormal-disconnect from the old readLoop cannot fire the NEW
+	// connection's will (audit).
 	b.mu.RLock()
-	_, hadOld := b.connections[clientID]
+	old, hadOld := b.connections[clientID]
 	b.mu.RUnlock()
-	if hadOld {
-		b.will.TriggerWill(clientID)
+	if hadOld && old != nil {
+		b.will.TriggerWill(clientID, old.conn)
 	}
 
 	b.mu.Lock()
@@ -530,7 +531,7 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 				"requested", willDelay, "max", b.opts.maxWillDelay)
 			willDelay = b.opts.maxWillDelay
 		}
-		if err := b.will.RegisterWill(clientID, connectPkt.Username, connectPkt.WillTopic, connectPkt.WillMessage, connectPkt.Flags.WillQoS, connectPkt.Flags.WillRetain, willDelay); err != nil {
+		if err := b.will.RegisterWill(clientID, connectPkt.Username, connectPkt.WillTopic, connectPkt.WillMessage, connectPkt.Flags.WillQoS, connectPkt.Flags.WillRetain, willDelay, conn); err != nil {
 			b.metrics.IncErrors("will")
 			return fmt.Errorf("broker: register will failed: %w", err)
 		}
@@ -650,6 +651,14 @@ func (b *Broker) sendAuthPacket(conn net.Conn, codec *protocol.Codec, reason byt
 	}
 	if err := codec.Encode(conn, pkt); err != nil {
 		return fmt.Errorf("broker: send AUTH: %w", err)
+	}
+	// WebSocket transports buffer writes until FlushPacket; this handshake
+	// path runs before the per-connection writer exists, so flush explicitly
+	// or the enhanced-auth exchange deadlocks on WS (audit).
+	if f, ok := conn.(packetFlusher); ok {
+		if err := f.FlushPacket(); err != nil {
+			return fmt.Errorf("broker: flush AUTH: %w", err)
+		}
 	}
 	return nil
 }
@@ -2265,6 +2274,15 @@ func (b *Broker) sendConnAckRaw(conn net.Conn, codec *protocol.Codec, reasonCode
 	pkt := buildConnAck(reasonCode, sessionPresent)
 	if err := codec.Encode(conn, pkt); err != nil {
 		b.logger.Debug("failed to send CONNACK", "error", err)
+		return
+	}
+	// WebSocket transports buffer writes until FlushPacket (called by the
+	// per-connection writer); this pre-registration path must flush itself or
+	// the rejection CONNACK never reaches the client (audit).
+	if f, ok := conn.(packetFlusher); ok {
+		if err := f.FlushPacket(); err != nil {
+			b.logger.Debug("failed to flush CONNACK", "error", err)
+		}
 	}
 }
 
@@ -2439,7 +2457,10 @@ func (b *Broker) publishWill(username string, topic string, payload []byte, qos 
 }
 
 func (b *Broker) abnormalDisconnect(clientID string, conn net.Conn) {
-	if err := b.will.TriggerWill(clientID); err != nil {
+	// The will is only fired when it belongs to THIS connection: after a
+	// takeover the old readLoop's late error must not trigger the new
+	// connection's will (audit).
+	if err := b.will.TriggerWill(clientID, conn); err != nil {
 		b.logger.Debug("failed to trigger will", "clientID", clientID, "error", err)
 	}
 	b.disconnect(clientID, conn)

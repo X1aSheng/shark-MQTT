@@ -208,8 +208,10 @@ func NewBroker(opts ...Option) *Broker {
 		}
 		bopts = append(bopts, broker.WithQoSOptions(qosOpts...))
 	}
-	// Propagate max connections from config when not explicitly set
-	if o.maxConnections < 0 && o.cfg.MaxConnections > 0 {
+	// Propagate max connections from config when not explicitly set. A
+	// configured 0 means "unlimited" and must reach the broker instead of
+	// silently falling back to its 10000 default (audit).
+	if o.maxConnections < 0 {
 		bopts = append(bopts, broker.WithMaxConnections(o.cfg.MaxConnections))
 	}
 
