@@ -606,3 +606,122 @@ func TestBroker_SharedSubscriptionAuthorizedByRealFilter(t *testing.T) {
 		t.Fatalf("wide shared SUBACK = %#v, want failure", pkt)
 	}
 }
+
+// ---------- C5: offline queue bounds & cleanup cascades ----------
+
+func TestBroker_OfflineQueueBounded(t *testing.T) {
+	sessStore := memory.NewSessionStore()
+	msgStore := memory.NewMessageStore()
+	b := New(
+		WithAuth(AllowAllAuth{}),
+		WithSessionStore(sessStore),
+		WithMessageStore(msgStore),
+		WithMaxOfflineQueue(10),
+	)
+	ctx := context.Background()
+	data := &store.SessionData{
+		ClientID:       "cid",
+		ExpiryInterval: 3600,
+		ExpiryTime:     time.Now().Add(time.Hour),
+		Subscriptions:  []store.Subscription{{Topic: "q/t", QoS: 1}},
+	}
+	if err := sessStore.SaveSession(ctx, "cid", data); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+	for i := 0; i < 25; i++ {
+		b.queueOfflineMessage("cid", &protocol.PublishPacket{
+			FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 1},
+			Topic:       "q/t",
+			Payload:     []byte("m"),
+		}, time.Time{})
+	}
+	msgs, err := msgStore.ListMessages(ctx, "cid")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(msgs) != 10 {
+		t.Fatalf("queued %d messages, want cap of 10", len(msgs))
+	}
+}
+
+func TestBroker_StaleQueuedMessageDeletedOnReconnect(t *testing.T) {
+	sessStore := memory.NewSessionStore()
+	msgStore := memory.NewMessageStore()
+	b := New(
+		WithAuth(AllowAllAuth{}),
+		WithSessionStore(sessStore),
+		WithMessageStore(msgStore),
+	)
+	ctx := context.Background()
+	data := &store.SessionData{
+		ClientID:       "cid",
+		ExpiryInterval: 3600,
+		ExpiryTime:     time.Now().Add(time.Hour),
+		Subscriptions:  []store.Subscription{{Topic: "x/t", QoS: 1}},
+	}
+	if err := sessStore.SaveSession(ctx, "cid", data); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+	// A queued message whose topic no longer matches any stored subscription
+	// (e.g. left over from an older subscription set) must be removed when
+	// the session reconnects, not skipped forever (audit H2).
+	if err := msgStore.SaveMessage(ctx, "cid", &store.StoredMessage{
+		ID: "stale-1", Topic: "y/t", QoS: 1, Payload: []byte("p"), Timestamp: time.Now(),
+	}); err != nil {
+		t.Fatalf("save message: %v", err)
+	}
+
+	sess, err := b.sessions.Restore(ctx, "cid")
+	if err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	b.deliverQueuedMessages("cid", sess)
+
+	left, err := msgStore.ListMessages(ctx, "cid")
+	if err != nil {
+		t.Fatalf("list after drain: %v", err)
+	}
+	if len(left) != 0 {
+		t.Fatalf("%d stale messages remained in the queue", len(left))
+	}
+}
+
+func TestBroker_ExpiredSessionCleanupCascadesToQueue(t *testing.T) {
+	sessStore := memory.NewSessionStore()
+	msgStore := memory.NewMessageStore()
+	b := New(
+		WithAuth(AllowAllAuth{}),
+		WithSessionStore(sessStore),
+		WithMessageStore(msgStore),
+	)
+	ctx := context.Background()
+	exp := time.Now().Add(800 * time.Millisecond)
+	data := &store.SessionData{
+		ClientID:       "cid",
+		ExpiryInterval: 1,
+		ExpiryTime:     exp,
+		Subscriptions:  []store.Subscription{{Topic: "q/t", QoS: 1}},
+	}
+	if err := sessStore.SaveSession(ctx, "cid", data); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+	b.queueOfflineMessage("cid", &protocol.PublishPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 1},
+		Topic:       "q/t",
+		Payload:     []byte("m"),
+	}, time.Time{})
+
+	time.Sleep(1100 * time.Millisecond)
+	b.cleanupExpiredSessions()
+
+	if _, err := sessStore.GetSession(ctx, "cid"); !errors.Is(err, store.ErrSessionNotFound) {
+		t.Fatalf("expired session still present: %v", err)
+	}
+	left, err := msgStore.ListMessages(ctx, "cid")
+	if err != nil {
+		t.Fatalf("list after cleanup: %v", err)
+	}
+	if len(left) != 0 {
+		t.Fatalf("%d messages outlived their expired session", len(left))
+	}
+}

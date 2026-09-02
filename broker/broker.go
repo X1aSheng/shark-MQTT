@@ -68,6 +68,17 @@ type Broker struct {
 	receivedQoS2   map[string]map[uint16]struct{}
 	receivedQoS2Mu sync.Mutex
 
+	// offlineQueue tracks the number of queued offline messages per client so
+	// queueOfflineMessage can enforce a per-client cap (audit H2). The count
+	// is adjusted on every queue/delete/clear path below.
+	offlineMu    sync.Mutex
+	offlineCount map[string]int
+
+	// msgSeq is a process-wide sequence for stored message IDs so queued
+	// message IDs no longer embed the clientID (audit: ID composition plus
+	// the store's ':' delimiters allowed cross-client prefix collisions).
+	msgSeq atomic.Uint64
+
 	retainedMu    sync.Mutex
 	retainedCount atomic.Int64 // count of retained messages maintained with retainedMu
 	// retainedExpirations tracks expiry times for retained messages when
@@ -112,6 +123,7 @@ func New(opts ...Option) *Broker {
 		pluginMgr:           o.pluginManager,
 		connections:         make(map[string]*clientState),
 		receivedQoS2:        make(map[string]map[uint16]struct{}),
+		offlineCount:        make(map[string]int),
 		connRate:            newConnRateLimiter(o.connectionRateWindow),
 		retainedExpirations: retainedExpirations,
 		ctx:                 ctx,
@@ -360,14 +372,25 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 	}
 
 	// A clean-session connect discards any previously stored session and its
-	// queued offline messages (MQTT session state is not carried over).
+	// queued offline messages (MQTT session state is not carried over). Store
+	// failures here must not go unnoticed: a silently surviving old session
+	// could resurface on a later non-clean reconnect (audit).
 	if connectPkt.Flags.CleanSession {
 		if b.sessionStore != nil {
-			_ = b.sessionStore.DeleteSession(b.ctx, clientID)
+			if err := b.sessionStore.DeleteSession(b.ctx, clientID); err != nil {
+				b.metrics.IncErrors("session_save")
+				b.logger.Warn("failed to delete old session on clean connect", "clientID", clientID, "error", err)
+			}
 		}
 		if b.messageStore != nil {
-			_ = b.messageStore.ClearMessages(b.ctx, clientID)
+			if err := b.messageStore.ClearMessages(b.ctx, clientID); err != nil {
+				b.metrics.IncErrors("message_store")
+				b.logger.Warn("failed to clear offline messages on clean connect", "clientID", clientID, "error", err)
+			}
 		}
+		b.offlineMu.Lock()
+		delete(b.offlineCount, clientID)
+		b.offlineMu.Unlock()
 	}
 
 	if assignedClientID != "" {
@@ -739,6 +762,20 @@ func (b *Broker) cleanupExpiredSessions() {
 			if err := b.sessionStore.DeleteSession(b.ctx, clientID); err != nil {
 				b.logger.Warn("failed to delete expired session", "clientID", clientID, "error", err)
 			} else {
+				// Cascade: release the expired session's offline message queue
+				// as well, otherwise messages outlive their session (memory
+				// leak / stale replay into a same-named future session) —
+				// audit H2/H3.
+				if b.messageStore != nil {
+					if err := b.messageStore.ClearMessages(b.ctx, clientID); err != nil {
+						b.logger.Warn("failed to clear messages of expired session", "clientID", clientID, "error", err)
+						b.metrics.IncErrors("message_store")
+					} else {
+						b.offlineMu.Lock()
+						delete(b.offlineCount, clientID)
+						b.offlineMu.Unlock()
+					}
+				}
 				// Release the expired session's topic-tree subscriptions so
 				// they do not leak after the session is gone (P2-13).
 				topics := make([]string, 0, len(data.Subscriptions))
@@ -932,8 +969,14 @@ func (b *Broker) disconnect(clientID string, conn net.Conn) {
 				b.metrics.IncErrors("session_save")
 			}
 			if b.messageStore != nil {
-				_ = b.messageStore.ClearMessages(b.ctx, clientID)
+				if err := b.messageStore.ClearMessages(b.ctx, clientID); err != nil {
+					b.metrics.IncErrors("message_store")
+					b.logger.Warn("failed to clear messages of expiring session", "clientID", clientID, "error", err)
+				}
 			}
+			b.offlineMu.Lock()
+			delete(b.offlineCount, clientID)
+			b.offlineMu.Unlock()
 		}
 	}
 
@@ -1644,8 +1687,32 @@ func (b *Broker) queueOfflineMessage(clientID string, pkt *protocol.PublishPacke
 	if data.ExpiryInterval > 0 && !data.ExpiryTime.IsZero() && time.Now().After(data.ExpiryTime) {
 		return // session already expired; nothing to deliver to
 	}
+
+	// Bound the offline queue per client (audit H2): an offline persistent
+	// subscriber must not be able to accumulate an unbounded QoS 1/2 backlog
+	// in memory (default backend) or on disk. Over-limit messages are dropped
+	// and counted.
+	if limit := b.opts.maxOfflineQueue; limit > 0 {
+		b.offlineMu.Lock()
+		n := b.offlineCount[clientID]
+		b.offlineMu.Unlock()
+		if n >= limit {
+			b.metrics.IncMessagesDropped("offline_queue_full")
+			b.logger.Debug("offline queue limit reached, dropping message",
+				"clientID", clientID, "limit", limit)
+			return
+		}
+	}
+
+	// Tie a message without its own expiry to the session lifetime so store
+	// backends with key TTLs (Redis) keep it exactly as long as the session,
+	// and so the queue cannot outlive its owner session (audit).
+	if expiresAt.IsZero() && data.ExpiryInterval > 0 && !data.ExpiryTime.IsZero() {
+		expiresAt = data.ExpiryTime
+	}
+
 	msg := &store.StoredMessage{
-		ID:        fmt.Sprintf("%s-%d", clientID, time.Now().UnixNano()),
+		ID:        b.nextMessageID(),
 		Topic:     pkt.Topic,
 		QoS:       pkt.FixedHeader.QoS,
 		Payload:   pkt.Payload,
@@ -1656,7 +1723,33 @@ func (b *Broker) queueOfflineMessage(clientID string, pkt *protocol.PublishPacke
 	if err := b.messageStore.SaveMessage(b.ctx, clientID, msg); err != nil {
 		b.metrics.IncErrors("message_store")
 		b.logger.Warn("failed to queue offline message", "clientID", clientID, "error", err)
+		return
 	}
+	b.offlineMu.Lock()
+	b.offlineCount[clientID]++
+	b.offlineMu.Unlock()
+}
+
+// nextMessageID returns a process-unique stored message ID. IDs no longer
+// embed the clientID, which combined with the store backends' ':' delimiters
+// allowed a clientID containing ':' to collide with another client's queue
+// keys during prefix scans (audit H3).
+func (b *Broker) nextMessageID() string {
+	return fmt.Sprintf("%d-%d", time.Now().UnixNano(), b.msgSeq.Add(1))
+}
+
+// adjustOfflineCount adjusts the per-client offline queue counter after a
+// successful store mutation.
+func (b *Broker) adjustOfflineCount(clientID string, delta int) {
+	b.offlineMu.Lock()
+	n := b.offlineCount[clientID] + delta
+	if n <= 0 {
+		n = 0
+		delete(b.offlineCount, clientID)
+	} else {
+		b.offlineCount[clientID] = n
+	}
+	b.offlineMu.Unlock()
 }
 
 // deliverQueuedMessages delivers messages queued while a persistent session
@@ -1679,11 +1772,22 @@ func (b *Broker) deliverQueuedMessages(clientID string, sess *Session) {
 			b.metrics.IncMessagesDropped("message_expired")
 			if err := b.messageStore.DeleteMessage(b.ctx, clientID, msg.ID); err != nil {
 				b.logger.Warn("failed to delete expired queued message", "clientID", clientID, "error", err)
+			} else {
+				b.adjustOfflineCount(clientID, -1)
 			}
 			continue
 		}
 		matches, subQoS, subOpts := sess.MatchesSubscription(msg.Topic)
 		if !matches {
+			// The subscription that caused this message to be queued no longer
+			// exists; previously the message was skipped forever and leaked
+			// (audit H2). Remove it so the queue cannot grow without bound.
+			b.metrics.IncMessagesDropped("offline_stale")
+			if err := b.messageStore.DeleteMessage(b.ctx, clientID, msg.ID); err != nil {
+				b.logger.Warn("failed to delete stale queued message", "clientID", clientID, "error", err)
+			} else {
+				b.adjustOfflineCount(clientID, -1)
+			}
 			continue
 		}
 		deliverQoS := msg.QoS
@@ -1702,7 +1806,10 @@ func (b *Broker) deliverQueuedMessages(clientID string, sess *Session) {
 			Topic:   msg.Topic,
 			Payload: msg.Payload,
 		}
-		if !msg.ExpiresAt.IsZero() {
+		// The Message Expiry property is MQTT 5.0 wire syntax only; an MQTT
+		// 3.1.1 subscriber must not receive the property bytes (audit), even
+		// though the deadline itself is still enforced by doDeliver.
+		if sess.ProtocolVer == protocol.Version50 && !msg.ExpiresAt.IsZero() {
 			remaining := uint32(time.Until(msg.ExpiresAt).Seconds())
 			if remaining < 1 {
 				remaining = 1 // never advertise 0 (0 means "already expired")
@@ -1712,6 +1819,8 @@ func (b *Broker) deliverQueuedMessages(clientID string, sess *Session) {
 		b.doDeliver(clientID, pubPkt, deliverQoS, msg.ExpiresAt, subOpts)
 		if err := b.messageStore.DeleteMessage(b.ctx, clientID, msg.ID); err != nil {
 			b.logger.Warn("failed to delete queued message", "clientID", clientID, "error", err)
+		} else {
+			b.adjustOfflineCount(clientID, -1)
 		}
 	}
 }
@@ -1762,8 +1871,13 @@ func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliver
 	}
 
 	// Include SubscriptionIdentifier from the matching subscription (MQTT 5.0),
-	// and the remaining Message Expiry Interval (§3.3.2.3.2).
-	if len(subOpts) > 0 && subOpts[0].SubscriptionIdentifier != nil || !expiresAt.IsZero() {
+	// and the remaining Message Expiry Interval (§3.3.2.3.2). These properties
+	// only exist in the MQTT 5 wire format: forwarding them to an MQTT 3.1.1
+	// subscriber used to embed v5 property bytes into a v3.1.1 PUBLISH and
+	// corrupt the stream (audit). The expiry deadline is still enforced for
+	// bookkeeping; only its advertisement is version-gated.
+	if sess.ProtocolVer == protocol.Version50 &&
+		(len(subOpts) > 0 && subOpts[0].SubscriptionIdentifier != nil || !expiresAt.IsZero()) {
 		if pubPkt.Properties == nil {
 			pubPkt.Properties = &protocol.Properties{}
 		}
@@ -1835,7 +1949,7 @@ func (b *Broker) persistBufferedOutbound(clientID string, sess *Session) {
 			return
 		}
 		sm := &store.StoredMessage{
-			ID:        fmt.Sprintf("%s-%d", clientID, time.Now().UnixNano()),
+			ID:        b.nextMessageID(),
 			Topic:     msg.pkt.Topic,
 			QoS:       msg.deliverQoS,
 			Payload:   msg.pkt.Payload,
@@ -1845,7 +1959,11 @@ func (b *Broker) persistBufferedOutbound(clientID string, sess *Session) {
 		}
 		if err := b.messageStore.SaveMessage(b.ctx, clientID, sm); err != nil {
 			b.metrics.IncErrors("message_store")
+			continue
 		}
+		b.offlineMu.Lock()
+		b.offlineCount[clientID]++
+		b.offlineMu.Unlock()
 	}
 }
 

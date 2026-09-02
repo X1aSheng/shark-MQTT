@@ -38,6 +38,7 @@ type brokerOptions struct {
 	maxClientIDLength       int // max bytes for MQTT client ID (0 = unlimited)
 	maxTopicFiltersPerSub   int // max topic filters per SUBSCRIBE packet
 	maxRetainedTopics       int // max retained messages (0 = unlimited)
+	maxOfflineQueue         int // max QoS 1/2 messages queued per offline session (0 = unlimited)
 	writeQueueSize          int // per-connection outbound write queue capacity (R1)
 	maxWillDelay            time.Duration
 	retainedExpiry          time.Duration
@@ -68,6 +69,7 @@ func defaultBrokerOptions() brokerOptions {
 		maxClientIDLength:       128,
 		maxTopicFiltersPerSub:   100,
 		maxRetainedTopics:       10000,
+		maxOfflineQueue:         1000,
 		writeQueueSize:          256,
 		maxWillDelay:            24 * time.Hour,
 		retainedExpiry:          0,
@@ -229,6 +231,16 @@ func WithMaxTopicFiltersPerSubscribe(n int) Option {
 func WithMaxRetainedTopics(n int) Option {
 	return func(o *brokerOptions) {
 		o.maxRetainedTopics = n
+	}
+}
+
+// WithMaxOfflineQueue sets the maximum number of QoS 1/2 messages queued per
+// offline persistent session (audit H2). Default is 1000; 0 means unlimited.
+// When the limit is reached, further messages for that session are dropped
+// and counted as "offline_queue_full".
+func WithMaxOfflineQueue(n int) Option {
+	return func(o *brokerOptions) {
+		o.maxOfflineQueue = n
 	}
 }
 
