@@ -209,6 +209,14 @@ func (AllowAllAuth) Authenticate(ctx context.Context, clientID, username, passwo
 }
 
 func (AllowAllAuth) CanPublish(ctx context.Context, username, topic string) bool {
+	// System topics (anything starting with '$', conventionally $SYS/...) are
+	// broker-owned: the permissive allow-all authorizer must not let clients
+	// forge broker status payloads, including retained ones (audit H5).
+	// Authorizers with explicit ACLs (e.g. StaticAuth granting "$SYS/+")
+	// keep working unchanged.
+	if strings.HasPrefix(topic, "$") {
+		return false
+	}
 	return true
 }
 

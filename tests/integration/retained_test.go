@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	"net"
 	"testing"
 	"time"
@@ -428,13 +429,39 @@ func drainQoS2(t *testing.T, conn net.Conn, codec *protocol.Codec, packetID uint
 	}
 }
 
+// sysRetainAuthorizer is a minimal authorizer used by the $SYS retained
+// test: publishing is allowed only to the exact topic under test, which
+// mirrors an operator explicitly granting a client a $SYS topic (the
+// default allow-all authorizer refuses all $-prefixed publishes — audit).
+type sysRetainAuthorizer struct{}
+
+func (sysRetainAuthorizer) CanPublish(ctx context.Context, username, topic string) bool {
+	return topic == "$SYS/retained"
+}
+
+func (sysRetainAuthorizer) CanSubscribe(ctx context.Context, username, topic string) bool {
+	return true
+}
+
 // TestRetainedSystemTopicNotDeliveredToWildcard verifies a $SYS retained
 // message is not delivered to a bare '#' subscription but is delivered to a
 // '$SYS/#' subscription (P3-4, MQTT 4.7.2).
 func TestRetainedSystemTopicNotDeliveredToWildcard(t *testing.T) {
-	broker := testBrokerWithRetain(t)
+	cfg := config.DefaultConfig()
+	cfg.ListenAddr = ":0"
+	cfg.MetricsAddr = ":0"
+	broker := api.NewBroker(
+		api.WithConfig(cfg),
+		api.WithAuth(broker.AllowAllAuth{}),
+		api.WithAuthorizer(sysRetainAuthorizer{}),
+		api.WithRetainedStore(memory.NewRetainedStore()),
+	)
+	if err := broker.Start(); err != nil {
+		t.Fatalf("start broker: %v", err)
+	}
+	t.Cleanup(func() { broker.Stop() })
 
-	// 1. Publish a retained message to a $SYS topic.
+	// 1. Publish a retained message to a $SYS topic (explicitly granted).
 	pub := dialTestBroker(t, broker)
 	pubCodec := protocol.NewCodec(0)
 	connectTestClient(t, pub, pubCodec, "sys-pub")

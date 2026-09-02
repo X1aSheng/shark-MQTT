@@ -11,11 +11,14 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"net"
 	"testing"
 	"time"
 
 	"github.com/X1aSheng/shark-mqtt/protocol"
+	"github.com/X1aSheng/shark-mqtt/store"
+	"github.com/X1aSheng/shark-mqtt/store/memory"
 )
 
 // denyAuthorizer accepts authentication but denies every publish.
@@ -53,13 +56,13 @@ func TestBroker_V5AuthFailureConnAckReasonCode(t *testing.T) {
 	clientConn, cc := runRawClient(t, b)
 
 	conn := &protocol.ConnectPacket{
-		FixedHeader:    protocol.FixedHeader{PacketType: protocol.PacketTypeConnect},
-		ProtocolName:   protocol.ProtocolNameMQTT,
+		FixedHeader:     protocol.FixedHeader{PacketType: protocol.PacketTypeConnect},
+		ProtocolName:    protocol.ProtocolNameMQTT,
 		ProtocolVersion: protocol.Version50,
-		Flags:          protocol.ConnectFlags{CleanSession: true},
-		KeepAlive:      60,
-		ClientID:       "v5-client",
-		Username:       "u",
+		Flags:           protocol.ConnectFlags{CleanSession: true},
+		KeepAlive:       60,
+		ClientID:        "v5-client",
+		Username:        "u",
 	}
 	if err := cc.Encode(clientConn, conn); err != nil {
 		t.Fatalf("send CONNECT: %v", err)
@@ -225,5 +228,97 @@ func TestBroker_V5DiscardedQoS2PublishReceivesPubRecThenPubComp(t *testing.T) {
 	}
 	if _, ok := pkt.(*protocol.PubCompPacket); !ok {
 		t.Fatalf("expected PUBCOMP after PUBREL, got %T", pkt)
+	}
+}
+
+func TestAllowAllAuthBlocksSysTopicPublish(t *testing.T) {
+	var a AllowAllAuth
+	if a.CanPublish(context.Background(), "u", "$SYS/broker/version") {
+		t.Error("AllowAllAuth must deny publishing to $SYS/broker/version")
+	}
+	if a.CanPublish(context.Background(), "u", "$anything") {
+		t.Error("AllowAllAuth must deny publishing to any $-prefixed topic")
+	}
+	if !a.CanPublish(context.Background(), "u", "data/room1") {
+		t.Error("AllowAllAuth must keep allowing normal topics")
+	}
+	// Reading system topics stays allowed (wildcard subscription protection
+	// still applies at the topic tree level).
+	if !a.CanSubscribe(context.Background(), "u", "$SYS/broker/version") {
+		t.Error("AllowAllAuth must allow subscribing to system topics")
+	}
+}
+
+func TestBroker_ClientCannotForgeSysRetainedMessage(t *testing.T) {
+	retained := memory.NewRetainedStore()
+	b := New(
+		WithAuth(AllowAllAuth{}),
+		WithRetainedStore(retained),
+	)
+	clientConn, cc := runRawClient(t, b)
+
+	conn := &protocol.ConnectPacket{
+		FixedHeader:     protocol.FixedHeader{PacketType: protocol.PacketTypeConnect},
+		ProtocolName:    protocol.ProtocolNameMQTT,
+		ProtocolVersion: protocol.Version50,
+		Flags:           protocol.ConnectFlags{CleanSession: true},
+		KeepAlive:       60,
+		ClientID:        "sys-forger",
+	}
+	if err := cc.Encode(clientConn, conn); err != nil {
+		t.Fatalf("send CONNECT: %v", err)
+	}
+	if _, err := cc.Decode(clientConn); err != nil {
+		t.Fatalf("read CONNACK: %v", err)
+	}
+
+	// A retained QoS 1 publish to a $SYS topic must be acknowledged but must
+	// NOT reach the retained store (forged broker status).
+	pub := &protocol.PublishPacket{
+		FixedHeader: protocol.FixedHeader{
+			PacketType: protocol.PacketTypePublish,
+			QoS:        1,
+			Retain:     true,
+		},
+		PacketID: 11,
+		Topic:    "$SYS/broker/version",
+		Payload:  []byte("9.9.9-forged"),
+	}
+	if err := cc.Encode(clientConn, pub); err != nil {
+		t.Fatalf("send PUBLISH: %v", err)
+	}
+	pkt, err := cc.Decode(clientConn)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	if _, ok := pkt.(*protocol.PubAckPacket); !ok {
+		t.Fatalf("expected PUBACK, got %T", pkt)
+	}
+	if _, err := retained.GetRetained(context.Background(), "$SYS/broker/version"); !errors.Is(err, store.ErrRetainedNotFound) {
+		t.Fatalf("forged $SYS retained message was stored (err=%v)", err)
+	}
+
+	// A normal retained topic still works, proving the guard is scoped to
+	// $-prefixed topics.
+	pub2 := &protocol.PublishPacket{
+		FixedHeader: protocol.FixedHeader{
+			PacketType: protocol.PacketTypePublish,
+			QoS:        1,
+			Retain:     true,
+		},
+		PacketID: 12,
+		Topic:    "normal/retained",
+		Payload:  []byte("ok"),
+	}
+	if err := cc.Encode(clientConn, pub2); err != nil {
+		t.Fatalf("send second PUBLISH: %v", err)
+	}
+	if pkt, err = cc.Decode(clientConn); err != nil {
+		t.Fatalf("read second response: %v", err)
+	} else if _, ok := pkt.(*protocol.PubAckPacket); !ok {
+		t.Fatalf("expected PUBACK for normal topic, got %T", pkt)
+	}
+	if msg, err := retained.GetRetained(context.Background(), "normal/retained"); err != nil || string(msg.Payload) != "ok" {
+		t.Fatalf("normal retained message not stored: msg=%v err=%v", msg, err)
 	}
 }
