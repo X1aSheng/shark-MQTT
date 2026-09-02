@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"math"
 )
 
 func (c *Codec) decodeConnect(r io.Reader, fh FixedHeader) (*ConnectPacket, error) {
@@ -104,6 +105,13 @@ func (c *Codec) decodeConnect(r io.Reader, fh FixedHeader) (*ConnectPacket, erro
 				return nil, err
 			}
 		}
+	}
+
+	// MQTT-2.2.1: every CONNECT payload byte must belong to a parsed field;
+	// silently accepting trailing garbage lets malformed frames through
+	// (audit).
+	if reader.Len() != 0 {
+		return nil, ErrMalformedPacket
 	}
 
 	pkt := &ConnectPacket{
@@ -264,6 +272,10 @@ func (c *Codec) encodeConnect(w io.Writer, pkt *ConnectPacket) error {
 		if err := writeString(&buf, pkt.WillTopic); err != nil {
 			return err
 		}
+		if len(pkt.WillMessage) > math.MaxUint16 {
+			// Previously the length was silently truncated to uint16 (audit).
+			return fmt.Errorf("protocol: will message length %d exceeds MQTT max 65535", len(pkt.WillMessage))
+		}
 		if err := writeUint16(&buf, uint16(len(pkt.WillMessage))); err != nil {
 			return err
 		}
@@ -283,6 +295,10 @@ func (c *Codec) encodeConnect(w io.Writer, pkt *ConnectPacket) error {
 
 	// Password
 	if pkt.Flags.PasswordFlag {
+		if len(pkt.Password) > math.MaxUint16 {
+			// Previously the length was silently truncated to uint16 (audit).
+			return fmt.Errorf("protocol: password length %d exceeds MQTT max 65535", len(pkt.Password))
+		}
 		if err := writeUint16(&buf, uint16(len(pkt.Password))); err != nil {
 			return err
 		}

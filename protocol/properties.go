@@ -125,6 +125,21 @@ func (c *Codec) decodeProperties(r io.Reader) (*Properties, error) {
 		return nil, nil
 	}
 
+	// Bound the property-length allocation BEFORE make(): propLen is a wire
+	// varint independent of the remaining packet bytes (up to 256 MiB - 1),
+	// so an unvalidated claim previously forced a ~256 MB transient
+	// allocation per crafted packet (audit H1). Every in-package decode path
+	// parses properties from a *bytes.Reader over the already-bounded packet
+	// body, so require propLen <= remaining bytes there; for any future
+	// streaming caller, additionally cap at the codec's max packet size.
+	if br, ok := r.(*bytes.Reader); ok {
+		if propLen > uint32(br.Len()) {
+			return nil, ErrMalformedPacket
+		}
+	} else if propLen > uint32(c.maxPacketSize) {
+		return nil, ErrMalformedPacket
+	}
+
 	buf := make([]byte, propLen)
 	if _, err := io.ReadFull(r, buf); err != nil {
 		return nil, err

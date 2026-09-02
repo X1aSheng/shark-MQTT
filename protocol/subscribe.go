@@ -136,6 +136,12 @@ func (c *Codec) encodeSubscribe(w io.Writer, pkt *SubscribePacket) error {
 }
 
 func (c *Codec) decodeSubAck(r io.Reader, fh FixedHeader) (*SubAckPacket, error) {
+	// A SUBACK always carries a 2-byte packet identifier; without this guard
+	// a Remaining Length < 2 would make the direct readUint16 below consume
+	// bytes from the next packet and desynchronize the stream (audit).
+	if fh.RemainingLength < 2 {
+		return nil, ErrMalformedPacket
+	}
 	packetID, err := readUint16(r)
 	if err != nil {
 		return nil, err
@@ -304,6 +310,12 @@ func (c *Codec) encodeUnsubscribe(w io.Writer, pkt *UnsubscribePacket) error {
 
 func (c *Codec) decodeUnsubAck(r io.Reader, fh FixedHeader) (*UnsubAckPacket, error) {
 	if c.protocolVersion != Version50 && fh.RemainingLength != 2 {
+		return nil, ErrMalformedPacket
+	}
+	// A UNSUBACK always carries a 2-byte packet identifier; without this
+	// guard a Remaining Length < 2 would make the direct readUint16 below
+	// consume bytes from the next packet (audit).
+	if fh.RemainingLength < 2 {
 		return nil, ErrMalformedPacket
 	}
 

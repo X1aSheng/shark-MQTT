@@ -1056,6 +1056,24 @@ func (b *Broker) readLoop(clientID string, sess *Session, codec *protocol.Codec,
 			})
 			b.gracefulDisconnect(clientID, conn)
 			return
+		case *protocol.ConnectPacket:
+			// MQTT-3.1.0-2: a second CONNECT on an established connection is a
+			// protocol violation. It was previously ignored, which also let a
+			// crafted CONNECT rewrite the shared codec's protocol version and
+			// silently downgrade parsing for the rest of the connection
+			// (audit). Disconnect: MQTT 5 clients get a DISCONNECT with
+			// reason 0x82; MQTT 3.1.1 has no server-to-client DISCONNECT, so
+			// close directly. Either way the abnormal close publishes the
+			// client's will per §3.1.2.5.
+			b.logger.Debug("second CONNECT received, disconnecting", "clientID", clientID)
+			if sess != nil && sess.ProtocolVer == protocol.Version50 {
+				b.writePacket(clientID, &protocol.DisconnectPacket{
+					FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeDisconnect},
+					ReasonCode:  protocol.ReasonCodeProtocolError,
+				})
+			}
+			b.abnormalDisconnect(clientID, conn)
+			return
 		default:
 			b.logger.Debug("unhandled packet type", "clientID", clientID, "type", fmt.Sprintf("%T", pkt))
 		}

@@ -99,8 +99,17 @@ func (c *Codec) Decode(r io.Reader) (Packet, error) {
 	case PacketTypeUnsubAck:
 		return c.decodeUnsubAck(r, fh)
 	case PacketTypePingReq:
+		// MQTT-2.2.1: PINGREQ must have Remaining Length 0; leftover bytes
+		// would desynchronize the stream (audit).
+		if fh.RemainingLength != 0 {
+			return nil, ErrMalformedPacket
+		}
 		return &PingReqPacket{FixedHeader: fh}, nil
 	case PacketTypePingResp:
+		// MQTT-2.2.1: PINGRESP must have Remaining Length 0 (audit).
+		if fh.RemainingLength != 0 {
+			return nil, ErrMalformedPacket
+		}
 		return &PingRespPacket{FixedHeader: fh}, nil
 	case PacketTypeDisconnect:
 		return c.decodeDisconnect(r, fh)
