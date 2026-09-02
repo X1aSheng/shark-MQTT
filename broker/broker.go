@@ -221,7 +221,9 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 		b.metrics.IncErrors("protocol")
 		var reasonCode byte
 		if connectPkt.ProtocolVersion == protocol.Version50 {
-			reasonCode = protocol.ReasonCodeProtocolError
+			// MQTT 5.0 CONNACK reason for an invalid client identifier
+			// (audit: 0x82 Protocol Error was not descriptive).
+			reasonCode = protocol.ConnAckClientIdentifierNotValid
 		} else {
 			reasonCode = protocol.ConnAckIdentifierRejected
 		}
@@ -257,7 +259,15 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 		authErr := b.opts.authenticator.Authenticate(ctx, connectPkt.ClientID, connectPkt.Username, string(connectPkt.Password))
 		if authErr != nil {
 			b.metrics.IncAuthFailures()
-			b.sendConnAckRaw(conn, c, protocol.ConnAckBadUsernameOrPassword, false)
+			// MQTT 3.1.1 CONNACK carries 0x04; MQTT 5.0 defines the same
+			// condition as 0x86 (Bad user name or password). Sending the
+			// v3 code to a v5 client used to hand it an undefined reason
+			// code (audit).
+			reasonCode := byte(protocol.ConnAckBadUsernameOrPassword)
+			if connectPkt.ProtocolVersion == protocol.Version50 {
+				reasonCode = protocol.ConnAckBadUsernameOrPassword5
+			}
+			b.sendConnAckRaw(conn, c, reasonCode, false)
 			return fmt.Errorf("broker: auth failed: %w", authErr)
 		}
 	}
@@ -1101,6 +1111,9 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 		b.metrics.IncMessagesDropped("rate_limited")
 		b.metrics.IncErrors("rate_limit")
 		b.logger.Debug("publish rate limit exceeded", "clientID", clientID)
+		// Acknowledge QoS 1/2 so the client can free its packet id instead
+		// of retransmitting forever (audit: this used to drop silently).
+		b.ackDiscardedPublish(clientID, sess, pkt, protocol.ReasonCodeQuotaExceeded)
 		return
 	}
 
@@ -1110,20 +1123,22 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 	if pkt.Properties != nil && pkt.Properties.TopicAlias != nil {
 		alias := *pkt.Properties.TopicAlias
 		if alias == 0 {
-			// Alias 0 is reserved (MQTT 5.0 §3.3.2.3.4).
-			b.writePacket(clientID, &protocol.PubAckPacket{
-				FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePubAck},
-				PacketID:    pkt.PacketID,
-				ReasonCode:  protocol.ReasonCodeTopicAliasInvalid,
-			})
+			// Alias 0 is reserved (MQTT 5.0 §3.3.2.3.4). Acknowledge (with
+			// the correct packet type per QoS) and discard; previously QoS 2
+			// publishes wrongly received a PUBACK.
 			b.metrics.IncMessagesDropped("invalid_topic_alias")
+			b.ackDiscardedPublish(clientID, sess, pkt, protocol.ReasonCodeQuotaExceeded)
 			return
 		}
 		if pkt.Topic == "" {
 			// Resolve alias to topic.
 			resolved, ok := sess.ResolveTopicAlias(alias)
 			if !ok {
+				// MQTT-3.3.2.3.4: publishing with an alias that has no mapped
+				// topic is a protocol error; silently dropping it left a QoS
+				// 1/2 client retransmitting forever (audit).
 				b.metrics.IncMessagesDropped("unknown_topic_alias")
+				b.closeProtocolViolation(clientID, sess)
 				return
 			}
 			pkt.Topic = resolved
@@ -1140,22 +1155,18 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 	if pkt.Properties != nil && pkt.Properties.MessageExpiryInterval != nil {
 		if *pkt.Properties.MessageExpiryInterval == 0 {
 			b.metrics.IncMessagesDropped("message_expired")
+			b.ackDiscardedPublish(clientID, sess, pkt, protocol.ReasonCodeSuccess)
 			return
 		}
 	}
 
 	// Reject wildcard topics per MQTT spec §3.3.2
 	if !protocol.ValidatePublishTopic(pkt.Topic) {
-		if pkt.QoS > 0 {
-			b.writePacket(clientID, &protocol.PubAckPacket{
-				FixedHeader: protocol.FixedHeader{
-					PacketType: protocol.PacketTypePubAck,
-				},
-				PacketID:   pkt.PacketID,
-				ReasonCode: protocol.ReasonCodeTopicNameInvalid,
-			})
-		}
 		b.metrics.IncMessagesDropped("invalid_topic")
+		// QoS 1/2 need an acknowledgement (PUBACK or PUBREC, not a raw
+		// PUBACK for QoS 2) so the client releases the packet id; MQTT 5
+		// clients additionally learn the reason (audit).
+		b.ackDiscardedPublish(clientID, sess, pkt, protocol.ReasonCodeTopicNameInvalid)
 		return
 	}
 
@@ -1167,15 +1178,11 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 		username = sess.Username
 	}
 	if b.opts.authorizer != nil && !b.opts.authorizer.CanPublish(b.ctx, username, pkt.Topic) {
-		if pkt.QoS > 0 {
-			b.writePacket(clientID, &protocol.PubAckPacket{
-				FixedHeader: protocol.FixedHeader{
-					PacketType: protocol.PacketTypePubAck,
-				},
-				PacketID:   pkt.PacketID,
-				ReasonCode: protocol.ReasonCodeNotAuthorized,
-			})
-		}
+		// A QoS 1/2 PUBLISH needs the matching acknowledgement so the client
+		// can free its packet id; previously the v5 reason code reached v3.1.1
+		// clients whose PUBACK/PUBREC format has no reason field, which made
+		// the encoder fail and the broker drop the connection (audit).
+		b.ackDiscardedPublish(clientID, sess, pkt, protocol.ReasonCodeNotAuthorized)
 		b.metrics.IncAuthFailures()
 		return
 	}
@@ -1209,23 +1216,25 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 	// The duplicate-tracking entry is only added for accepted messages, so the
 	// map stays bounded by the QoS engine's maxInflight (P2-15).
 	if pkt.QoS == 2 {
-		var reasonCode byte = protocol.ReasonCodeSuccess
 		if err := b.qos.TrackQoS2(clientID, pkt.PacketID, pkt.Topic, pkt.Payload, pkt.Retain); err != nil {
-			reasonCode = protocol.ReasonCodeReceiveMaxExceeded
-		} else {
-			b.receivedQoS2Mu.Lock()
-			if b.receivedQoS2[clientID] == nil {
-				b.receivedQoS2[clientID] = make(map[uint16]struct{})
-			}
-			b.receivedQoS2[clientID][pkt.PacketID] = struct{}{}
-			b.receivedQoS2Mu.Unlock()
+			// Inflight budget exhausted: reject with the receive-max reason
+			// (or a plain success PUBREC for MQTT 3.1.1, whose PUBREC has no
+			// reason field) instead of leaving the client retransmitting.
+			b.ackDiscardedPublish(clientID, sess, pkt, protocol.ReasonCodeReceiveMaxExceeded)
+			return
 		}
+		b.receivedQoS2Mu.Lock()
+		if b.receivedQoS2[clientID] == nil {
+			b.receivedQoS2[clientID] = make(map[uint16]struct{})
+		}
+		b.receivedQoS2[clientID][pkt.PacketID] = struct{}{}
+		b.receivedQoS2Mu.Unlock()
 		b.writePacket(clientID, &protocol.PubRecPacket{
 			FixedHeader: protocol.FixedHeader{
 				PacketType: protocol.PacketTypePubRec,
 			},
 			PacketID:   pkt.PacketID,
-			ReasonCode: reasonCode,
+			ReasonCode: protocol.ReasonCodeSuccess,
 		})
 		return
 	}
@@ -1253,6 +1262,55 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 			PacketID:   pkt.PacketID,
 			ReasonCode: protocol.ReasonCodeSuccess,
 		})
+	}
+}
+
+// ackDiscardedPublish acknowledges a QoS 1/2 PUBLISH that the broker decided
+// to discard (rate limit, expired on arrival, invalid topic, denied by the
+// authorizer, inflight budget exhausted) so the client can release its packet
+// id instead of retransmitting forever. MQTT 3.1.1 PUBACK/PUBREC carry no
+// reason field, so those clients get a success acknowledgement and the message
+// is simply not routed; MQTT 5 clients receive the provided reason code. QoS 2
+// messages get a PUBREC (never a PUBACK) so the QoS 2 handshake stays valid:
+// the later PUBREL finds no tracked message and is answered with PUBCOMP.
+func (b *Broker) ackDiscardedPublish(clientID string, sess *Session, pkt *protocol.PublishPacket, v5Reason byte) {
+	if pkt.QoS == 0 {
+		return
+	}
+	reason := v5Reason
+	if sess == nil || sess.ProtocolVer != protocol.Version50 {
+		reason = protocol.ReasonCodeSuccess
+	}
+	switch pkt.QoS {
+	case 1:
+		b.writePacket(clientID, &protocol.PubAckPacket{
+			FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePubAck},
+			PacketID:    pkt.PacketID,
+			ReasonCode:  reason,
+		})
+	case 2:
+		b.writePacket(clientID, &protocol.PubRecPacket{
+			FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePubRec},
+			PacketID:    pkt.PacketID,
+			ReasonCode:  reason,
+		})
+	}
+}
+
+// closeProtocolViolation tears down a connection that committed a protocol
+// violation. MQTT 5 clients first receive a DISCONNECT with reason 0x82;
+// MQTT 3.1.1 has no server-to-client DISCONNECT, so the connection is closed
+// directly. The resulting read failure runs abnormalDisconnect, which
+// publishes the client's will.
+func (b *Broker) closeProtocolViolation(clientID string, sess *Session) {
+	if sess != nil && sess.ProtocolVer == protocol.Version50 {
+		b.writePacket(clientID, &protocol.DisconnectPacket{
+			FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeDisconnect},
+			ReasonCode:  protocol.ReasonCodeProtocolError,
+		})
+	}
+	if cs := b.connection(clientID); cs != nil {
+		cs.conn.Close()
 	}
 }
 
