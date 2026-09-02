@@ -16,6 +16,10 @@ type SessionData struct {
 	ExpiryTime     time.Time
 	Subscriptions  []Subscription
 	Inflight       map[uint16]*InflightMessage
+	// InboundQoS2 holds QoS 2 publishes accepted from the client (PUBREC
+	// sent) whose PUBREL is still pending. Persisted so a reconnect after a
+	// crash can still route the message and complete the handshake (audit H4).
+	InboundQoS2 map[uint16]*InflightMessage
 }
 
 // Subscription represents a topic subscription.

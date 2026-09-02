@@ -757,3 +757,128 @@ func TestSessionPersistenceKeepsSubscriptionIdentifier(t *testing.T) {
 		t.Fatalf("restored SubscriptionIdentifier = %v, want 42", opts.SubscriptionIdentifier)
 	}
 }
+
+// TestBroker_QoS2InboundStageSurvivesReconnect reproduces the audit H4 data
+// loss: a QoS 2 PUBLISH that reached PUBREC but whose PUBREL arrived after a
+// reconnect used to be acknowledged with PUBCOMP and never delivered. The
+// inbound stage is now persisted with the session, so the retransmitted
+// PUBREL still routes the message.
+func TestBroker_QoS2InboundStageSurvivesReconnect(t *testing.T) {
+	b := New(
+		WithAuth(AllowAllAuth{}),
+		WithSessionStore(memory.NewSessionStore()),
+		WithMessageStore(memory.NewMessageStore()),
+	)
+	if err := b.Start(); err != nil {
+		t.Fatalf("broker start: %v", err)
+	}
+	t.Cleanup(b.Stop)
+	addr := startTcpBroker(t, b)
+
+	// Subscriber on the target topic.
+	subConn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("sub dial: %v", err)
+	}
+	defer subConn.Close()
+	subCodec := protocol.NewCodec(0)
+	if err := subCodec.Encode(subConn, v5Connect("sub", "", "", true)); err != nil {
+		t.Fatalf("sub CONNECT: %v", err)
+	}
+	if _, err := subCodec.Decode(subConn); err != nil {
+		t.Fatalf("sub CONNACK: %v", err)
+	}
+	if err := subCodec.Encode(subConn, &protocol.SubscribePacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe},
+		PacketID:    1,
+		Topics:      []protocol.TopicFilter{{Topic: "h4/t", QoS: 0}},
+	}); err != nil {
+		t.Fatalf("sub SUBSCRIBE: %v", err)
+	}
+	if _, err := subCodec.Decode(subConn); err != nil { // SUBACK
+		t.Fatalf("sub SUBACK: %v", err)
+	}
+
+	// Persistent publisher stages a QoS 2 publish (PUBREC received) and then
+	// drops the connection without PUBREL.
+	aliceConn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("alice dial: %v", err)
+	}
+	aliceCodec := protocol.NewCodec(0)
+	if err := aliceCodec.Encode(aliceConn, v5Connect("alice", "", "", false)); err != nil {
+		t.Fatalf("alice CONNECT: %v", err)
+	}
+	if _, err := aliceCodec.Decode(aliceConn); err != nil {
+		t.Fatalf("alice CONNACK: %v", err)
+	}
+	if err := aliceCodec.Encode(aliceConn, &protocol.PublishPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 2},
+		PacketID:    77,
+		Topic:       "h4/t",
+		Payload:     []byte("exactly-once"),
+	}); err != nil {
+		t.Fatalf("alice PUBLISH: %v", err)
+	}
+	if _, err := aliceCodec.Decode(aliceConn); err != nil { // PUBREC
+		t.Fatalf("alice PUBREC: %v", err)
+	}
+	_ = aliceConn.Close() // abnormal disconnect before PUBREL
+
+	// Wait until the broker persisted the session (which includes the staged
+	// inbound QoS 2 message).
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, err := b.sessionStore.GetSession(context.Background(), "alice"); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("session was not persisted after the abnormal disconnect")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// Alice reconnects to the same persistent session and completes the QoS 2
+	// handshake with PUBREL. The message must now be routed to the subscriber.
+	alice2, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("alice2 dial: %v", err)
+	}
+	defer alice2.Close()
+	alice2Codec := protocol.NewCodec(0)
+	if err := alice2Codec.Encode(alice2, v5Connect("alice", "", "", false)); err != nil {
+		t.Fatalf("alice2 CONNECT: %v", err)
+	}
+	pkt, err := alice2Codec.Decode(alice2)
+	if err != nil {
+		t.Fatalf("alice2 CONNACK: %v", err)
+	}
+	ack, ok := pkt.(*protocol.ConnAckPacket)
+	if !ok || !ack.SessionPresent {
+		t.Fatalf("alice2 CONNACK = %#v, want SessionPresent", pkt)
+	}
+	if err := alice2Codec.Encode(alice2, &protocol.PubRelPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePubRel, QoS: 1},
+		PacketID:    77,
+	}); err != nil {
+		t.Fatalf("alice2 PUBREL: %v", err)
+	}
+	if _, err := alice2Codec.Decode(alice2); err != nil { // PUBCOMP
+		t.Fatalf("alice2 PUBCOMP: %v", err)
+	}
+
+	// The subscriber must receive exactly one delivery of the original payload.
+	_ = subConn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	pkt, err = subCodec.Decode(subConn)
+	if err != nil {
+		t.Fatalf("subscriber got no delivery after reconnect: %v", err)
+	}
+	delivered, ok := pkt.(*protocol.PublishPacket)
+	if !ok || string(delivered.Payload) != "exactly-once" {
+		t.Fatalf("subscriber delivery = %#v, want payload exactly-once", pkt)
+	}
+	_ = subConn.SetReadDeadline(time.Now().Add(400 * time.Millisecond))
+	if pkt, err := subCodec.Decode(subConn); err == nil {
+		t.Fatalf("subscriber received a duplicate delivery: %T %v", pkt, pkt)
+	}
+}

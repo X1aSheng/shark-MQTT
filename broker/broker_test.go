@@ -231,10 +231,22 @@ func TestBroker_QoS2DupDetection(t *testing.T) {
 	b.connections["dup-client"] = &clientState{conn: serverConn, codec: codec}
 	b.mu.Unlock()
 
-	// Pre-register packet ID 100 as already received for this client
-	b.receivedQoS2Mu.Lock()
-	b.receivedQoS2["dup-client"] = map[uint16]struct{}{100: {}}
-	b.receivedQoS2Mu.Unlock()
+	// Inbound QoS 2 state lives on the session now (audit H4): pre-stage
+	// packet ID 100 as already accepted (PUBREC sent, PUBREL pending).
+	sess := b.sessions.CreateSession("dup-client", &protocol.ConnectPacket{
+		Flags:           protocol.ConnectFlags{CleanSession: true},
+		KeepAlive:       60,
+		ProtocolVersion: protocol.Version50,
+		ClientID:        "dup-client",
+	}, false)
+	if !sess.AddInboundQoS2(&InboundQoS2{
+		PacketID: 100,
+		QoS:      2,
+		Topic:    "test/dup",
+		Payload:  []byte("first"),
+	}, 10) {
+		t.Fatal("failed to stage pre-existing inbound QoS 2 message")
+	}
 
 	// Subscribe another client
 	serverConn2, clientConn2 := net.Pipe()
@@ -268,18 +280,22 @@ func TestBroker_QoS2DupDetection(t *testing.T) {
 		Payload:  []byte("duplicate"),
 	}
 
-	// handlePublish should detect the duplicate and NOT call TrackQoS2
-	// (we verify by checking that the inflight count is 0 for the publisher)
-	b.handlePublish("dup-client", nil, dupPkt)
+	// handlePublish should detect the duplicate and re-send PUBREC without
+	// replacing the staged message or touching the QoS engine.
+	b.handlePublish("dup-client", sess, dupPkt)
 
-	b.receivedQoS2Mu.Lock()
-	_, exists := b.receivedQoS2["dup-client"][100]
-	b.receivedQoS2Mu.Unlock()
-	if !exists {
+	if !sess.HasInboundQoS2(100) {
 		t.Error("packet ID should still be tracked after dup detection")
 	}
+	if msg, ok := sess.TakeInboundQoS2(100); !ok || string(msg.Payload) != "first" {
+		t.Fatalf("dup PUBLISH replaced the staged payload: %#v ok=%v", msg, ok)
+	}
+	// Put the staged message back for the remainder of the test.
+	if !sess.AddInboundQoS2(&InboundQoS2{PacketID: 100, QoS: 2, Topic: "test/dup", Payload: []byte("first")}, 10) {
+		t.Fatal("failed to re-stage inbound QoS 2 message")
+	}
 
-	// New QoS 2 PUBLISH with fresh packet ID (not DUP) should work normally
+	// New QoS 2 PUBLISH with fresh packet ID (not DUP) should be staged
 	newPkt := &protocol.PublishPacket{
 		FixedHeader: protocol.FixedHeader{
 			PacketType: protocol.PacketTypePublish,
@@ -289,14 +305,13 @@ func TestBroker_QoS2DupDetection(t *testing.T) {
 		PacketID: 200,
 		Payload:  []byte("new"),
 	}
-	b.handlePublish("dup-client", nil, newPkt)
+	b.handlePublish("dup-client", sess, newPkt)
 
-	b.receivedQoS2Mu.Lock()
-	_, tracked := b.receivedQoS2["dup-client"][200]
-	delete(b.receivedQoS2, "dup-client")
-	b.receivedQoS2Mu.Unlock()
-	if !tracked {
-		t.Error("new packet ID should be tracked for non-dup PUBLISH")
+	if !sess.HasInboundQoS2(200) {
+		t.Error("new packet ID should be staged for non-dup PUBLISH")
+	}
+	if b.qos.InflightCount("dup-client") != 0 {
+		t.Error("inbound QoS 2 publishes must not occupy the outbound QoS engine")
 	}
 }
 

@@ -24,7 +24,10 @@ type Session struct {
 	Subscriptions map[string]uint8 // topic -> qos
 	SubOptions    map[string]SubscriptionOptions
 	Inflight      map[uint16]*InflightMsg
-	packetIDSeq   uint16
+	// inboundQoS2 tracks QoS 2 publishes accepted from this client that are
+	// still awaiting PUBREL (see InboundQoS2).
+	inboundQoS2 map[uint16]*InboundQoS2
+	packetIDSeq uint16
 	ReceiveMax    uint16
 	TopicAliasMax uint16
 	mu            sync.RWMutex
@@ -106,6 +109,22 @@ type InflightMsg struct {
 	AckType   byte      // PUBACK, PUBREC, PUBREL, PUBCOMP
 }
 
+// InboundQoS2 is a QoS 2 message accepted from the client (PUBLISH received,
+// PUBREC sent) whose handshake has not yet completed (PUBREL pending). Entries
+// live in the session — separate from the outbound QoS engine table, whose
+// shared (clientID, packetID) key let an outbound delivery overwrite the
+// inbound entry (audit H4) — and are persisted with the session so a
+// reconnect can still route the message instead of acknowledging a PUBREL
+// with nothing delivered.
+type InboundQoS2 struct {
+	PacketID   uint16
+	QoS        uint8
+	Topic      string
+	Payload    []byte
+	Retain     bool
+	ReceivedAt time.Time
+}
+
 // Manager manages all client sessions.
 type Manager struct {
 	sessions map[string]*Session
@@ -183,6 +202,7 @@ func (m *Manager) CreateSession(clientID string, connectPkt *protocol.ConnectPac
 		Subscriptions: make(map[string]uint8),
 		SubOptions:    make(map[string]SubscriptionOptions),
 		Inflight:      make(map[uint16]*InflightMsg),
+		inboundQoS2:   make(map[uint16]*InboundQoS2),
 		packetIDSeq:   1,
 		ReceiveMax:    65535,
 		topicAliases:  make(map[uint16]string),
@@ -424,6 +444,44 @@ func (s *Session) RemoveInflight(packetID uint16) bool {
 	return true
 }
 
+// AddInboundQoS2 stages an accepted inbound QoS 2 publish (PUBREC sent). The
+// per-client budget mirrors the outbound maxInflight cap so a client that
+// never completes its half of the handshake cannot grow the table without
+// bound. Returns false when the budget is exhausted.
+func (s *Session) AddInboundQoS2(msg *InboundQoS2, maxPending int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.inboundQoS2 == nil {
+		s.inboundQoS2 = make(map[uint16]*InboundQoS2)
+	}
+	if maxPending > 0 && len(s.inboundQoS2) >= maxPending {
+		return false
+	}
+	s.inboundQoS2[msg.PacketID] = msg
+	return true
+}
+
+// HasInboundQoS2 reports whether a packet id is still awaiting PUBREL.
+func (s *Session) HasInboundQoS2(packetID uint16) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.inboundQoS2[packetID]
+	return ok
+}
+
+// TakeInboundQoS2 removes and returns the staged inbound QoS 2 message for a
+// packet id; ok is false when none is pending (e.g. an unknown PUBREL).
+func (s *Session) TakeInboundQoS2(packetID uint16) (*InboundQoS2, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	msg, ok := s.inboundQoS2[packetID]
+	if !ok {
+		return nil, false
+	}
+	delete(s.inboundQoS2, packetID)
+	return msg, true
+}
+
 // GetInflight returns an in-flight message.
 func (s *Session) GetInflight(packetID uint16) (*InflightMsg, bool) {
 	s.mu.RLock()
@@ -485,6 +543,19 @@ func (s *Session) Save(ctx context.Context, sessionStore store.SessionStore) err
 		})
 	}
 
+	// Snapshot inbound QoS 2 stages (PUBREC sent, PUBREL pending) the same
+	// way; payloads are deep-copied below (audit H4).
+	inboundSnapshots := make([]snapEntry, 0, len(s.inboundQoS2))
+	for _, msg := range s.inboundQoS2 {
+		inboundSnapshots = append(inboundSnapshots, snapEntry{
+			packetID: msg.PacketID,
+			qos:      msg.QoS,
+			topic:    msg.Topic,
+			payload:  msg.Payload,
+			retain:   msg.Retain,
+		})
+	}
+
 	s.mu.RUnlock()
 
 	// Deep-copy payloads outside the lock.
@@ -501,6 +572,20 @@ func (s *Session) Save(ctx context.Context, sessionStore store.SessionStore) err
 		}
 	}
 	data.Inflight = inflight
+
+	inbound := make(map[uint16]*store.InflightMessage, len(inboundSnapshots))
+	for _, snap := range inboundSnapshots {
+		payloadCopy := make([]byte, len(snap.payload))
+		copy(payloadCopy, snap.payload)
+		inbound[snap.packetID] = &store.InflightMessage{
+			PacketID: snap.packetID,
+			QoS:      snap.qos,
+			Topic:    snap.topic,
+			Payload:  payloadCopy,
+			Retain:   snap.retain,
+		}
+	}
+	data.InboundQoS2 = inbound
 
 	return sessionStore.SaveSession(ctx, s.ClientID, data)
 }
@@ -526,6 +611,7 @@ func (m *Manager) Restore(ctx context.Context, clientID string) (*Session, error
 		Subscriptions:  make(map[string]uint8),
 		SubOptions:     make(map[string]SubscriptionOptions),
 		Inflight:       make(map[uint16]*InflightMsg),
+		inboundQoS2:    make(map[uint16]*InboundQoS2),
 		packetIDSeq:    1,
 		ReceiveMax:     65535,
 		topicAliases:   make(map[uint16]string),
@@ -551,6 +637,22 @@ func (m *Manager) Restore(ctx context.Context, clientID string) (*Session, error
 			Topic:    msg.Topic,
 			Payload:  payloadCopy,
 			Retain:   msg.Retain,
+		}
+	}
+
+	// Restore inbound QoS 2 stages (PUBREC sent, PUBREL pending) so a
+	// reconnecting client that retransmits PUBREL still gets its message
+	// routed (audit H4).
+	for id, msg := range data.InboundQoS2 {
+		payloadCopy := make([]byte, len(msg.Payload))
+		copy(payloadCopy, msg.Payload)
+		sess.inboundQoS2[id] = &InboundQoS2{
+			PacketID:   msg.PacketID,
+			QoS:        msg.QoS,
+			Topic:      msg.Topic,
+			Payload:    payloadCopy,
+			Retain:     msg.Retain,
+			ReceivedAt: time.Now(),
 		}
 	}
 

@@ -63,10 +63,9 @@ type Broker struct {
 	// connections maps clientID -> clientState
 	connections map[string]*clientState
 
-	// QoS 2 duplicate detection: tracks incoming PUBLISH packet IDs per client
-	// to detect and suppress duplicates when DUP flag is set (MQTT §4.3.3).
-	receivedQoS2   map[string]map[uint16]struct{}
-	receivedQoS2Mu sync.Mutex
+	// Inbound QoS 2 duplicate detection lives in the session (inboundQoS2),
+	// not in broker-wide maps, so packet-id state travels with the session and
+	// cannot collide with outbound tracking (audit H4).
 
 	// offlineQueue tracks the number of queued offline messages per client so
 	// queueOfflineMessage can enforce a per-client cap (audit H2). The count
@@ -122,7 +121,6 @@ func New(opts ...Option) *Broker {
 		metrics:             o.metrics,
 		pluginMgr:           o.pluginManager,
 		connections:         make(map[string]*clientState),
-		receivedQoS2:        make(map[string]map[uint16]struct{}),
 		offlineCount:        make(map[string]int),
 		connRate:            newConnRateLimiter(o.connectionRateWindow),
 		retainedExpirations: retainedExpirations,
@@ -1022,10 +1020,6 @@ func (b *Broker) disconnect(clientID string, conn net.Conn) {
 	online := len(b.connections)
 	b.mu.Unlock()
 
-	b.receivedQoS2Mu.Lock()
-	delete(b.receivedQoS2, clientID)
-	b.receivedQoS2Mu.Unlock()
-
 	b.metrics.SetOnlineSessions(online)
 	// Plugin hook
 	b.dispatch(plugin.OnClose, &plugin.Context{ClientID: clientID})
@@ -1268,48 +1262,60 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 		return
 	}
 
-	// Handle retained message
-	if pkt.Retain {
-		b.handleRetainedMessage(pkt)
-	}
-
-	// QoS 2: detect duplicate PUBLISH (DUP flag). Per MQTT §4.3.3, when a
-	// publisher resends a QoS 2 PUBLISH because the PUBREC was lost, the broker
-	// must re-send PUBREC without re-processing the message.
-	if pkt.QoS == 2 && pkt.Dup {
-		b.receivedQoS2Mu.Lock()
-		clientDups := b.receivedQoS2[clientID]
-		if clientDups != nil {
-			if _, dup := clientDups[pkt.PacketID]; dup {
-				b.receivedQoS2Mu.Unlock()
-				b.writePacket(clientID, &protocol.PubRecPacket{
-					FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePubRec},
-					PacketID:    pkt.PacketID,
-					ReasonCode:  protocol.ReasonCodeSuccess,
-				})
-				return
-			}
-		}
-		b.receivedQoS2Mu.Unlock()
-	}
-
-	// QoS 2: defer subscriber delivery until PUBCOMP completes the handshake.
-	// The duplicate-tracking entry is only added for accepted messages, so the
-	// map stays bounded by the QoS engine's maxInflight (P2-15).
+	// QoS 2 flow: stage the message in the session's inbound table until
+	// PUBREL completes the handshake, then route it to subscribers. The
+	// inbound stage is separate from the outbound QoS engine and is persisted
+	// with the session (audit H4): the previous shared (clientID, packetID)
+	// engine table let an outbound delivery overwrite the inbound entry
+	// (misdelivery / loss), and a disconnect discarded the inbound half so a
+	// retransmitted PUBREL was acknowledged without ever delivering.
 	if pkt.QoS == 2 {
-		if err := b.qos.TrackQoS2(clientID, pkt.PacketID, pkt.Topic, pkt.Payload, pkt.Retain); err != nil {
-			// Inflight budget exhausted: reject with the receive-max reason
-			// (or a plain success PUBREC for MQTT 3.1.1, whose PUBREC has no
-			// reason field) instead of leaving the client retransmitting.
+		if sess != nil && sess.HasInboundQoS2(pkt.PacketID) {
+			// A DUP resend (PUBREC was lost) re-sends PUBREC without
+			// re-processing (MQTT §4.3.3). Reusing a packet id that still
+			// awaits PUBREL without DUP is a protocol violation: answer
+			// PUBREC 0x91 (packet id in use) and drop the new payload.
+			reason := byte(protocol.ReasonCodeSuccess)
+			if !pkt.Dup {
+				reason = protocol.ReasonCodePacketIdentifierInUse
+				b.metrics.IncMessagesDropped("qos2_pid_reuse")
+				b.logger.Debug("QoS2 packet id reused before PUBREL",
+					"clientID", clientID, "packetID", pkt.PacketID)
+			}
+			if sess == nil || sess.ProtocolVer != protocol.Version50 {
+				reason = protocol.ReasonCodeSuccess
+			}
+			b.writePacket(clientID, &protocol.PubRecPacket{
+				FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePubRec},
+				PacketID:    pkt.PacketID,
+				ReasonCode:  reason,
+			})
+			return
+		}
+
+		// Accept: enforce the per-client inbound budget (mirrors the outbound
+		// maxInflight cap), store retained state, then send PUBREC.
+		limit := b.opts.maxInflight
+		if limit <= 0 {
+			limit = 100
+		}
+		if sess == nil || !sess.AddInboundQoS2(&InboundQoS2{
+			PacketID:   pkt.PacketID,
+			QoS:        pkt.QoS,
+			Topic:      pkt.Topic,
+			Payload:    pkt.Payload,
+			Retain:     pkt.Retain,
+			ReceivedAt: time.Now(),
+		}, limit) {
+			// Budget exhausted (or no session context): reject with the
+			// receive-max reason (or a plain success PUBREC for MQTT 3.1.1,
+			// whose PUBREC has no reason field).
 			b.ackDiscardedPublish(clientID, sess, pkt, protocol.ReasonCodeReceiveMaxExceeded)
 			return
 		}
-		b.receivedQoS2Mu.Lock()
-		if b.receivedQoS2[clientID] == nil {
-			b.receivedQoS2[clientID] = make(map[uint16]struct{})
+		if pkt.Retain {
+			b.handleRetainedMessage(pkt)
 		}
-		b.receivedQoS2[clientID][pkt.PacketID] = struct{}{}
-		b.receivedQoS2Mu.Unlock()
 		b.writePacket(clientID, &protocol.PubRecPacket{
 			FixedHeader: protocol.FixedHeader{
 				PacketType: protocol.PacketTypePubRec,
@@ -1318,6 +1324,11 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 			ReasonCode: protocol.ReasonCodeSuccess,
 		})
 		return
+	}
+
+	// QoS 0/1: handle retained message for the delivered message.
+	if pkt.Retain {
+		b.handleRetainedMessage(pkt)
 	}
 
 	// Route to subscribers for QoS 0 and QoS 1. Live forwards to established
@@ -2244,27 +2255,36 @@ func (b *Broker) handlePubRec(clientID string, packetID uint16) {
 }
 
 func (b *Broker) handlePubRel(clientID string, packetID uint16) {
-	// Retrieve the inflight message to route to subscribers after QoS 2 handshake
-	msg, ok := b.qos.GetInflight(clientID, packetID)
-	if ok && msg.QoS == 2 {
-		pubPkt := &protocol.PublishPacket{
-			FixedHeader: protocol.FixedHeader{
-				PacketType: protocol.PacketTypePublish,
-				QoS:        msg.QoS,
-				// Live forward to established subscriptions: Retain=0.
-				Retain: false,
-			},
-			Topic:    msg.Topic,
-			Payload:  msg.Payload,
-			PacketID: msg.PacketID,
+	// Route the staged inbound QoS 2 message to subscribers now that the
+	// client completed its half of the handshake. Entries are session-owned
+	// and persisted, so a restored session still delivers (audit H4); an
+	// unknown packet id (e.g. discarded earlier) simply completes with
+	// PUBCOMP.
+	if sess, ok := b.sessions.GetSession(clientID); ok {
+		if msg, taken := sess.TakeInboundQoS2(packetID); taken {
+			pubPkt := &protocol.PublishPacket{
+				FixedHeader: protocol.FixedHeader{
+					PacketType: protocol.PacketTypePublish,
+					QoS:        msg.QoS,
+					// Live forward to established subscriptions: Retain=0
+					// (retained state was stored at PUBLISH acceptance).
+					Retain: false,
+				},
+				Topic:    msg.Topic,
+				Payload:  msg.Payload,
+				PacketID: msg.PacketID,
+			}
+			subscribers := b.topics.Match(msg.Topic)
+			for _, sub := range subscribers {
+				b.deliverToClient(sub.ClientID, clientID, pubPkt)
+			}
+			b.routeSharedPublish(clientID, pubPkt)
 		}
-		subscribers := b.topics.Match(msg.Topic)
-		for _, sub := range subscribers {
-			b.deliverToClient(sub.ClientID, clientID, pubPkt)
-		}
-		b.routeSharedPublish(clientID, pubPkt)
 	}
-	b.qos.AckPubRel(clientID, packetID)
+	b.writePacket(clientID, &protocol.PubCompPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePubComp},
+		PacketID:    packetID,
+	})
 }
 
 func (b *Broker) handlePubComp(clientID string, packetID uint16) {
@@ -2277,11 +2297,6 @@ func (b *Broker) handlePubComp(clientID string, packetID uint16) {
 		}
 		b.flushBufferedOutbound(clientID, sess)
 	}
-	b.receivedQoS2Mu.Lock()
-	if clientDups := b.receivedQoS2[clientID]; clientDups != nil {
-		delete(clientDups, packetID)
-	}
-	b.receivedQoS2Mu.Unlock()
 }
 
 func (b *Broker) sendPubAck(clientID string, packetID uint16) error {

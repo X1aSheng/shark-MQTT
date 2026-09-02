@@ -45,6 +45,17 @@ func (s *sessionStore) SaveSession(ctx context.Context, clientID string, data *s
 			copied.Inflight[k] = &msgCopy
 		}
 	}
+	if data.InboundQoS2 != nil {
+		copied.InboundQoS2 = make(map[uint16]*store.InflightMessage, len(data.InboundQoS2))
+		for k, v := range data.InboundQoS2 {
+			msgCopy := *v
+			if v.Payload != nil {
+				msgCopy.Payload = make([]byte, len(v.Payload))
+				copy(msgCopy.Payload, v.Payload)
+			}
+			copied.InboundQoS2[k] = &msgCopy
+		}
+	}
 	if data.Subscriptions != nil {
 		copied.Subscriptions = make([]store.Subscription, len(data.Subscriptions))
 		copy(copied.Subscriptions, data.Subscriptions)
@@ -69,6 +80,15 @@ func (s *sessionStore) GetSession(ctx context.Context, clientID string) (*store.
 			msgCopy.Payload = make([]byte, len(v.Payload))
 			copy(msgCopy.Payload, v.Payload)
 			copied.Inflight[k] = &msgCopy
+		}
+	}
+	if data.InboundQoS2 != nil {
+		copied.InboundQoS2 = make(map[uint16]*store.InflightMessage, len(data.InboundQoS2))
+		for k, v := range data.InboundQoS2 {
+			msgCopy := *v
+			msgCopy.Payload = make([]byte, len(v.Payload))
+			copy(msgCopy.Payload, v.Payload)
+			copied.InboundQoS2[k] = &msgCopy
 		}
 	}
 	if data.Subscriptions != nil {
