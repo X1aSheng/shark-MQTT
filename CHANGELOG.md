@@ -7,6 +7,65 @@ This project uses semantic versioning. Pre-release tags use the form
 
 ## Unreleased
 
+### Security & protocol audit fixes (2026-09-03)
+
+Full record with per-commit details, regression tests and upgrade notes:
+[docs/reports/AUDIT-FIXES-260903-085404.md](docs/reports/AUDIT-FIXES-260903-085404.md).
+
+- **Bounded property-length allocation:** MQTT 5 property length claims are
+  validated against the remaining packet bytes / max packet size before
+  allocation, closing a ~256 MB per-packet memory-amplification vector
+  reachable before authentication.
+- **Correct v3/v5 reason codes and discard acks:** auth failures and
+  over-long client IDs now use the MQTT 5 CONNACK codes (0x86 / 0x85);
+  discarded QoS 1/2 publishes are acknowledged with the correct packet type
+  per QoS (PUBACK/PUBREC) so MQTT 3.1.1 clients are never disconnected by
+  v5-only reason bytes and never retransmit forever.
+- **System topics protected:** the allow-all authorizer refuses client
+  publishes to `$`-prefixed topics (including retained forgeries); explicit
+  ACL grants still work.
+- **Sessions bound to their owner:** resuming or clean-starting a clientID
+  under a different username is rejected (not authorized), preventing
+  cross-account hijack of subscriptions, inflight state and queued messages.
+- **ACL checks are coverage-based:** an ACL of `a/+` no longer authorizes
+  subscribing to `a/#`; shared subscriptions are authorized against their
+  real filter; root wildcards never cover `$` topics.
+- **Bounded offline queue with cascade cleanup:** per-client offline queue
+  cap (`WithMaxOfflineQueue`, default 1000), stale-message removal on
+  reconnect, and cascading message cleanup when sessions expire; stored
+  message IDs no longer embed the clientID.
+- **Store key isolation:** Redis/Badger message keys length-prefix the
+  clientID so a clientID containing `:` (e.g. `a:1`) can no longer read or
+  clear another client's queue; retained stores persist timestamps; Redis
+  retained scanning escapes glob metacharacters.
+- **Persistent session keep-alive:** `SessionStore.RefreshSession` keeps
+  live sessions' storage keys (Redis) from expiring mid-connection; MQTT 5
+  subscription identifiers survive session persistence.
+- **QoS 2 exactly-once across reconnects:** inbound QoS 2 state is
+  session-owned and persisted, so a PUBREL retransmitted after a reconnect
+  still routes the message instead of being empty-acknowledged; inbound and
+  outbound packet-id tracking can no longer collide.
+- **Slow-consumer reaping:** socket writes are bounded by a deadline
+  (`WithWriteTimeout`, default 30s) so a peer that stops reading cannot
+  wedge writers and stall QoS 1/2 publishers.
+- **Dead configuration wired:** CLI now always applies `MQTT_*` env vars
+  (defaults < env < file < explicit flags); a slog logger is attached
+  (`log_level`/`log_format` effective); `keep_alive`, `connect_timeout` and
+  `metrics_enabled` are honored (`/metrics` served only when enabled, default
+  true); TLS/WebSocket endpoints receive OS TCP keep-alive; new `-auth-file`
+  flag / `auth_file` config enables file-based authentication in the CLI.
+- **Client library lifecycle:** CONNACK wait is deadline-bounded; QoS 2
+  dedup survives reconnects of persistent sessions; acks are written on the
+  connection generation that received the message.
+- **Plugin & WebSocket hardening:** plugin hooks run under a configurable
+  timeout (default 10s) and plugins can be unregistered; WS handshake writes
+  (rejection CONNACKs, AUTH packets) are flushed explicitly; `max_connections:
+  0` really means unlimited.
+- **Will trigger ownership:** a takeover's superseded connection can no
+  longer fire the new connection's will.
+- **Toolchain:** upgrade Go to ≥ 1.26.6 to address standard-library
+  vulnerabilities reported by govulncheck (11 reachable CVEs in go1.26.1).
+
 ### Reliability: zombie-connection handling (2026-08-31)
 
 - **Write failures now close the connection:** `writePacket` and `writeLoop`
