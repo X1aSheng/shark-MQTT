@@ -1,0 +1,161 @@
+%% ============================================================
+%% Shark-MQTT 集群化目标组件类图（评审产出）
+%% 对应文档: docs/architecture/CLUSTER-FEASIBILITY.md §3.2
+%% 说明: "现有"= 已实现; "新增"= 集群化需引入
+%% ============================================================
+classDiagram
+    direction TB
+
+    %% ---------- 现有核心（保持本地权威语义） ----------
+    class Broker {
+        +connections map[clientID]*clientState
+        +sessions *Manager
+        +topics *TopicTree
+        +will *WillHandler
+        +qos *QoSEngine
+        +sessionStore SessionStore
+        +messageStore MessageStore
+        +retainedStore RetainedStore
+        +HandleConnection(ctx, conn, codec) error
+        +handlePublish(clientID, sess, pkt)
+        +handleSubscribe(clientID, sess, pkt)
+        +deliverToClient(clientID, source, pkt)
+        +routeSharedPublish(source, pkt)
+        +nextMessageID() string
+    }
+    class clientState {
+        +conn net.Conn
+        +codec *Codec
+        +out chan Packet
+    }
+    class Manager {
+        +sessions map[string]*Session
+        +CreateSession(clientID, pkt, resuming) Session
+        +Restore(ctx, clientID) Session
+    }
+    class Session {
+        +ClientID string
+        +Subscriptions map[string]uint8
+        +Inflight map[uint16]*InflightMsg
+        +topicAliases map[uint16]string
+        +Save(ctx, store) error
+    }
+    class TopicTree {
+        +root *TopicNode
+        +sharedSubs map
+        +sharedLast map
+        +Match(topic) []Subscriber
+        +MatchSharedOnline(topic, isOnline) []SharedSubscriber
+        +Subscribe(topic, clientID, qos) bool
+    }
+    class WillHandler {
+        +wills map[string]*WillMessage
+        +TriggerWill(clientID, conn) error
+    }
+
+    %% ---------- 存储接口（现状：可选；集群：共享为可选增强） ----------
+    class SessionStore {
+        <<interface>>
+        +SaveSession(ctx, clientID, data)
+        +GetSession(ctx, clientID) SessionData
+        +ListSessions(ctx) []string
+    }
+    class MessageStore {
+        <<interface>>
+        +SaveMessage(ctx, clientID, msg)
+        +ListMessages(ctx, clientID) []StoredMessage
+    }
+    class RetainedStore {
+        <<interface>>
+        +SaveRetained(ctx, topic, qos, payload)
+        +MatchRetained(ctx, pattern) []RetainedMessage
+    }
+
+    %% ---------- 新增：集群子系统 ----------
+    class ClusterNode {
+        +nodeID string
+        +discovery Discovery
+        +subs *SubscriptionRegistry
+        +routes *RoutingTable
+        +sessions *SessionRegistry
+        +transport NodeTransport
+        +Start() error
+        +Join(seeds) error
+    }
+    class Discovery {
+        <<interface>>
+        +Join(seeds) error
+        +Members() []NodeInfo
+        +OnJoin(cb func(NodeInfo))
+        +OnLeave(cb func(nodeID))
+    }
+    class MemberlistDiscovery {
+        +gossip *memberlist.Memberlist
+    }
+    class StaticDiscovery {
+        +seeds []string
+    }
+    class EtcdDiscovery {
+        <<optional>>
+        +client *clientv3.Client
+    }
+    class SubscriptionRegistry {
+        +local snapshot
+        +version VectorClock
+        +OnSubscribe(filter, clientID, qos)
+        +OnUnsubscribe(filter, clientID)
+        +BroadcastDelta(delta)
+        +AntiEntropy(peers)
+    }
+    class RoutingTable {
+        +filterToNodes map[string]set[nodeID]
+        +shareGroups map[string][]Member
+        +Lookup(topic) set[nodeID]
+        +SelectShareMember(group, topic, strategy) Member
+        +Apply(delta, fromNode)
+    }
+    class SessionRegistry {
+        +owner map[clientID]SessionClaim
+        +Claim(clientID, gen) bool
+        +Release(clientID, nodeID)
+        +ReclaimDeadNode(nodeID)
+    }
+    class SessionClaim {
+        +ClientID string
+        +OwnerNodeID string
+        +Generation uint64
+    }
+    class NodeTransport {
+        +Send(nodeID, clusterPublish) error
+        +Broadcast(clusterPublish) error
+        +dedup (originNodeID, msgID)
+    }
+    class Member {
+        +ClientID string
+        +NodeID string
+        +QoS uint8
+    }
+
+    %% ---------- 关系 ----------
+    Broker "1" o-- "1" ClusterNode : 集成(cluster 层接入 CONNECT/SUB/PUB/disconnect)
+    Broker "1" *-- "1" TopicTree
+    Broker "1" *-- "1" Manager
+    Broker "1" *-- "1" WillHandler
+    Broker "1" --> "1..*" clientState : connections map
+    Manager "1" o-- "*" Session
+    Broker ..> SessionStore : 使用(可选)
+    Broker ..> MessageStore : 使用(可选)
+    Broker ..> RetainedStore : 使用(可选)
+
+    ClusterNode "1" *-- "1" Discovery
+    ClusterNode "1" *-- "1" SubscriptionRegistry
+    ClusterNode "1" *-- "1" RoutingTable
+    ClusterNode "1" *-- "1" SessionRegistry
+    ClusterNode "1" *-- "1" NodeTransport
+    Discovery <|.. MemberlistDiscovery
+    Discovery <|.. StaticDiscovery
+    Discovery <|.. EtcdDiscovery
+    RoutingTable "1" o-- "*" Member : shareGroups
+    SessionRegistry "1" o-- "*" SessionClaim : owner
+    SubscriptionRegistry --> RoutingTable : 产出 delta
+    NodeTransport --> Discovery : 目标节点解析

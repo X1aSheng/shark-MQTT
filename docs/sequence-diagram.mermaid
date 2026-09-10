@@ -1,0 +1,73 @@
+%% ============================================================
+%% Shark-MQTT 集群化关键流程时序图（评审产出）
+%% 对应文档: docs/architecture/CLUSTER-FEASIBILITY.md §4
+%% 本文件含 4 张独立且各自合法的 sequenceDiagram，用 %% === 分隔。
+%% ============================================================
+
+%% === 图 1 / 4：跨节点发布订阅投递路径 ======================
+sequenceDiagram
+    participant C1 as 客户端A (发布方)
+    participant N1 as Node1 (发布方所在)
+    participant N2 as Node2 (订阅方所在)
+    participant C2 as 客户端B (订阅方)
+    C1->>N1: PUBLISH topic=dev/1 qos=1
+    N1->>N1: TopicTree.Match(dev/1) -> 本地订阅者
+    N1->>N1: RoutingTable.Lookup(dev/1) -> {Node2}
+    N1->>N2: NodeTransport: clusterPublish(topic,payload,qos,originNodeID=N1,msgID)
+    N2->>N2: 防环: originNodeID != 本节点
+    N2->>N2: (originNodeID,msgID) 去重表
+    N2->>N2: TopicTree.Match(dev/1) -> 本地订阅者
+    N2->>C2: PUBLISH topic=dev/1 qos=1
+    C2-->>N2: PUBACK qos=1
+    N1-->>C1: PUBACK qos=1 (接入节点本地完成)
+    Note over N1,N2: 每目标节点只转发一次 (非每客户端一次)
+
+%% === 图 2 / 4：共享订阅跨节点选择 ==========================
+sequenceDiagram
+    participant P as 发布方 (Node1)
+    participant RT as RoutingTable (集群共享视图)
+    participant M1 as 成员1 @ Node1
+    participant M2 as 成员2 @ Node2
+    participant M3 as 成员3 @ Node3
+    Note over RT: $share/g/dev/+ 组={M1@N1, M2@N2, M3@N3}
+    P->>RT: selectShareMember(group, topic, strategy=round_robin)
+    RT-->>P: 选中 M2 @ Node2
+    P->>M2: 仅转发到 Node2 (clusterPublish, 一次)
+    M2-->>P: (QoS0/1, 无需跨节点回执)
+    Note over M1,M3: 其余成员本消息不投递, 保证组内唯一
+
+%% === 图 3 / 4：节点加入/离开与路由表收敛 ===================
+sequenceDiagram
+    participant N1 as Node1 (已在集群)
+    participant N2 as Node2 (新加入)
+    participant N3 as Node3 (已在集群)
+    N2->>N1: join(seeds) via memberlist (SWIM gossip)
+    N1->>N2: 集群视图确认 (含 Node3)
+    N2->>N1: SyncRequest (携带本地订阅表 version)
+    N1-->>N2: 全量订阅快照 (filter -> N1订阅; version)
+    N2->>N3: SyncRequest
+    N3-->>N2: 全量订阅快照 (filter -> N3订阅; version)
+    Note over N1,N3: 稳态: 订阅/退订事件以 delta 增量广播
+    Note over N1,N3: 周期 anti-entropy: 版本向量对账, 修复丢失的 delta
+    N3->>N1: 心跳 (SWIM ping/ack)
+    Note over N1,N3: 心跳超时 -> suspect -> dead -> 触发图 4 接管流程
+
+%% === 图 4 / 4：节点故障时会话与订阅接管（含 will 与 retained 语义） ===
+sequenceDiagram
+    participant N1 as Node1 (存活)
+    participant N2 as Node2 (故障)
+    participant REG as SessionRegistry / 成员视图
+    participant N3 as Node3 (接管)
+    participant C as 客户端 (原连 Node2)
+    REG-->>N1: Node2 心跳超时 -> suspect -> dead
+    N1->>REG: 回收 Node2 拥有的全部会话 (clientID -> owner=N2)
+    REG->>REG: 失效 N2 的会话租约 (generation++)
+    REG->>REG: 发布 N2 名下的 will (尽力而为; v1 若未复制则会丢失)
+    N1->>N1: RoutingTable 移除 N2 的订阅条目
+    C->>N3: 重连 (CleanSession=false) — 客户端自带重连
+    N3->>REG: Claim(clientID, generation=新值)  fencing
+    REG-->>N3: 授权 (旧 owner N2 已失效, 拒绝迟到写)
+    N3->>N3: SessionStore.Restore(clientID) 恢复订阅/离线队列
+    N3->>N3: 重建本地 TopicTree + 广播订阅 delta
+    N3-->>C: CONNACK SessionPresent=1
+    Note over N1,N3: retained: 共享 RetainedStore 提供全局一致(若启用); 否则 per-node 语义
