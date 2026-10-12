@@ -1368,10 +1368,10 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 		b.handleRetainedMessage(pkt)
 	}
 
-	// Route to subscribers for QoS 0 and QoS 1. Live forwards to established
-	// subscriptions always carry Retain=0 regardless of the source flag.
+	// Route to subscribers for QoS 0 and QoS 1. The outgoing RETAIN flag is
+	// decided per subscription inside doDeliver (Retain As Published), so the
+	// publisher's flag is carried through unchanged.
 	forwardPkt := *pkt
-	forwardPkt.FixedHeader.Retain = false
 	subscribers := b.topics.Match(forwardPkt.Topic)
 	for _, sub := range subscribers {
 		b.deliverToClient(sub.ClientID, clientID, &forwardPkt)
@@ -1733,7 +1733,7 @@ func (b *Broker) deliverWithQoS(sess *Session, pkt *protocol.PublishPacket, subQ
 	if subQoS < deliverQoS {
 		deliverQoS = subQoS
 	}
-	b.doDeliver(sess.ClientID, pkt, deliverQoS, messageExpiresAt(pkt), subOpts)
+	b.doDeliver(sess.ClientID, pkt, deliverQoS, messageExpiresAt(pkt), subOpts, false)
 }
 
 // queueOfflineMessage stores a QoS 1/2 message for an offline persistent
@@ -1882,7 +1882,7 @@ func (b *Broker) deliverQueuedMessages(clientID string, sess *Session) {
 			}
 			pubPkt.Properties = &protocol.Properties{MessageExpiryInterval: &remaining}
 		}
-		b.doDeliver(clientID, pubPkt, deliverQoS, msg.ExpiresAt, subOpts)
+		b.doDeliver(clientID, pubPkt, deliverQoS, msg.ExpiresAt, subOpts, false)
 		if err := b.messageStore.DeleteMessage(b.ctx, clientID, msg.ID); err != nil {
 			b.logger.Warn("failed to delete queued message", "clientID", clientID, "error", err)
 		} else {
@@ -1894,7 +1894,14 @@ func (b *Broker) deliverQueuedMessages(clientID string, sess *Session) {
 // doDeliver performs the actual PUBLISH write after QoS negotiation.
 // If subscription options include a SubscriptionIdentifier, it is added to
 // the outgoing PUBLISH properties (MQTT 5.0 3.3.2.3.7).
-func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliverQoS uint8, expiresAt time.Time, subOpts ...SubscriptionOptions) {
+//
+// retainedDelivery must be true only when this delivery is the replay of a
+// stored retained message triggered by a new subscription: MQTT-3.3.1-8
+// requires RETAIN=1 for those regardless of the subscription options. For a
+// live forward the RETAIN flag follows Retain As Published (MQTT 5.0 3.8.3.1):
+// it is cleared unless the matching subscription set RAP=1, in which case the
+// flag the publisher used is preserved.
+func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliverQoS uint8, expiresAt time.Time, subOpts SubscriptionOptions, retainedDelivery bool) {
 	sess, ok := b.sessions.GetSession(clientID)
 	if !ok {
 		return
@@ -1913,11 +1920,7 @@ func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliver
 	// The buffer is bounded (R6): if a client never acknowledges and the buffer
 	// is full, the new message is dropped rather than exhausting memory.
 	if deliverQoS > 0 && !sess.CanSendOutbound() {
-		var opts SubscriptionOptions
-		if len(subOpts) > 0 {
-			opts = subOpts[0]
-		}
-		if !sess.BufferOutbound(pkt, deliverQoS, opts, expiresAt) {
+		if !sess.BufferOutbound(pkt, deliverQoS, subOpts, expiresAt) {
 			b.metrics.IncMessagesDropped("receive_max_buffered_overflow")
 			b.metrics.IncErrors("flow_control")
 			b.logger.Debug("outbound flow-control buffer full, dropping message",
@@ -1926,11 +1929,17 @@ func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliver
 		return
 	}
 
+	// MQTT-3.3.1-8: a retained message replayed because a subscription was
+	// established always carries RETAIN=1. MQTT-3.3.1-9 / MQTT 5.0 3.8.3.1: a
+	// live forward carries RETAIN=0 unless the matching subscription set
+	// Retain As Published, in which case the publisher's flag is preserved.
+	outRetain := retainedDelivery || (subOpts.RetainAsPublished && pkt.Retain)
+
 	pubPkt := &protocol.PublishPacket{
 		FixedHeader: protocol.FixedHeader{
 			PacketType: protocol.PacketTypePublish,
 			QoS:        deliverQoS,
-			Retain:     pkt.Retain,
+			Retain:     outRetain,
 		},
 		Topic:   pkt.Topic,
 		Payload: pkt.Payload,
@@ -1943,12 +1952,12 @@ func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliver
 	// corrupt the stream (audit). The expiry deadline is still enforced for
 	// bookkeeping; only its advertisement is version-gated.
 	if sess.Spec().Properties &&
-		(len(subOpts) > 0 && subOpts[0].SubscriptionIdentifier != nil || !expiresAt.IsZero()) {
+		(subOpts.SubscriptionIdentifier != nil || !expiresAt.IsZero()) {
 		if pubPkt.Properties == nil {
 			pubPkt.Properties = &protocol.Properties{}
 		}
-		if len(subOpts) > 0 && subOpts[0].SubscriptionIdentifier != nil {
-			pubPkt.Properties.SubscriptionIdentifier = subOpts[0].SubscriptionIdentifier
+		if subOpts.SubscriptionIdentifier != nil {
+			pubPkt.Properties.SubscriptionIdentifier = subOpts.SubscriptionIdentifier
 		}
 		if !expiresAt.IsZero() {
 			remaining := uint32(time.Until(expiresAt).Seconds())
@@ -1963,19 +1972,21 @@ func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliver
 		pubPkt.PacketID = sess.NextPacketID()
 		// Track the outbound delivery so it can be retried until the client
 		// acknowledges it (NEW-1) and persisted across a disconnect (P2-3).
+		// Record the *effective* retain flag so a retransmission reproduces the
+		// original packet instead of the publisher's raw flag.
 		sess.AddInflight(&InflightMsg{
 			PacketID:  pubPkt.PacketID,
 			QoS:       deliverQoS,
 			Topic:     pkt.Topic,
 			Payload:   pkt.Payload,
-			Retain:    pkt.Retain,
+			Retain:    outRetain,
 			SentAt:    time.Now(),
 			ExpiresAt: expiresAt,
 		})
 		if deliverQoS == 1 {
-			_ = b.qos.TrackOutboundQoS1(clientID, pubPkt.PacketID, pkt.Topic, pkt.Payload, pkt.Retain)
+			_ = b.qos.TrackOutboundQoS1(clientID, pubPkt.PacketID, pkt.Topic, pkt.Payload, outRetain)
 		} else {
-			_ = b.qos.TrackOutboundQoS2(clientID, pubPkt.PacketID, pkt.Topic, pkt.Payload, pkt.Retain)
+			_ = b.qos.TrackOutboundQoS2(clientID, pubPkt.PacketID, pkt.Topic, pkt.Payload, outRetain)
 		}
 	}
 
@@ -1998,7 +2009,7 @@ func (b *Broker) flushBufferedOutbound(clientID string, sess *Session) {
 			return
 		}
 		msg, _ := sess.PopOutbound()
-		b.doDeliver(clientID, msg.pkt, msg.deliverQoS, msg.expiresAt, msg.subOpts)
+		b.doDeliver(clientID, msg.pkt, msg.deliverQoS, msg.expiresAt, msg.subOpts, false)
 	}
 }
 
@@ -2095,7 +2106,7 @@ func (b *Broker) deliverRetainedMessages(clientID string, sess *Session, topicFi
 		// assigns the packet ID, and tracks the delivery (NEW-4). Retained
 		// messages carry no per-message expiry here; their lifecycle is handled
 		// by the retained-message TTL (retained_expiry).
-		b.doDeliver(clientID, pubPkt, deliverQoS, time.Time{}, subOpts)
+		b.doDeliver(clientID, pubPkt, deliverQoS, time.Time{}, subOpts, true)
 	}
 }
 
@@ -2340,9 +2351,9 @@ func (b *Broker) handlePubRel(clientID string, packetID uint16) {
 				FixedHeader: protocol.FixedHeader{
 					PacketType: protocol.PacketTypePublish,
 					QoS:        msg.QoS,
-					// Live forward to established subscriptions: Retain=0
-					// (retained state was stored at PUBLISH acceptance).
-					Retain: false,
+					// Carry the publisher's RETAIN flag through; doDeliver
+					// applies Retain As Published per subscription.
+					Retain: msg.Retain,
 				},
 				Topic:    msg.Topic,
 				Payload:  msg.Payload,
@@ -2461,19 +2472,18 @@ func (b *Broker) publishWill(username string, topic string, payload []byte, qos 
 		FixedHeader: protocol.FixedHeader{
 			PacketType: protocol.PacketTypePublish,
 			QoS:        qos,
+			Retain:     retain,
 		},
 		Topic:   topic,
 		Payload: payload,
 	}
 
 	if retain {
-		retainedPkt := *pubPkt
-		retainedPkt.FixedHeader.Retain = true
-		b.handleRetainedMessage(&retainedPkt)
+		b.handleRetainedMessage(pubPkt)
 	}
 
-	// Live forward to established subscriptions: Retain=0.
-	pubPkt.FixedHeader.Retain = false
+	// The live forward keeps the publisher's RETAIN flag; doDeliver applies
+	// Retain As Published per subscription.
 	subscribers := b.topics.Match(topic)
 	for _, sub := range subscribers {
 		b.deliverToClient(sub.ClientID, "", pubPkt)

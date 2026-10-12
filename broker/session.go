@@ -366,11 +366,15 @@ func (s *Session) matchSubscriptions(topic string, sysProtect bool) (bool, uint8
 			continue
 		}
 		if protocol.MatchTopic(realPattern, topic) {
-			matched = true
-			if qos > bestQoS {
+			// Record the options of the first match too: a QoS 0 match never
+			// satisfies `qos > bestQoS` (both are 0), so the previous form left
+			// bestOpts at its zero value for QoS 0 subscriptions and silently
+			// dropped RetainAsPublished and SubscriptionIdentifier.
+			if !matched || qos > bestQoS {
 				bestQoS = qos
 				bestOpts = s.SubOptions[pattern]
 			}
+			matched = true
 		}
 	}
 	return matched, bestQoS, bestOpts
