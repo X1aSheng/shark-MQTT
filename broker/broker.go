@@ -107,6 +107,13 @@ type Broker struct {
 	cancel       context.CancelFunc
 	opts         brokerOptions
 
+	// loops tracks the background goroutines started by Start (session/retained
+	// cleanup and the $SYS status publisher). Stop waits on it before returning:
+	// Start rewrites b.ctx and b.startedAt, and a loop that is still draining a
+	// tick would otherwise read those fields concurrently with the next Start
+	// (data race on the documented Stop -> Start cycle).
+	loops sync.WaitGroup
+
 	startedAt time.Time // broker start time, for $SYS/broker/uptime (R8)
 
 	// latencyCounter drives metric sampling for publish latency observation.
@@ -725,17 +732,27 @@ func (b *Broker) Start() error {
 	b.shuttingDown.Store(false) // a Stop->Start cycle is not a shutdown any more
 	b.startedAt = time.Now()
 	b.qos.Start()
-	go b.sessionCleanupLoop()
+	b.startLoop(b.sessionCleanupLoop)
 	if b.opts.retainedExpiry > 0 {
 		// Rebuild the in-memory expiry map from persisted retained messages so
 		// TTL cleanup survives a restart (P3-5).
 		b.rebuildRetainedExpirations()
-		go b.retainedCleanupLoop()
+		b.startLoop(b.retainedCleanupLoop)
 	}
 	if b.opts.sysInterval > 0 {
-		go b.sysStatusLoop()
+		b.startLoop(b.sysStatusLoop)
 	}
 	return nil
+}
+
+// startLoop runs a broker background loop as a tracked goroutine so Stop can
+// wait for it to leave before returning (see Broker.loops).
+func (b *Broker) startLoop(fn func()) {
+	b.loops.Add(1)
+	go func() {
+		defer b.loops.Done()
+		fn()
+	}()
 }
 
 // rebuildRetainedExpirations reconstructs the in-memory retained-expiry map and
@@ -989,13 +1006,21 @@ func (b *Broker) notifyShuttingDown() {
 
 // Stop stops the broker's internal subsystems and closes all sessions.
 //
-// Shutdown order matters. BeginShutdown runs first so the socket closes below
-// (whose readLoops exit through abnormalDisconnect) do not publish one will per
-// connected client -- a rolling restart would otherwise flood every will topic.
-// The connections are then closed to stop the readLoops, the remaining inflight
-// deliveries are drained, and the QoS/will subsystems are stopped.
+// Shutdown order matters. The background loops are drained first, then
+// BeginShutdown runs so the socket closes below (whose readLoops exit through
+// abnormalDisconnect) do not publish one will per connected client -- a rolling
+// restart would otherwise flood every will topic. The connections are then
+// closed to stop the readLoops, the remaining inflight deliveries are drained,
+// and the QoS/will subsystems are stopped.
 func (b *Broker) Stop() {
 	b.cancel()
+
+	// 0. Drain the background loops before touching anything else. Start
+	// rewrites b.ctx and b.startedAt, so a loop still reading them would race
+	// with the next Start of a Stop -> Start cycle. (Server-level connection
+	// goroutines are already joined by MQTTServer.Stop's WaitGroup before this
+	// runs; these three loops are the only ones the broker owns.)
+	b.loops.Wait()
 
 	// 1. Suppress wills and tell clients the server is going away.
 	b.BeginShutdown()
