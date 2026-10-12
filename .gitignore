@@ -45,3 +45,6 @@ dist/
 
 # ─── Skills ──────────────────────────────────────────────
 .skills/
+
+# ─── Agent workspace (local memory, not project source) ──
+.workbuddy/
