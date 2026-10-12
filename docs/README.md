@@ -46,6 +46,7 @@ docs/
 | [Testing](guides/TESTING.md) | Unit, integration, benchmark tests |
 | [Protocol Audit](reports/archive/PROTOCOL-AUDIT-260602-215254.md) | MQTT 3.1.1/5.0 compliance |
 | [Latest Review](reports/PROJECT-REVIEW-260806-143527.md) | V7 reference comparison (smart-mqtt / mica-mqtt) |
+| [Smart-MQTT Gap Analysis](reports/SMART-MQTT-GAP-ANALYSIS-261012.md) | Unfinished-detail checklist vs Java smart-mqtt (P0/P1/P2) |
 | [Latest Deployment Validation](reports/archive/DEPLOYMENT-VALIDATION-260806-124906.md) | Cloud server cleanup + docker/k8s validation |
 
 ---
