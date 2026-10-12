@@ -1,4 +1,9 @@
 // Package logger provides a structured logging interface for shark-mqtt.
+//
+// The package deliberately has no init() and never touches process-global
+// state: shark-mqtt is embeddable, so importing it must not reconfigure the
+// host application's standard library logger. Applications that want the
+// standard logger configured (as cmd/main.go does) must do it themselves.
 package logger
 
 // Logger interface for structured logging.

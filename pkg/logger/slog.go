@@ -1,14 +1,9 @@
 package logger
 
 import (
-	"log"
 	"log/slog"
 	"os"
 )
-
-func init() {
-	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
-}
 
 // slogLogger implements Logger using the standard slog package.
 type slogLogger struct {

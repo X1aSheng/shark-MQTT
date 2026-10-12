@@ -22,6 +22,12 @@ import (
 var Version = "dev"
 
 func main() {
+	// Configure the standard library logger here, in the application, rather
+	// than inside the embeddable pkg/logger package: importing a library must
+	// not mutate the host's global logger. The early log.Fatalf calls below
+	// (config load) rely on this.
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+
 	// Parse command-line flags
 	var configPath string
 	flag.StringVar(&configPath, "config", "", "path to a YAML configuration file")

@@ -281,6 +281,10 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 		enhancedAuth = b.findEnhancedAuth(connectPkt.Properties.AuthenticationMethod)
 		if enhancedAuth == nil {
 			b.metrics.IncAuthFailures()
+			b.logger.Warn("connection rejected: unsupported authentication method",
+				"clientID", connectPkt.ClientID,
+				"method", connectPkt.Properties.AuthenticationMethod,
+				"remote", conn.RemoteAddr().String())
 			b.sendConnAckRaw(conn, codec, protocol.ReasonCodeBadAuthMethod, false)
 			return fmt.Errorf("broker: unsupported authentication method %q", connectPkt.Properties.AuthenticationMethod)
 		}
@@ -293,6 +297,16 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 		authErr := b.opts.authenticator.Authenticate(ctx, connectPkt.ClientID, connectPkt.Username, string(connectPkt.Password))
 		if authErr != nil {
 			b.metrics.IncAuthFailures()
+			// Log the rejection with enough context to investigate (client ID,
+			// username, peer) but never the credential itself. Without this the
+			// default `info` level shows nothing when clients fail to
+			// authenticate: the returned error is only logged at debug by the
+			// server, so operators saw a metric with no audit trail.
+			b.logger.Warn("authentication failed",
+				"clientID", connectPkt.ClientID,
+				"username", connectPkt.Username,
+				"remote", conn.RemoteAddr().String(),
+				"error", authErr)
 			// MQTT 3.1.1 CONNACK carries 0x04; MQTT 5.0 defines the same
 			// condition as 0x86 (Bad user name or password). Sending the
 			// v3 code to a v5 client used to hand it an undefined reason
@@ -320,26 +334,14 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 	// CONNACK and the original session is left untouched.
 	if connectPkt.ClientID != "" {
 		if existing, ok := b.sessions.GetSession(connectPkt.ClientID); ok && existing.Username != connectPkt.Username {
-			b.metrics.IncRejections("session_user_mismatch")
-			reason := byte(protocol.ConnAckNotAuthorized)
-			if sp.ConnAckHasReasonCode {
-				reason = protocol.ConnAckNotAuthorized5
-			}
-			b.sendConnAckRaw(conn, codec, reason, false)
-			return fmt.Errorf("broker: client ID %q belongs to a different user", connectPkt.ClientID)
+			return b.rejectSessionOwnerMismatch(conn, codec, sp, connectPkt)
 		}
 		if b.sessionStore != nil {
 			data, err := b.sessionStore.GetSession(ctx, connectPkt.ClientID)
 			if err != nil && !errors.Is(err, store.ErrSessionNotFound) {
 				b.logger.Debug("session store check failed", "clientID", connectPkt.ClientID, "error", err)
 			} else if err == nil && data != nil && data.Username != connectPkt.Username {
-				b.metrics.IncRejections("session_user_mismatch")
-				reason := byte(protocol.ConnAckNotAuthorized)
-				if sp.ConnAckHasReasonCode {
-					reason = protocol.ConnAckNotAuthorized5
-				}
-				b.sendConnAckRaw(conn, codec, reason, false)
-				return fmt.Errorf("broker: client ID %q belongs to a different user", connectPkt.ClientID)
+				return b.rejectSessionOwnerMismatch(conn, codec, sp, connectPkt)
 			}
 		}
 	}
@@ -577,6 +579,24 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 	b.readLoop(clientID, sess, codec, conn)
 
 	return nil
+}
+
+// rejectSessionOwnerMismatch refuses a CONNECT whose client ID is already bound
+// to a different username, counting the rejection, logging the attempt and
+// sending the not-authorized CONNACK. Both the in-memory and the persisted
+// session checks route through here so they behave (and are logged) identically.
+func (b *Broker) rejectSessionOwnerMismatch(conn net.Conn, codec protocol.PacketCodec, sp protocol.Spec, connectPkt *protocol.ConnectPacket) error {
+	b.metrics.IncRejections("session_user_mismatch")
+	b.logger.Warn("connection rejected: client ID belongs to a different user",
+		"clientID", connectPkt.ClientID,
+		"username", connectPkt.Username,
+		"remote", conn.RemoteAddr().String())
+	reason := byte(protocol.ConnAckNotAuthorized)
+	if sp.ConnAckHasReasonCode {
+		reason = protocol.ConnAckNotAuthorized5
+	}
+	b.sendConnAckRaw(conn, codec, reason, false)
+	return fmt.Errorf("broker: client ID %q belongs to a different user", connectPkt.ClientID)
 }
 
 // findEnhancedAuth returns the registered enhanced authenticator for a method
