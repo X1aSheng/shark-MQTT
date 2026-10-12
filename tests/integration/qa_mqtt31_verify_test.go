@@ -167,7 +167,7 @@ func qaBroker(t *testing.T, mutate func(*config.Config), opts ...api.Option) *ap
 // filter).
 type qaDenySubscribe struct{}
 
-func (qaDenySubscribe) CanPublish(context.Context, string, string) bool { return true }
+func (qaDenySubscribe) CanPublish(context.Context, string, string) bool   { return true }
 func (qaDenySubscribe) CanSubscribe(context.Context, string, string) bool { return false }
 
 // ---------------------------------------------------------------------------

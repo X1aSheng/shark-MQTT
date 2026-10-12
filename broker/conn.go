@@ -11,11 +11,11 @@ import (
 // handshake. It is protocol-neutral: the connection handler consumes Conn and
 // never sees an MQTT-specific codec or a raw CONNECT packet.
 type Conn struct {
-	Raw     net.Conn             // underlying transport (peekable wrapper)
-	Adapter protocol.Adapter     // adapter that owns the handshake
+	Raw     net.Conn              // underlying transport (peekable wrapper)
+	Adapter protocol.Adapter      // adapter that owns the handshake
 	Info    *protocol.ConnectInfo // protocol-neutral handshake result
-	Codec   protocol.PacketCodec // version-bound packet codec
-	Spec    protocol.Spec        // capability table for Info.Version
+	Codec   protocol.PacketCodec  // version-bound packet codec
+	Spec    protocol.Spec         // capability table for Info.Version
 }
 
 // ConnectionHandler is invoked for each accepted connection after its

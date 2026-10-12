@@ -20,9 +20,9 @@ type qaFakeAdapter struct {
 	identify bool
 }
 
-func (f *qaFakeAdapter) Name() string                             { return f.name }
-func (f *qaFakeAdapter) Identify(PeekConn) (bool, error)          { return f.identify, nil }
-func (f *qaFakeAdapter) Spec(v Version) (Spec, bool)              { return SpecOf(v) }
+func (f *qaFakeAdapter) Name() string                    { return f.name }
+func (f *qaFakeAdapter) Identify(PeekConn) (bool, error) { return f.identify, nil }
+func (f *qaFakeAdapter) Spec(v Version) (Spec, bool)     { return SpecOf(v) }
 func (f *qaFakeAdapter) Handshake(context.Context, net.Conn) (*ConnectInfo, PacketCodec, error) {
 	return nil, nil, ErrNoMatchingAdapter
 }
