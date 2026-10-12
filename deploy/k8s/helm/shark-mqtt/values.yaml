@@ -1,6 +1,11 @@
 # Default Helm values for shark-mqtt
 
-replicaCount: 2
+# replicaCount > 1 is NOT a cluster. Each replica is an independent broker that
+# keeps its session, subscription and retained state in process memory, so extra
+# replicas silently LOSE messages (a subscriber on pod A never sees a publish
+# that landed on pod B) and split the retained store. Leave at 1 unless a real
+# clustering / topic-routing layer is in front. See README.md "多副本 != 集群".
+replicaCount: 1
 
 image:
   repository: x1asheng/shark-mqtt
@@ -20,9 +25,13 @@ resources:
     cpu: 500m
     memory: 256Mi
 
+# Autoscaling is OFF by default: an HPA scales a non-clustered broker into
+# independent replicas that lose messages, and it cannot rebalance the
+# long-lived TCP connections already accepted. Enable only with a clustering
+# layer in place, and keep minReplicas at 1.
 autoscaling:
-  enabled: true
-  minReplicas: 2
+  enabled: false
+  minReplicas: 1
   maxReplicas: 10
   targetCPUUtilizationPercentage: 70
   targetMemoryUtilizationPercentage: 80

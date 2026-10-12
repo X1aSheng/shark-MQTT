@@ -18,3 +18,23 @@ shark-mqtt has been installed!
 5. External access via Ingress:
    MQTT over TLS: mqtts://{{ .Values.ingress.host }}:443
 {{- end }}
+
+{{- if gt (int .Values.replicaCount) 1 }}
+
+WARNING: replicaCount={{ .Values.replicaCount }} but shark-mqtt is NOT a cluster.
+Each replica is an independent broker that shares no session, subscription or
+retained state with the others, so messages published to one pod are never
+delivered to subscribers on another, and the retained store diverges per pod.
+Set replicaCount=1 (and autoscaling.enabled=false) unless a clustering /
+topic-routing layer is in front. See the chart README, "多副本 != 集群".
+{{- end }}
+
+{{- if .Values.autoscaling.enabled }}
+{{- if gt (int .Values.autoscaling.maxReplicas) 1 }}
+
+WARNING: autoscaling is enabled with maxReplicas={{ .Values.autoscaling.maxReplicas }}.
+An HPA scales a non-clustered broker into independent replicas that silently
+lose messages, and it cannot rebalance the long-lived TCP connections already
+accepted. Disable it unless a clustering / topic-routing layer is in place.
+{{- end }}
+{{- end }}

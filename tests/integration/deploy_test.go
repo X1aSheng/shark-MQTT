@@ -396,6 +396,102 @@ func TestHelmNotesHasEndpoints(t *testing.T) {
 	}
 }
 
+// ─── Multi-replica hazard (multi-replica != cluster) ──────
+
+// TestK8sDeploymentDefaultsToSingleReplica pins the safe default: a second
+// replica is a second, independent broker, so the shipped manifest must not
+// ask for one.
+func TestK8sDeploymentDefaultsToSingleReplica(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "deploy", "k8s", "app", "deployment.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "replicas: 1") {
+		t.Error("deployment.yaml should default to replicas: 1")
+	}
+	if strings.Contains(content, "replicas: 2") {
+		t.Error("deployment.yaml must not default to replicas: 2 (extra replicas are independent brokers)")
+	}
+}
+
+// TestK8sDeploymentWarnsMultiReplicaIsNotCluster keeps the warning in place.
+func TestK8sDeploymentWarnsMultiReplicaIsNotCluster(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "deploy", "k8s", "app", "deployment.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	for _, want := range []string{"NOT a cluster", "LOST MESSAGES", "RETAINED SPLIT"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("deployment.yaml lost its multi-replica warning (%q)", want)
+		}
+	}
+}
+
+// TestK8sHpaKeptOutOfDefaultKustomization: autoscaling would turn a single
+// broker into several mutually-ignorant ones, so the default kustomization must
+// not apply the HPA. The file stays for opt-in use.
+func TestK8sHpaKeptOutOfDefaultKustomization(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "deploy", "k8s", "app", "kustomization.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if strings.Contains(content, "\n  - hpa.yaml") {
+		t.Error("kustomization.yaml must not apply hpa.yaml by default (multi-replica != cluster)")
+	}
+	if !strings.Contains(content, "# - hpa.yaml") {
+		t.Error("kustomization.yaml should keep the commented hpa.yaml line as the opt-in hint")
+	}
+}
+
+func TestHelmValuesDefaultToSingleReplica(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(helmChartDir, "values.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "replicaCount: 1") {
+		t.Error("values.yaml should default replicaCount to 1")
+	}
+}
+
+func TestHelmAutoscalingDisabledByDefault(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(helmChartDir, "values.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	i := strings.Index(content, "autoscaling:")
+	if i < 0 {
+		t.Fatal("values.yaml has no autoscaling section")
+	}
+	if !strings.Contains(content[i:], "enabled: false") {
+		t.Error("values.yaml should disable autoscaling by default (extra replicas lose messages)")
+	}
+}
+
+func TestHelmNotesWarnOnMultiReplica(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(helmChartDir, "templates", "NOTES.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "WARNING") || !strings.Contains(content, "NOT a cluster") {
+		t.Error("NOTES.txt should warn when replicaCount > 1")
+	}
+}
+
+func TestDeployReadmeDocumentsMultiReplicaHazard(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "deploy", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "多副本 != 集群") {
+		t.Error("deploy/README.md should document the multi-replica hazard")
+	}
+}
+
 // ─── Cleanup verification ─────────────────────────────────
 
 func TestOldK8sDirRemoved(t *testing.T) {

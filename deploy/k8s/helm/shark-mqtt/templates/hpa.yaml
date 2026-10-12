@@ -1,4 +1,8 @@
 {{- if .Values.autoscaling.enabled }}
+# WARNING -- autoscaling does not make shark-mqtt a cluster. Extra replicas are
+# independent brokers sharing no session, subscription or retained state, so
+# scaling past 1 replica silently loses messages. Keep minReplicas at 1 and
+# enable this only with a clustering / topic-routing layer in place.
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:

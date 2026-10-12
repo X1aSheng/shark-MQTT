@@ -86,6 +86,29 @@ helm upgrade shark-mqtt deploy/k8s/helm/shark-mqtt/ \
   --namespace shark-mqtt
 ```
 
+### 多副本 != 集群（重要）
+
+**shark-mqtt 是单机可嵌入 Broker，不是集群。** 会话表、订阅树、保留消息存储都在进程内存里，
+副本之间零通信。因此 `replicas` / `replicaCount` > 1，或用 HPA 把副本数拉上去，会**静默地**造成：
+
+- **漏投**：订阅者在 pod A、发布者落到 pod B，pod B 的订阅树里没有该订阅者 → 消息丢弃。
+  Service 只做连接级负载均衡，不按主题路由。
+- **重复投递**：`$share` 共享订阅只在 pod 内轮询，多副本间不协调。
+- **保留消息分裂**：保留存储每 pod 一份，新订阅者看到的保留消息取决于它连到哪个 pod。
+- **扩容不迁移存量连接**：MQTT 是长连接，扩副本只分摊**新**连接，已有会话不会被重新平衡。
+
+模板层面的处理：
+
+| 位置 | 默认值 | 说明 |
+|------|--------|------|
+| `deploy/k8s/app/deployment.yaml` | `replicas: 1` | 顶部有醒目告警注释 |
+| `deploy/k8s/app/hpa.yaml` | 文件保留，`minReplicas: 1` | **已从 `kustomization.yaml` 默认资源中注释掉**，避免默认部署自动扩容 |
+| Helm `values.yaml` | `replicaCount: 1` / `autoscaling.enabled: false` | 默认不扩容 |
+| Helm `values-prod.yaml` | `replicaCount: 1` / `autoscaling.enabled: false` | 生产同样单副本；HA 靠客户端重连 + Redis 持久化会话 |
+
+要做到真正的多实例可用，必须先在前面引入集群 / 主题路由层
+（见 `docs/architecture/CLUSTER-FEASIBILITY.md`）。
+
 ---
 
 ## 监控
@@ -112,7 +135,7 @@ helm upgrade shark-mqtt deploy/k8s/helm/shark-mqtt/ \
 
 - [ ] 配置 TLS 证书（MQTT over TLS 端口 18993）
 - [ ] 设置资源限制（CPU/Memory）
-- [ ] 配置 HPA 自动扩缩
+- [ ] **保持副本数为 1**（多副本 != 集群，见上文），不要启用 HPA
 - [ ] 启用 NetworkPolicy 网络隔离
 - [ ] 配置 PodDisruptionBudget
 - [ ] 启用 Prometheus 监控
@@ -135,6 +158,11 @@ helm upgrade shark-mqtt deploy/k8s/helm/shark-mqtt/ \
 使用 Redis 作为存储后端时，确保 Redis 服务可达且健康。
 
 ### 优雅关闭
+
+收到 SIGTERM 后，Broker 先标记"正在关闭"，再关闭连接。这样关闭动作不会被当成客户端
+异常断开，**不会触发遗嘱风暴**（滚动重启时若每个客户端的遗嘱都发一遍，会瞬间刷满所有
+遗嘱主题）。同时，受影响的 MQTT 5.0 客户端会先收到 `DISCONNECT` reason `0x8B`
+（Server shutting down）。MQTT 3.1.1 没有服务端 DISCONNECT 报文，只会看到连接关闭。
 
 默认关闭超时 30 秒。在 K8s 中设为 60 秒需同步调整 `terminationGracePeriodSeconds`。
 

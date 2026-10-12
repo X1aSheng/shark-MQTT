@@ -1,3 +1,24 @@
+# ===========================================================================
+# WARNING -- replicas > 1 is NOT a cluster.
+#
+# A shark-mqtt instance keeps its session registry, subscription tree and
+# retained-message store in process memory, and replicas never talk to each
+# other. Running more than one replica behind a plain Service therefore causes
+# silent data loss:
+#   * LOST MESSAGES      -- a subscriber on pod A never receives a publish that
+#                           landed on pod B; the Service balances connections,
+#                           not topics.
+#   * DUPLICATE DELIVERY -- $share subscriptions are balanced within a pod, not
+#                           across pods.
+#   * RETAINED SPLIT     -- each pod keeps its own retained store, so a new
+#                           subscriber sees a different retained set depending
+#                           on which pod it lands on.
+#
+# Keep replicas at 1. Scale out only behind a real clustering / topic-routing
+# layer (see docs/architecture/CLUSTER-FEASIBILITY.md) or when every client is
+# pinned to one pod by an external router and the topic spaces never overlap.
+# See deploy/README.md, section "多副本 != 集群".
+# ===========================================================================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -7,7 +28,7 @@ metadata:
     app.kubernetes.io/name: shark-mqtt
     app.kubernetes.io/component: broker
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: shark-mqtt

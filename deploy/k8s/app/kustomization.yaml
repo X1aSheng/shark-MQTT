@@ -13,5 +13,9 @@ resources:
   - configmap.yaml
   - deployment.yaml
   - service.yaml
-  - hpa.yaml
+  # hpa.yaml is intentionally NOT applied by default: autoscaling a
+  # non-clustered broker adds independent replicas that share no session,
+  # subscription or retained state, which silently loses messages. See
+  # hpa.yaml and deploy/README.md "多副本 != 集群" before enabling it.
+  # - hpa.yaml
   - networkpolicy.yaml

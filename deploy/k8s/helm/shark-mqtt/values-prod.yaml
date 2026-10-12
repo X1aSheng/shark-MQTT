@@ -1,6 +1,11 @@
 # Production overrides for shark-mqtt
 
-replicaCount: 3
+# WARNING: keep at 1. shark-mqtt is not clustered -- replicas share no session,
+# subscription or retained state, so scaling out loses messages and splits the
+# retained store. High availability for MQTT comes from clients reconnecting to
+# a surviving pod (sessions persisted via storageBackend: redis), NOT from extra
+# replicas behind a Service. See README.md "多副本 != 集群".
+replicaCount: 1
 
 image:
   pullPolicy: Always
@@ -16,9 +21,12 @@ resources:
     cpu: 1000m
     memory: 512Mi
 
+# Autoscaling stays OFF for the same reason as replicaCount above: an HPA would
+# scale this into independent, mutually-ignorant brokers.
 autoscaling:
-  minReplicas: 3
-  maxReplicas: 20
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 1
 
 config:
   allowAllAuth: false

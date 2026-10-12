@@ -1,3 +1,15 @@
+# ===========================================================================
+# WARNING -- autoscaling does not make shark-mqtt a cluster.
+#
+# Adding replicas only adds *independent* brokers (see deployment.yaml). An HPA
+# that scales this Deployment past 1 replica will silently lose messages, and it
+# cannot rebalance the long-lived TCP connections this broker already holds --
+# scaling out never moves an existing MQTT session, it only spreads NEW
+# connections over pods that share no state.
+#
+# Therefore this object is NOT part of the default kustomization. Apply it only
+# after a clustering / topic-routing layer exists, and keep minReplicas at 1.
+# ===========================================================================
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -11,7 +23,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: shark-mqtt
-  minReplicas: 2
+  minReplicas: 1
   maxReplicas: 10
   metrics:
     - type: Resource
