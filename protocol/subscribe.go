@@ -27,7 +27,7 @@ func (c *Codec) decodeSubscribe(r io.Reader, fh FixedHeader) (*SubscribePacket, 
 	defer putDecodeReader(reader)
 
 	var props *Properties
-	if c.protocolVersion == Version50 {
+	if c.spec.Properties {
 		props, err = c.decodeProperties(reader)
 		if err != nil {
 			return nil, err
@@ -53,7 +53,7 @@ func (c *Codec) decodeSubscribe(r io.Reader, fh FixedHeader) (*SubscribePacket, 
 		}
 		// MQTT 3.1.1: bits 2-7 (NoLocal / RetainAsPublished / RetainHandling)
 		// are reserved and must be zero (NEW-19).
-		if c.protocolVersion != Version50 && optsByte&0xFC != 0 {
+		if !c.spec.Properties && optsByte&0xFC != 0 {
 			return nil, ErrMalformedPacket
 		}
 		if optsByte&0xC0 != 0 || optsByte&0x03 == 3 || (optsByte>>4)&0x03 == 3 {
@@ -95,7 +95,7 @@ func (c *Codec) encodeSubscribe(w io.Writer, pkt *SubscribePacket) error {
 		if err := c.encodeProperties(&buf, pkt.Properties); err != nil {
 			return err
 		}
-	} else if c.protocolVersion == Version50 {
+	} else if c.spec.Properties {
 		if err := writeVarInt(&buf, 0); err != nil {
 			return err
 		}
@@ -162,7 +162,7 @@ func (c *Codec) decodeSubAck(r io.Reader, fh FixedHeader) (*SubAckPacket, error)
 		reader := decodeReader(data)
 		defer putDecodeReader(reader)
 
-		if c.protocolVersion == Version50 {
+		if c.spec.Properties {
 			props, err = c.decodeProperties(reader)
 			if err != nil {
 				return nil, err
@@ -200,7 +200,7 @@ func (c *Codec) encodeSubAck(w io.Writer, pkt *SubAckPacket) error {
 		if err := c.encodeProperties(&buf, pkt.Properties); err != nil {
 			return err
 		}
-	} else if c.protocolVersion == Version50 {
+	} else if c.spec.Properties {
 		if err := writeVarInt(&buf, 0); err != nil {
 			return err
 		}
@@ -242,7 +242,7 @@ func (c *Codec) decodeUnsubscribe(r io.Reader, fh FixedHeader) (*UnsubscribePack
 	defer putDecodeReader(reader)
 
 	var props *Properties
-	if c.protocolVersion == Version50 {
+	if c.spec.Properties {
 		props, err = c.decodeProperties(reader)
 		if err != nil {
 			return nil, err
@@ -283,7 +283,7 @@ func (c *Codec) encodeUnsubscribe(w io.Writer, pkt *UnsubscribePacket) error {
 		if err := c.encodeProperties(&buf, pkt.Properties); err != nil {
 			return err
 		}
-	} else if c.protocolVersion == Version50 {
+	} else if c.spec.Properties {
 		if err := writeVarInt(&buf, 0); err != nil {
 			return err
 		}
@@ -309,12 +309,12 @@ func (c *Codec) encodeUnsubscribe(w io.Writer, pkt *UnsubscribePacket) error {
 }
 
 func (c *Codec) decodeUnsubAck(r io.Reader, fh FixedHeader) (*UnsubAckPacket, error) {
-	if c.protocolVersion != Version50 && fh.RemainingLength != 2 {
+	if !c.spec.ReasonCodes && fh.RemainingLength != 2 {
 		return nil, ErrMalformedPacket
 	}
 	// A UNSUBACK always carries a 2-byte packet identifier; without this
 	// guard a Remaining Length < 2 would make the direct readUint16 below
-	// consume bytes from the next packet (audit).
+	// consume bytes from the next packet and desynchronize the stream (audit).
 	if fh.RemainingLength < 2 {
 		return nil, ErrMalformedPacket
 	}
@@ -339,7 +339,7 @@ func (c *Codec) decodeUnsubAck(r io.Reader, fh FixedHeader) (*UnsubAckPacket, er
 		reader := decodeReader(data)
 		defer putDecodeReader(reader)
 
-		if c.protocolVersion == Version50 {
+		if c.spec.Properties {
 			props, err = c.decodeProperties(reader)
 			if err != nil {
 				return nil, err
@@ -364,7 +364,7 @@ func (c *Codec) decodeUnsubAck(r io.Reader, fh FixedHeader) (*UnsubAckPacket, er
 }
 
 func (c *Codec) encodeUnsubAck(w io.Writer, pkt *UnsubAckPacket) error {
-	if c.protocolVersion != Version50 && (len(pkt.ReasonCodes) > 0 || pkt.Properties != nil) {
+	if !c.spec.ReasonCodes && (len(pkt.ReasonCodes) > 0 || pkt.Properties != nil) {
 		return ErrMalformedPacket
 	}
 
@@ -381,7 +381,7 @@ func (c *Codec) encodeUnsubAck(w io.Writer, pkt *UnsubAckPacket) error {
 		if err := c.encodeProperties(&buf, pkt.Properties); err != nil {
 			return err
 		}
-	} else if c.protocolVersion == Version50 {
+	} else if c.spec.Properties {
 		if err := writeVarInt(&buf, 0); err != nil {
 			return err
 		}
@@ -418,7 +418,7 @@ func (c *Codec) encodePingResp(w io.Writer, pkt *PingRespPacket) error {
 // --- Disconnect ---
 
 func (c *Codec) decodeDisconnect(r io.Reader, fh FixedHeader) (*DisconnectPacket, error) {
-	if c.protocolVersion != Version50 && fh.RemainingLength > 0 {
+	if !c.spec.ReasonCodes && fh.RemainingLength > 0 {
 		return nil, ErrMalformedPacket
 	}
 
@@ -459,7 +459,7 @@ func (c *Codec) decodeDisconnect(r io.Reader, fh FixedHeader) (*DisconnectPacket
 }
 
 func (c *Codec) encodeDisconnect(w io.Writer, pkt *DisconnectPacket) error {
-	if c.protocolVersion != Version50 && (pkt.ReasonCode != 0 || pkt.Properties != nil) {
+	if !c.spec.ReasonCodes && (pkt.ReasonCode != 0 || pkt.Properties != nil) {
 		return ErrMalformedPacket
 	}
 
@@ -487,7 +487,7 @@ func (c *Codec) encodeDisconnect(w io.Writer, pkt *DisconnectPacket) error {
 // --- Auth ---
 
 func (c *Codec) decodeAuth(r io.Reader, fh FixedHeader) (*AuthPacket, error) {
-	if c.protocolVersion != Version50 {
+	if !c.spec.AuthPacket {
 		return nil, ErrInvalidPacket
 	}
 
@@ -531,7 +531,7 @@ func (c *Codec) decodeAuth(r io.Reader, fh FixedHeader) (*AuthPacket, error) {
 }
 
 func (c *Codec) encodeAuth(w io.Writer, pkt *AuthPacket) error {
-	if c.protocolVersion != Version50 {
+	if !c.spec.AuthPacket {
 		return ErrInvalidPacket
 	}
 	if !validAuthReasonCode(pkt.ReasonCode) {

@@ -35,6 +35,7 @@ func putDecodeReader(r *bytes.Reader) {
 type Codec struct {
 	maxPacketSize   int
 	protocolVersion uint8            // set after CONNECT is decoded
+	spec            Spec             // capability table for protocolVersion
 	pool            *bufferpool.Pool // optional buffer pool for decode buffers
 }
 
@@ -43,7 +44,39 @@ func NewCodec(maxPacketSize int) *Codec {
 	if maxPacketSize <= 0 {
 		maxPacketSize = 256 * 1024 // 256KB default
 	}
-	return &Codec{maxPacketSize: maxPacketSize, protocolVersion: 4, pool: bufferpool.Default()} // default MQTT 3.1.1
+	c := &Codec{maxPacketSize: maxPacketSize, pool: bufferpool.Default()}
+	c.setVersion(Version311) // default MQTT 3.1.1
+	return c
+}
+
+// setVersion records the protocol version and re-derives its capability table.
+func (c *Codec) setVersion(v uint8) {
+	c.protocolVersion = v
+	c.syncSpec()
+}
+
+// syncSpec keeps the cached capability table in step with protocolVersion.
+// protocolVersion is documented as set via setVersion, but white-box callers
+// (and future code) may set the field directly, so Decode/Encode re-derive the
+// table on the cheap when it is out of sync (single integer compare on the
+// steady-state path).
+func (c *Codec) syncSpec() {
+	if c.spec.Version == c.protocolVersion {
+		return
+	}
+	if sp, ok := SpecOf(c.protocolVersion); ok {
+		c.spec = sp
+		return
+	}
+	c.spec, _ = SpecOf(Version311)
+}
+
+// Spec returns the capability table for the codec's current protocol version.
+// A codec that has not negotiated a known version falls back to the 3.1.1
+// capabilities (the historical default).
+func (c *Codec) Spec() Spec {
+	c.syncSpec()
+	return c.spec
 }
 
 // SetPool sets an optional buffer pool for decode operations.
@@ -53,6 +86,7 @@ func (c *Codec) SetPool(p *bufferpool.Pool) {
 
 // Decode reads a packet from the reader and returns the appropriate Packet type.
 func (c *Codec) Decode(r io.Reader) (Packet, error) {
+	c.syncSpec()
 	fh, err := c.decodeFixedHeader(r)
 	if err != nil {
 		return nil, err
@@ -148,6 +182,7 @@ func validateFixedHeaderFlags(fh FixedHeader) error {
 
 // Encode writes a packet to the writer.
 func (c *Codec) Encode(w io.Writer, p Packet) error {
+	c.syncSpec()
 	switch pkt := p.(type) {
 	case *ConnectPacket:
 		return c.encodeConnect(w, pkt)

@@ -6,20 +6,23 @@ import (
 	"time"
 
 	"github.com/X1aSheng/shark-mqtt/pkg/logger"
+	"github.com/X1aSheng/shark-mqtt/pkg/metrics"
 )
 
 // ServerOption configures the Server.
 type ServerOption func(*serverOpts)
 
 type serverOpts struct {
-	tlsConfig       *tls.Config
-	writeBufferSize int
-	readBufferSize  int
-	maxPacketSize   uint32
-	keepAlive       time.Duration
-	connectTimeout  time.Duration
-	listener        net.Listener  // custom listener (for testing)
-	logr            logger.Logger // diagnostic logger
+	tlsConfig        *tls.Config
+	writeBufferSize  int
+	readBufferSize   int
+	maxPacketSize    uint32
+	maxPacketSizeSet bool // true when WithMaxPacketSize was applied explicitly
+	keepAlive        time.Duration
+	connectTimeout   time.Duration
+	listener         net.Listener  // custom listener (for testing)
+	logr             logger.Logger // diagnostic logger
+	metrics          metrics.Metrics
 }
 
 func defaultServerOptions() serverOpts {
@@ -28,6 +31,7 @@ func defaultServerOptions() serverOpts {
 		readBufferSize:  4096,
 		maxPacketSize:   268435455, // MQTT max packet size
 		connectTimeout:  5 * time.Second,
+		metrics:         metrics.Default(),
 	}
 }
 
@@ -56,6 +60,7 @@ func WithReadBufferSize(n int) ServerOption {
 func WithMaxPacketSize(n uint32) ServerOption {
 	return func(o *serverOpts) {
 		o.maxPacketSize = n
+		o.maxPacketSizeSet = true
 	}
 }
 
@@ -85,5 +90,17 @@ func WithListener(ln net.Listener) ServerOption {
 func WithServerLogger(l logger.Logger) ServerOption {
 	return func(o *serverOpts) {
 		o.logr = l
+	}
+}
+
+// WithServerMetrics sets the metrics collector used by the network server for
+// the handshake-phase counters that moved out of the broker core with the
+// protocol-adapter refactor (CONNECT read-deadline failures and CONNECT decode
+// failures). Callers should pass the same collector given to the broker so the
+// counters land on one sink. A nil value is normalized to a no-op (see
+// NewMQTTServer) so it can never cause a nil-pointer panic.
+func WithServerMetrics(m metrics.Metrics) ServerOption {
+	return func(o *serverOpts) {
+		o.metrics = m
 	}
 }

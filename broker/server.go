@@ -15,6 +15,7 @@ import (
 
 	"github.com/X1aSheng/shark-mqtt/config"
 	"github.com/X1aSheng/shark-mqtt/pkg/logger"
+	"github.com/X1aSheng/shark-mqtt/pkg/metrics"
 	"github.com/X1aSheng/shark-mqtt/protocol"
 	"github.com/gorilla/websocket"
 )
@@ -37,6 +38,17 @@ type MQTTServer struct {
 	mu          sync.Mutex
 	conns       map[net.Conn]struct{}
 	wsEndpoints []*wsEndpoint // WebSocket listeners (plain WS and/or WSS, R5)
+
+	// registry selects the protocol adapter for an accepted connection, and
+	// connectTimeout bounds identification + handshake (migrated here from
+	// Broker.HandleConnection).
+	registry       *protocol.Registry
+	connectTimeout time.Duration
+
+	// metrics records handshake-phase counters that moved out of the broker
+	// core with the protocol-adapter refactor (CONNECT read-deadline failures
+	// and CONNECT decode failures). Never nil after NewMQTTServer.
+	metrics metrics.Metrics
 }
 
 // wsEndpoint is one WebSocket listener (plain WS or TLS WSS).
@@ -44,12 +56,6 @@ type wsEndpoint struct {
 	ln  net.Listener
 	srv *http.Server
 	tls bool
-}
-
-// ConnectionHandler is called when a new connection is accepted.
-// It receives the raw connection and should handle the MQTT protocol handshake.
-type ConnectionHandler interface {
-	HandleConnection(ctx context.Context, conn net.Conn, codec *protocol.Codec) error
 }
 
 // NewMQTTServer creates a new MQTT network server.
@@ -89,6 +95,28 @@ func NewMQTTServer(cfg *config.Config, opts ...ServerOption) *MQTTServer {
 	// Use custom listener if provided
 	if sopts.listener != nil {
 		s.listener = sopts.listener
+	}
+
+	// Build the protocol adapter registry. This iteration registers a single
+	// MQTT adapter (3.1 / 3.1.1 / 5.0); the registry is the seam that lets
+	// additional adapters (QUIC / MQTT-SN / CoAP) be added later without
+	// touching the server or the broker core.
+	ct := sopts.connectTimeout
+	if cfg != nil && cfg.ConnectTimeout > 0 {
+		ct = cfg.ConnectTimeout
+	}
+	s.connectTimeout = ct
+	mps := int(sopts.maxPacketSize)
+	if !sopts.maxPacketSizeSet && cfg != nil && cfg.MaxPacketSize > 0 {
+		mps = cfg.MaxPacketSize
+	}
+	s.registry = protocol.NewRegistry(protocol.NewMQTTAdapterWithTimeout(mps, ct))
+
+	// Normalize metrics so handleConn never dereferences a nil collector (a
+	// caller passing WithServerMetrics(nil) must not panic).
+	s.metrics = sopts.metrics
+	if s.metrics == nil {
+		s.metrics = metrics.Default()
 	}
 
 	return s
@@ -266,7 +294,7 @@ func (s *MQTTServer) acceptLoop(ln net.Listener) {
 			}()
 
 			if s.handler != nil {
-				if err := s.handler.HandleConnection(s.ctx, c, nil); err != nil {
+				if err := s.handleConn(c); err != nil {
 					if isEarlyClose(err) {
 						s.earlyClose.Add(1)
 					} else {
@@ -276,6 +304,67 @@ func (s *MQTTServer) acceptLoop(ln net.Listener) {
 			}
 		}(conn)
 	}
+}
+
+// handleConn performs protocol identification and handshake on an accepted
+// connection, assembles a protocol-neutral Conn, and hands it to the configured
+// handler. The CONNECT handshake deadline lives here (migrated out of
+// Broker.HandleConnection).
+func (s *MQTTServer) handleConn(conn net.Conn) error {
+	if s.handler == nil {
+		return nil
+	}
+	pc := protocol.NewPeekConn(conn)
+
+	// Bound protocol identification (Peek) with the handshake deadline so a
+	// client that connects but never sends a byte is reaped promptly. Failing
+	// to arm the deadline was counted as a "deadline" error before the
+	// protocol-adapter refactor; preserve that counter (R2).
+	timeout := s.connectTimeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	if err := pc.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		s.metrics.IncErrors("deadline")
+		return err
+	}
+
+	adapter, err := s.registry.Select(pc, "")
+	if err != nil {
+		// Identification failed: the opening bytes could not be read (e.g. a
+		// client that connected but sent nothing and was reaped by the
+		// deadline) or no registered adapter claimed them. Before the refactor
+		// both surfaced as a CONNECT decode failure, so they keep the same
+		// decode_error/decode counters.
+		s.metrics.IncRejections("decode_error")
+		s.metrics.IncErrors("decode")
+		return err
+	}
+	info, codec, err := adapter.Handshake(s.ctx, pc)
+	if err != nil {
+		// The CONNECT frame failed to decode/read. The broker core owned this
+		// counter before the refactor; the handshake now lives in the adapter,
+		// so count it here. This is strictly the wire-decode path: semantic
+		// validation (protocol name/version/flags/ClientID) still runs in the
+		// broker and is counted there (invalid_packet / invalid_connect), so
+		// the two never double-count.
+		s.metrics.IncRejections("decode_error")
+		s.metrics.IncErrors("decode")
+		return err
+	}
+	// The handshake deadline only covers identification + CONNECT; clear it so
+	// the per-connection keep-alive deadline (set by the broker) governs the
+	// read loop.
+	_ = pc.SetReadDeadline(time.Time{})
+
+	spec, _ := adapter.Spec(info.Version)
+	return s.handler.HandleConnection(s.ctx, &Conn{
+		Raw:     pc,
+		Adapter: adapter,
+		Info:    info,
+		Codec:   codec,
+		Spec:    spec,
+	})
 }
 
 // isEarlyClose returns true if the error indicates the client disconnected
@@ -395,7 +484,7 @@ func (s *MQTTServer) wsHandler(w http.ResponseWriter, r *http.Request) {
 			s.mu.Unlock()
 		}()
 		if s.handler != nil {
-			if err := s.handler.HandleConnection(s.ctx, conn, nil); err != nil {
+			if err := s.handleConn(conn); err != nil {
 				s.logr.Debug("ws connection handler error", "error", err)
 			}
 		}

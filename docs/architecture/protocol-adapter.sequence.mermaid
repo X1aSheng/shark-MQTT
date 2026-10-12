@@ -1,0 +1,33 @@
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant S as MQTTServer
+    participant R as ProtocolRegistry
+    participant A as MQTTAdapter
+    participant B as Broker（核心）
+
+    S->>S: Accept() → net.Conn
+    S->>R: Select(peekConn, listenerBinding)
+    alt listener 显式绑定协议
+        R-->>S: 绑定适配器
+    else 指纹嗅探
+        R->>A: Identify(peekConn) → (b[0]>>4)==0x1 ?
+        A-->>R: true
+        R-->>S: MQTTAdapter
+    end
+    S->>A: Handshake(ctx, conn)
+    A->>C: （读）CONNECT
+    A->>A: decodeConnect + ValidateConnect
+    A->>A: SpecOf(version) → Spec
+    A-->>S: ConnectInfo, Codec（版本绑定）, Spec
+    S->>S: 组装 Conn{Raw, Adapter, Info, Codec, Spec}
+    S->>B: HandleConnection(ctx, *Conn)
+    B->>B: 鉴权 / ClientID 策略 / 会话恢复
+    B->>A: Codec.Encode(conn, CONNACK)  // 按 Spec 决定 SP / reason
+    A->>C: CONNACK
+    loop 读循环
+        B->>A: Codec.Decode(conn)
+        A-->>B: protocol.Packet
+        B->>B: switch(pkt) → publish / subscribe / ...
+    end
+    B->>A: Codec.Encode(conn, DISCONNECT)  // 仅 Spec.ServerDisconnect

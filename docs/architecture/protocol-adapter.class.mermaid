@@ -1,0 +1,68 @@
+classDiagram
+    class Adapter {
+        <<interface>>
+        +Name() string
+        +Identify(conn PeekConn) (bool, error)
+        +Handshake(ctx, conn) (*ConnectInfo, Codec, error)
+        +Spec(v Version) (Spec, bool)
+    }
+    class Codec {
+        <<interface>>
+        +Decode(r) (Packet, error)
+        +Encode(w, p) error
+        +Spec() Spec
+    }
+    class Spec {
+        +Version Version
+        +Name string
+        +MaxClientIDLen int
+        +AllowEmptyID bool
+        +ConnAckSessionPresent bool
+        +ConnAckHasReasonCode bool
+        +SubAckFailureSupported bool
+        +Properties bool
+        +ReasonCodes bool
+        +ServerDisconnect bool
+        +TopicAlias bool
+        +AuthPacket bool
+    }
+    class ConnectInfo {
+        +Protocol string
+        +Version Version
+        +ClientID string
+        +Username string
+        +CleanSession bool
+        +KeepAlive uint16
+        +Extensions any
+    }
+    class Registry {
+        -adapters []Adapter
+        +Register(a Adapter)
+        +Lookup(name) (Adapter, bool)
+        +Select(conn, bound) (Adapter, error)
+    }
+    class MQTTAdapter
+    class MQTTCodec
+    class Conn {
+        +Raw net.Conn
+        +Adapter Adapter
+        +Info ConnectInfo
+        +Codec Codec
+        +Spec Spec
+    }
+    class ConnectionHandler {
+        <<interface>>
+        +HandleConnection(ctx, c Conn) error
+    }
+    Adapter <|.. MQTTAdapter
+    Codec <|.. MQTTCodec
+    Adapter ..> Spec : derives
+    Adapter ..> ConnectInfo : produces
+    Adapter ..> Codec : produces
+    Registry o-- Adapter
+    MQTTAdapter --> MQTTCodec
+    ConnectionHandler ..> Conn
+    Conn --> Adapter
+    Conn --> Codec
+    Conn --> ConnectInfo
+    Conn --> Spec

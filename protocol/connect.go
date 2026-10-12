@@ -24,7 +24,7 @@ func (c *Codec) decodeConnect(r io.Reader, fh FixedHeader) (*ConnectPacket, erro
 	if err != nil {
 		return nil, err
 	}
-	c.protocolVersion = protoVer
+	c.setVersion(protoVer)
 
 	connectFlags, err := reader.ReadByte()
 	if err != nil {
@@ -49,7 +49,7 @@ func (c *Codec) decodeConnect(r io.Reader, fh FixedHeader) (*ConnectPacket, erro
 
 	// MQTT 5.0 properties
 	var props, willProps *Properties
-	if protoVer == Version50 {
+	if c.spec.Properties {
 		props, err = c.decodeProperties(reader)
 		if err != nil {
 			return nil, err
@@ -64,7 +64,7 @@ func (c *Codec) decodeConnect(r io.Reader, fh FixedHeader) (*ConnectPacket, erro
 	var willTopic string
 	var willMessage []byte
 	if flags.WillFlag {
-		if protoVer == Version50 {
+		if c.spec.Properties {
 			willProps, err = c.decodeProperties(reader)
 			if err != nil {
 				return nil, err
@@ -131,8 +131,13 @@ func (c *Codec) decodeConnect(r io.Reader, fh FixedHeader) (*ConnectPacket, erro
 	return pkt, nil
 }
 
-// ValidateConnect validates the CONNECT packet per MQTT 3.1.1 / 5.0 rules.
-// Returns the appropriate ConnAck reason code and an error message, or nil if valid.
+// ValidateConnect validates the CONNECT packet. Most rules are shared across
+// versions (protocol name/version pairing, reserved flag, will flags, password
+// flag); the version-specific ClientID rules are applied through the Spec
+// capability table: MQTT 3.1 rejects a zero-length ClientID and caps the ID at
+// 23 characters, while MQTT 3.1.1 / 5.0 allow an empty ID only with Clean
+// Session/Clean Start = 1. Returns an error describing the first violation, or
+// nil if valid.
 func ValidateConnect(pkt *ConnectPacket) error {
 	// Check protocol name (MQTT 3.1.1 §3.1.2.1)
 	if pkt.ProtocolName != ProtocolNameMQTT && pkt.ProtocolName != ProtocolNameMQIsdp {
@@ -177,18 +182,32 @@ func ValidateConnect(pkt *ConnectPacket) error {
 		return fmt.Errorf("protocol: password flag set but username flag not set")
 	}
 
-	// Zero-length ClientID requires CleanSession=1 (MQTT 3.1.1 §3.1.3.1)
-	if len(pkt.ClientID) == 0 && !pkt.Flags.CleanSession {
-		return fmt.Errorf("protocol: zero-length client ID requires clean session")
+	// ClientID rules are version-specific (Spec):
+	//   - MQTT 3.1 forbids a zero-length ClientID entirely, and caps the
+	//     ClientID at 23 characters (MQTT 3.1 §3.1.3.1).
+	//   - MQTT 3.1.1 / 5.0 allow a zero-length ClientID only when Clean
+	//     Session / Clean Start is 1; the server then assigns an identifier
+	//     (MQTT 3.1.1 §3.1.3.1, MQTT 5.0 §3.1.3.1).
+	// The protocol version has already been validated against the Spec table
+	// above, so sp is non-zero here.
+	sp, _ := SpecOf(pkt.ProtocolVersion)
+	if len(pkt.ClientID) == 0 {
+		if !sp.AllowEmptyID {
+			return fmt.Errorf("protocol: MQTT %d does not allow a zero-length client ID", pkt.ProtocolVersion)
+		}
+		if !pkt.Flags.CleanSession {
+			return fmt.Errorf("protocol: zero-length client ID requires clean session")
+		}
+	}
+	if sp.MaxClientIDLen > 0 && len(pkt.ClientID) > sp.MaxClientIDLen {
+		return fmt.Errorf("protocol: client ID length %d exceeds MQTT %d maximum %d",
+			len(pkt.ClientID), pkt.ProtocolVersion, sp.MaxClientIDLen)
 	}
 
 	// WillFlag: if set, WillTopic must not be empty (spec recommends but doesn't require)
 	if pkt.Flags.WillFlag && len(pkt.WillTopic) == 0 {
 		return fmt.Errorf("protocol: will flag set but will topic is empty")
 	}
-
-	// ClientID length must not exceed 23 characters per MQTT 3.1 (not a hard limit in 3.1.1)
-	// Allow up to 65535 for broader compatibility
 
 	return nil
 }
@@ -197,7 +216,7 @@ func (c *Codec) encodeConnect(w io.Writer, pkt *ConnectPacket) error {
 	var buf bytes.Buffer
 
 	// Track protocol version for subsequent encode/decode
-	c.protocolVersion = pkt.ProtocolVersion
+	c.setVersion(pkt.ProtocolVersion)
 
 	// Protocol name
 	if err := writeString(&buf, pkt.ProtocolName); err != nil {
@@ -237,7 +256,7 @@ func (c *Codec) encodeConnect(w io.Writer, pkt *ConnectPacket) error {
 	}
 
 	// MQTT 5.0 properties
-	if pkt.ProtocolVersion == Version50 {
+	if c.spec.Properties {
 		if pkt.Properties != nil {
 			if err := c.encodeProperties(&buf, pkt.Properties); err != nil {
 				return err
@@ -257,7 +276,7 @@ func (c *Codec) encodeConnect(w io.Writer, pkt *ConnectPacket) error {
 
 	// Will
 	if pkt.Flags.WillFlag {
-		if pkt.ProtocolVersion == Version50 {
+		if c.spec.Properties {
 			if pkt.WillProperties != nil {
 				if err := c.encodeProperties(&buf, pkt.WillProperties); err != nil {
 					return err
@@ -341,12 +360,12 @@ func (c *Codec) decodeConnAck(r io.Reader, fh FixedHeader) (*ConnAckPacket, erro
 	var props *Properties
 	// MQTT 3.1.1 CONNACK has exactly 2 payload bytes (session present + reason
 	// code); anything else is malformed (P3-3).
-	if c.protocolVersion != Version50 && fh.RemainingLength != 2 {
+	if !c.spec.Properties && fh.RemainingLength != 2 {
 		return nil, ErrMalformedPacket
 	}
 	// MQTT 5.0: remaining bytes (if any) are properties, and all of them must
 	// be consumed (NEW-18).
-	if c.protocolVersion == Version50 && fh.RemainingLength > 2 {
+	if c.spec.Properties && fh.RemainingLength > 2 {
 		props, err = c.decodeProperties(reader)
 		if err != nil {
 			return nil, err
@@ -367,9 +386,11 @@ func (c *Codec) decodeConnAck(r io.Reader, fh FixedHeader) (*ConnAckPacket, erro
 func (c *Codec) encodeConnAck(w io.Writer, pkt *ConnAckPacket) error {
 	var buf bytes.Buffer
 
-	// Session present + reserved
+	// Session present + reserved. MQTT 3.1 has no Session Present flag: the
+	// first CONNACK byte is reserved and MUST be 0 (Spec.ConnAckSessionPresent
+	// is false for 3.1, true for 3.1.1 / 5.0).
 	spByte := byte(0)
-	if pkt.SessionPresent {
+	if pkt.SessionPresent && c.spec.ConnAckSessionPresent {
 		spByte |= 0x01
 	}
 	if err := buf.WriteByte(spByte); err != nil {
@@ -386,7 +407,7 @@ func (c *Codec) encodeConnAck(w io.Writer, pkt *ConnAckPacket) error {
 		if err := c.encodeProperties(&buf, pkt.Properties); err != nil {
 			return err
 		}
-	} else if c.protocolVersion == Version50 {
+	} else if c.spec.Properties {
 		if err := writeVarInt(&buf, 0); err != nil {
 			return err
 		}

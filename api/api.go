@@ -258,7 +258,7 @@ func NewBroker(opts ...Option) *Broker {
 	brk := broker.New(bopts...)
 
 	// Create the network server
-	srv := broker.NewMQTTServer(o.cfg)
+	srv := broker.NewMQTTServer(o.cfg, broker.WithServerMetrics(o.metrics))
 
 	// Connect server to broker (broker.Broker implements broker.ConnectionHandler)
 	srv.SetHandler(brk)

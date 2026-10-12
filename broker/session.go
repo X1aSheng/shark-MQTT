@@ -74,6 +74,21 @@ type Session struct {
 	stats Stats
 }
 
+// Spec returns the capability table for the session's negotiated protocol
+// version, so the broker core can query capabilities instead of comparing raw
+// version values. Unknown/unset versions fall back to the 3.1.1 capabilities
+// (the historical default).
+func (s *Session) Spec() protocol.Spec {
+	if s == nil {
+		return protocol.Spec{}
+	}
+	if sp, ok := protocol.SpecOf(s.ProtocolVer); ok {
+		return sp
+	}
+	sp, _ := protocol.SpecOf(protocol.Version311)
+	return sp
+}
+
 // SubscriptionOptions captures MQTT subscription options that affect delivery.
 type SubscriptionOptions struct {
 	QoS                    uint8

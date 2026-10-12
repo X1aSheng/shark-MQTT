@@ -38,7 +38,7 @@ func (c *Codec) decodePublish(r io.Reader, fh FixedHeader) (*PublishPacket, erro
 	var props *Properties
 	var payload []byte
 
-	if c.protocolVersion == Version50 {
+	if c.spec.Properties {
 		// MQTT 5.0: the body is properties + payload. Read it into a pooled
 		// transient buffer, parse properties, then copy the packet-owned
 		// payload out of it. data only feeds the parser and the copy, so it can
@@ -80,7 +80,7 @@ func (c *Codec) decodePublish(r io.Reader, fh FixedHeader) (*PublishPacket, erro
 	// Topic Alias property is present (MQTT 5.0 §3.3.2.3.4). Otherwise the
 	// topic must be non-empty and free of wildcards.
 	if len(topic) == 0 {
-		if c.protocolVersion != Version50 || props == nil || props.TopicAlias == nil || *props.TopicAlias == 0 {
+		if !c.spec.TopicAlias || props == nil || props.TopicAlias == nil || *props.TopicAlias == 0 {
 			return nil, ErrMalformedPacket
 		}
 	} else if !ValidatePublishTopic(topic) {
@@ -118,7 +118,7 @@ func (c *Codec) encodePublish(w io.Writer, pkt *PublishPacket) error {
 
 	if len(pkt.Topic) == 0 {
 		// MQTT 5.0 topic-alias publish with an empty topic name.
-		if c.protocolVersion != Version50 || pkt.Properties == nil || pkt.Properties.TopicAlias == nil || *pkt.Properties.TopicAlias == 0 {
+		if !c.spec.TopicAlias || pkt.Properties == nil || pkt.Properties.TopicAlias == nil || *pkt.Properties.TopicAlias == 0 {
 			return ErrMalformedPacket
 		}
 	} else if !ValidatePublishTopic(pkt.Topic) {
@@ -146,7 +146,7 @@ func (c *Codec) encodePublish(w io.Writer, pkt *PublishPacket) error {
 		if err := c.encodeProperties(buf, pkt.Properties); err != nil {
 			return err
 		}
-	} else if c.protocolVersion == Version50 {
+	} else if c.spec.Properties {
 		if err := writeVarInt(buf, 0); err != nil {
 			return err
 		}
@@ -289,7 +289,7 @@ func (c *Codec) decodeAckFields(r io.Reader, fh FixedHeader) (uint16, byte, *Pro
 	if fh.RemainingLength < 2 {
 		return 0, 0, nil, ErrMalformedPacket
 	}
-	if c.protocolVersion != Version50 && fh.RemainingLength != 2 {
+	if !c.spec.ReasonCodes && fh.RemainingLength != 2 {
 		return 0, 0, nil, ErrMalformedPacket
 	}
 
@@ -334,7 +334,7 @@ func (c *Codec) encodeAckFields(packetID uint16, reasonCode byte, props *Propert
 	if packetID == 0 {
 		return nil, ErrMalformedPacket
 	}
-	if c.protocolVersion != Version50 && (reasonCode != ReasonCodeSuccess || props != nil) {
+	if !c.spec.ReasonCodes && (reasonCode != ReasonCodeSuccess || props != nil) {
 		return nil, ErrMalformedPacket
 	}
 

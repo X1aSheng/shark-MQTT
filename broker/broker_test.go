@@ -97,12 +97,11 @@ func TestBroker_StartStop(t *testing.T) {
 
 func TestBroker_HandleConnection_ClosedConn(t *testing.T) {
 	b := New(WithAuth(AllowAllAuth{}))
-	codec := protocol.NewCodec(0)
 
 	serverConn, clientConn := net.Pipe()
 	go clientConn.Close()
 
-	err := b.HandleConnection(context.Background(), serverConn, codec)
+	err := handleConnWithHandshake(context.Background(), b, serverConn, 0)
 	if err == nil {
 		t.Error("expected error for closed connection")
 	}
@@ -110,7 +109,6 @@ func TestBroker_HandleConnection_ClosedConn(t *testing.T) {
 
 func TestBroker_HandleConnection_AuthFailed(t *testing.T) {
 	b := New(WithAuth(DenyAllAuth{}))
-	codec := protocol.NewCodec(0)
 
 	serverConn, clientConn := net.Pipe()
 	defer serverConn.Close()
@@ -121,7 +119,7 @@ func TestBroker_HandleConnection_AuthFailed(t *testing.T) {
 		clientConn.Close()
 	}()
 
-	err := b.HandleConnection(context.Background(), serverConn, codec)
+	err := handleConnWithHandshake(context.Background(), b, serverConn, 0)
 	if err == nil {
 		t.Error("expected error when auth fails")
 	}
@@ -512,7 +510,7 @@ func TestBroker_MaxConnections(t *testing.T) {
 	serverConn2, clientConn2 := net.Pipe()
 	defer clientConn2.Close()
 
-	err := b.HandleConnection(context.Background(), serverConn2, protocol.NewCodec(0))
+	err := b.HandleConnection(context.Background(), newRawConn(serverConn2, protocol.NewCodec(0)))
 	if err == nil {
 		t.Error("expected error when max connections exceeded")
 	}

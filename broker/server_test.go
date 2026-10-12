@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/X1aSheng/shark-mqtt/config"
-	"github.com/X1aSheng/shark-mqtt/protocol"
 )
 
 func TestNewMQTTServer(t *testing.T) {
@@ -78,7 +77,7 @@ type blockingHandler struct {
 	done chan struct{}
 }
 
-func (h *blockingHandler) HandleConnection(ctx context.Context, conn net.Conn, codec *protocol.Codec) error {
+func (h *blockingHandler) HandleConnection(ctx context.Context, c *Conn) error {
 	<-h.done
 	return nil
 }
@@ -98,6 +97,6 @@ func TestServerSetHandler(t *testing.T) {
 
 type mockHandler struct{}
 
-func (h *mockHandler) HandleConnection(ctx context.Context, conn net.Conn, codec *protocol.Codec) error {
+func (h *mockHandler) HandleConnection(ctx context.Context, c *Conn) error {
 	return nil
 }

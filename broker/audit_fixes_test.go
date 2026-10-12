@@ -35,10 +35,9 @@ func (denyAuthorizer) CanSubscribe(ctx context.Context, username, topic string) 
 func runRawClient(t *testing.T, b *Broker) (net.Conn, *protocol.Codec) {
 	t.Helper()
 	serverConn, clientConn := net.Pipe()
-	codec := protocol.NewCodec(0)
 	done := make(chan error, 1)
 	go func() {
-		done <- b.HandleConnection(context.Background(), serverConn, codec)
+		done <- handleConnWithHandshake(context.Background(), b, serverConn, 0)
 	}()
 	t.Cleanup(func() {
 		clientConn.Close()
@@ -944,7 +943,7 @@ func TestBroker_ConnectTimeout(t *testing.T) {
 	done := make(chan error, 1)
 	start := time.Now()
 	go func() {
-		done <- b.HandleConnection(context.Background(), serverConn, protocol.NewCodec(0))
+		done <- handleConnWithHandshake(context.Background(), b, serverConn, 0)
 	}()
 
 	// The peer never sends CONNECT; HandleConnection must give up after the

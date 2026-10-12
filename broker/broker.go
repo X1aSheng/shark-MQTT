@@ -24,7 +24,7 @@ var _ ConnectionHandler = (*Broker)(nil)
 // clientState holds the connection and codec for a client.
 type clientState struct {
 	conn  net.Conn
-	codec *protocol.Codec
+	codec protocol.PacketCodec
 	wmu   sync.Mutex // serializes writes when no async write queue is configured
 
 	// writeTimeout bounds each socket write; 0 disables the deadline (audit).
@@ -156,13 +156,29 @@ func New(opts ...Option) *Broker {
 	return b
 }
 
-// HandleConnection implements server.ConnectionHandler.
-// This is called by the network server when a new TCP connection is accepted.
-func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *protocol.Codec) error {
-	c := codec
-	if c == nil {
-		c = protocol.NewCodec(b.opts.maxPacketSize)
+// connAckForConnectRejection maps a ValidateConnect failure to the CONNACK
+// return/reason code. MQTT 5.0 uses 0x82 Protocol Error; MQTT 3.1.1 uses the
+// 0x01 Unacceptable Protocol Version code (unchanged from before the refactor);
+// MQTT 3.1 reports a ClientID rule violation with 0x02 Identifier Rejected.
+func connAckForConnectRejection(sp protocol.Spec, connectPkt *protocol.ConnectPacket) byte {
+	if sp.ConnAckHasReasonCode {
+		return protocol.ConnAckProtocolError
 	}
+	emptyID := len(connectPkt.ClientID) == 0 && !sp.AllowEmptyID
+	tooLongID := sp.MaxClientIDLen > 0 && len(connectPkt.ClientID) > sp.MaxClientIDLen
+	if emptyID || tooLongID {
+		return protocol.ConnAckIdentifierRejected
+	}
+	return protocol.ConnAckUnacceptableProtocol
+}
+
+// HandleConnection implements server.ConnectionHandler.
+// It consumes a protocol-neutral Conn whose handshake has already been
+// performed by the network server's protocol adapter; the broker core no
+// longer decodes the MQTT CONNECT itself.
+func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
+	conn := c.Raw
+	codec := c.Codec
 
 	// Check connection limit
 	if b.opts.maxConnections > 0 {
@@ -184,7 +200,7 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 			b.metrics.IncErrors("rate_limit")
 			b.logger.Debug("connection rate limit exceeded",
 				"remote", conn.RemoteAddr().String())
-			b.sendConnAckRaw(conn, c, protocol.ReasonCodeConnectionRateExceeded, false)
+			b.sendConnAckRaw(conn, codec, protocol.ReasonCodeConnectionRateExceeded, false)
 			_ = conn.Close()
 			return fmt.Errorf("broker: connection rate limit exceeded")
 		}
@@ -195,41 +211,28 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 		RemoteAddr: conn.RemoteAddr().String(),
 	})
 
-	// Set read deadline for CONNECT (audit: the deadline used to be a
-	// hard-coded 10s; WithConnectTimeout/config now control it).
-	timeout := b.opts.connectTimeout
-	if timeout <= 0 {
-		timeout = 10 * time.Second
-	}
-	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
-		b.metrics.IncErrors("deadline")
-		return fmt.Errorf("broker: set CONNECT deadline failed: %w", err)
-	}
-
-	// Wait for CONNECT packet
-	pkt, err := c.Decode(conn)
-	if err != nil {
-		b.metrics.IncRejections("decode_error")
-		b.metrics.IncErrors("decode")
-		return fmt.Errorf("broker: decode CONNECT failed: %w", err)
-	}
-
-	connectPkt, ok := pkt.(*protocol.ConnectPacket)
-	if !ok {
+	// The adapter projects the decoded CONNECT onto ConnectInfo and preserves
+	// the original *protocol.ConnectPacket in Extensions for version-specific
+	// data (Properties). The MQTT semantics below still speak protocol.Packet.
+	connectPkt, ok := c.Info.Extensions.(*protocol.ConnectPacket)
+	if !ok || connectPkt == nil {
 		b.metrics.IncRejections("invalid_packet")
 		b.metrics.IncErrors("protocol")
-		return fmt.Errorf("broker: expected CONNECT, got %T", pkt)
+		return fmt.Errorf("broker: connection carries no MQTT CONNECT info")
+	}
+	sp := c.Spec
+	if sp.Version == 0 {
+		sp, _ = protocol.SpecOf(connectPkt.ProtocolVersion)
 	}
 
-	// Validate CONNECT per MQTT spec
+	// Validate CONNECT per MQTT spec. The CONNECT packet was already decoded by
+	// the protocol adapter's handshake; validation (protocol name/version,
+	// flags, ClientID rules) stays here so the rejection CONNACK, rejection
+	// metrics and logs are identical to the pre-refactor behavior.
 	if err := protocol.ValidateConnect(connectPkt); err != nil {
 		b.metrics.IncRejections("invalid_connect")
 		b.metrics.IncErrors("protocol")
-		var reasonCode byte = protocol.ConnAckUnacceptableProtocol
-		if connectPkt.ProtocolVersion == protocol.Version50 {
-			reasonCode = protocol.ConnAckProtocolError
-		}
-		b.sendConnAckRaw(conn, c, byte(reasonCode), false)
+		b.sendConnAckRaw(conn, codec, connAckForConnectRejection(sp, connectPkt), false)
 		return fmt.Errorf("broker: CONNECT validation failed: %w", err)
 	}
 
@@ -238,19 +241,20 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 		b.metrics.IncRejections("client_id_too_long")
 		b.metrics.IncErrors("protocol")
 		var reasonCode byte
-		if connectPkt.ProtocolVersion == protocol.Version50 {
+		if sp.ConnAckHasReasonCode {
 			// MQTT 5.0 CONNACK reason for an invalid client identifier
 			// (audit: 0x82 Protocol Error was not descriptive).
 			reasonCode = protocol.ConnAckClientIdentifierNotValid
 		} else {
 			reasonCode = protocol.ConnAckIdentifierRejected
 		}
-		b.sendConnAckRaw(conn, c, reasonCode, false)
+		b.sendConnAckRaw(conn, codec, reasonCode, false)
 		return fmt.Errorf("broker: client ID %d bytes exceeds max %d bytes",
 			len(connectPkt.ClientID), b.opts.maxClientIDLength)
 	}
 
-	// Clear read deadline
+	// Clear the handshake read deadline left by the adapter so the per-client
+	// keep-alive deadline governs the read loop.
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
 		b.logger.Debug("failed to clear read deadline", "error", err)
 	}
@@ -265,10 +269,10 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 		enhancedAuth = b.findEnhancedAuth(connectPkt.Properties.AuthenticationMethod)
 		if enhancedAuth == nil {
 			b.metrics.IncAuthFailures()
-			b.sendConnAckRaw(conn, c, protocol.ReasonCodeBadAuthMethod, false)
+			b.sendConnAckRaw(conn, codec, protocol.ReasonCodeBadAuthMethod, false)
 			return fmt.Errorf("broker: unsupported authentication method %q", connectPkt.Properties.AuthenticationMethod)
 		}
-		if err := b.enhancedAuthHandshake(conn, c, connectPkt, enhancedAuth); err != nil {
+		if err := b.enhancedAuthHandshake(conn, codec, connectPkt, enhancedAuth); err != nil {
 			b.metrics.IncAuthFailures()
 			b.logger.Debug("enhanced auth failed", "clientID", connectPkt.ClientID, "error", err)
 			return err
@@ -282,16 +286,16 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 			// v3 code to a v5 client used to hand it an undefined reason
 			// code (audit).
 			reasonCode := byte(protocol.ConnAckBadUsernameOrPassword)
-			if connectPkt.ProtocolVersion == protocol.Version50 {
+			if sp.ConnAckHasReasonCode {
 				reasonCode = protocol.ConnAckBadUsernameOrPassword5
 			}
-			b.sendConnAckRaw(conn, c, reasonCode, false)
+			b.sendConnAckRaw(conn, codec, reasonCode, false)
 			return fmt.Errorf("broker: auth failed: %w", authErr)
 		}
 	}
 
 	if connectPkt.Flags.WillFlag && !protocol.ValidatePublishTopic(connectPkt.WillTopic) {
-		b.sendConnAckRaw(conn, c, protocol.ConnAckUnspecifiedError, false)
+		b.sendConnAckRaw(conn, codec, protocol.ConnAckUnspecifiedError, false)
 		return fmt.Errorf("broker: will topic %q contains wildcards", connectPkt.WillTopic)
 	}
 
@@ -306,10 +310,10 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 		if existing, ok := b.sessions.GetSession(connectPkt.ClientID); ok && existing.Username != connectPkt.Username {
 			b.metrics.IncRejections("session_user_mismatch")
 			reason := byte(protocol.ConnAckNotAuthorized)
-			if connectPkt.ProtocolVersion == protocol.Version50 {
+			if sp.ConnAckHasReasonCode {
 				reason = protocol.ConnAckNotAuthorized5
 			}
-			b.sendConnAckRaw(conn, c, reason, false)
+			b.sendConnAckRaw(conn, codec, reason, false)
 			return fmt.Errorf("broker: client ID %q belongs to a different user", connectPkt.ClientID)
 		}
 		if b.sessionStore != nil {
@@ -319,10 +323,10 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 			} else if err == nil && data != nil && data.Username != connectPkt.Username {
 				b.metrics.IncRejections("session_user_mismatch")
 				reason := byte(protocol.ConnAckNotAuthorized)
-				if connectPkt.ProtocolVersion == protocol.Version50 {
+				if sp.ConnAckHasReasonCode {
 					reason = protocol.ConnAckNotAuthorized5
 				}
-				b.sendConnAckRaw(conn, c, reason, false)
+				b.sendConnAckRaw(conn, codec, reason, false)
 				return fmt.Errorf("broker: client ID %q belongs to a different user", connectPkt.ClientID)
 			}
 		}
@@ -508,7 +512,7 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 	}
 	cs := &clientState{
 		conn:         conn,
-		codec:        c,
+		codec:        codec,
 		writeTimeout: b.opts.writeTimeout,
 		out:          make(chan protocol.Packet, qcap),
 		stopWrites:   make(chan struct{}),
@@ -558,7 +562,7 @@ func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *pro
 	b.setKeepAliveDeadline(conn, clientID, sess.KeepAlive)
 
 	// Run read loop (handles its own cleanup via abnormalDisconnect/gracefulDisconnect)
-	b.readLoop(clientID, sess, c, conn)
+	b.readLoop(clientID, sess, codec, conn)
 
 	return nil
 }
@@ -580,7 +584,7 @@ func (b *Broker) findEnhancedAuth(method string) EnhancedAuthenticator {
 // final AUTH 0x00 (Success) completes it. On single-step success (the
 // authenticator accepts the CONNECT data immediately) no AUTH packet is sent —
 // HandleConnection sends the CONNACK 0x00 afterwards.
-func (b *Broker) enhancedAuthHandshake(conn net.Conn, codec *protocol.Codec, connectPkt *protocol.ConnectPacket, auth EnhancedAuthenticator) error {
+func (b *Broker) enhancedAuthHandshake(conn net.Conn, codec protocol.PacketCodec, connectPkt *protocol.ConnectPacket, auth EnhancedAuthenticator) error {
 	var data []byte
 	if connectPkt.Properties != nil {
 		data = connectPkt.Properties.AuthenticationData
@@ -642,7 +646,7 @@ func (b *Broker) enhancedAuthHandshake(conn net.Conn, codec *protocol.Codec, con
 }
 
 // sendAuthPacket encodes and writes an AUTH packet directly to the connection.
-func (b *Broker) sendAuthPacket(conn net.Conn, codec *protocol.Codec, reason byte, method string, data []byte) error {
+func (b *Broker) sendAuthPacket(conn net.Conn, codec protocol.PacketCodec, reason byte, method string, data []byte) error {
 	pkt := &protocol.AuthPacket{
 		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeAuth},
 		ReasonCode:  reason,
@@ -1076,7 +1080,7 @@ func (b *Broker) setKeepAliveDeadline(conn net.Conn, clientID string, keepAlive 
 	}
 }
 
-func (b *Broker) readLoop(clientID string, sess *Session, codec *protocol.Codec, conn net.Conn) {
+func (b *Broker) readLoop(clientID string, sess *Session, codec protocol.PacketCodec, conn net.Conn) {
 	for {
 		pkt, err := codec.Decode(conn)
 		if err != nil {
@@ -1184,7 +1188,7 @@ func (b *Broker) readLoop(clientID string, sess *Session, codec *protocol.Codec,
 			// close directly. Either way the abnormal close publishes the
 			// client's will per §3.1.2.5.
 			b.logger.Debug("second CONNECT received, disconnecting", "clientID", clientID)
-			if sess != nil && sess.ProtocolVer == protocol.Version50 {
+			if sess != nil && sess.Spec().ServerDisconnect {
 				b.writePacket(clientID, &protocol.DisconnectPacket{
 					FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeDisconnect},
 					ReasonCode:  protocol.ReasonCodeProtocolError,
@@ -1315,7 +1319,7 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 				b.logger.Debug("QoS2 packet id reused before PUBREL",
 					"clientID", clientID, "packetID", pkt.PacketID)
 			}
-			if sess == nil || sess.ProtocolVer != protocol.Version50 {
+			if sess == nil || !sess.Spec().ReasonCodes {
 				reason = protocol.ReasonCodeSuccess
 			}
 			b.writePacket(clientID, &protocol.PubRecPacket{
@@ -1403,7 +1407,7 @@ func (b *Broker) ackDiscardedPublish(clientID string, sess *Session, pkt *protoc
 		return
 	}
 	reason := v5Reason
-	if sess == nil || sess.ProtocolVer != protocol.Version50 {
+	if sess == nil || !sess.Spec().ReasonCodes {
 		reason = protocol.ReasonCodeSuccess
 	}
 	switch pkt.QoS {
@@ -1428,7 +1432,7 @@ func (b *Broker) ackDiscardedPublish(clientID string, sess *Session, pkt *protoc
 // directly. The resulting read failure runs abnormalDisconnect, which
 // publishes the client's will.
 func (b *Broker) closeProtocolViolation(clientID string, sess *Session) {
-	if sess != nil && sess.ProtocolVer == protocol.Version50 {
+	if sess != nil && sess.Spec().ServerDisconnect {
 		b.writePacket(clientID, &protocol.DisconnectPacket{
 			FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeDisconnect},
 			ReasonCode:  protocol.ReasonCodeProtocolError,
@@ -1498,17 +1502,31 @@ func (b *Broker) handleRetainedMessage(pkt *protocol.PublishPacket) {
 	b.metrics.SetRetainedMessages(int(b.retainedCount.Load()))
 }
 
+// subAckFailureCode returns the SUBACK code used to report a failed
+// subscription for the session's protocol version. MQTT 3.1.1 / 5.0 use the
+// 0x80 failure code; MQTT 3.1 has no subscription failure code, so the reply is
+// a granted QoS 0 (0x00) — the subscription is still not created server-side.
+func subAckFailureCode(sess *Session) byte {
+	if sess != nil && !sess.Spec().SubAckFailureSupported {
+		return protocol.ReasonCodeGrantedQoS0
+	}
+	return protocol.SubAckFailure
+}
+
 func (b *Broker) handleSubscribe(clientID string, sess *Session, pkt *protocol.SubscribePacket) {
+	// Failure code for a rejected subscription filter (version-specific).
+	failCode := subAckFailureCode(sess)
+
 	// Enforce topic filter count limit to prevent resource exhaustion
 	if b.opts.maxTopicFiltersPerSub > 0 && len(pkt.Topics) > b.opts.maxTopicFiltersPerSub {
 		b.logger.Debug("too many topic filters in SUBSCRIBE",
 			"clientID", clientID, "count", len(pkt.Topics),
 			"max", b.opts.maxTopicFiltersPerSub)
-		// Report failure for every filter instead of granting QoS 0, so the
-		// client does not wrongly believe the subscriptions succeeded.
+		// Report failure for every filter; the code is version-specific
+		// (0x80 for 3.1.1 / 5.0, granted QoS 0 for 3.1).
 		codes := make([]byte, len(pkt.Topics))
 		for i := range codes {
-			codes[i] = protocol.SubAckFailure
+			codes[i] = failCode
 		}
 		b.writePacket(clientID, &protocol.SubAckPacket{
 			FixedHeader: protocol.FixedHeader{
@@ -1541,19 +1559,19 @@ func (b *Broker) handleSubscribe(clientID string, sess *Session, pkt *protocol.S
 			var ok bool
 			shareName, realFilter, ok = ParseSharedFilter(topic.Topic)
 			if !ok || !protocol.ValidateTopicFilter(realFilter) {
-				reasonCodes[i] = protocol.SubAckFailure
+				reasonCodes[i] = failCode
 				continue
 			}
 			aclFilter = realFilter
 			shared = true
 		} else if !protocol.ValidateTopicFilter(topic.Topic) {
-			reasonCodes[i] = protocol.SubAckFailure
+			reasonCodes[i] = failCode
 			continue
 		}
 
 		// Check authorization against the effective (non-shared) filter.
 		if b.opts.authorizer != nil && !b.opts.authorizer.CanSubscribe(b.ctx, username, aclFilter) {
-			reasonCodes[i] = protocol.SubAckFailure
+			reasonCodes[i] = failCode
 			continue
 		}
 
@@ -1568,7 +1586,7 @@ func (b *Broker) handleSubscribe(clientID string, sess *Session, pkt *protocol.S
 
 		existed := sess.HasSubscription(topic.Topic)
 		if !b.topics.Subscribe(topic.Topic, clientID, topic.QoS) {
-			reasonCodes[i] = protocol.SubAckFailure
+			reasonCodes[i] = failCode
 			continue
 		}
 		sess.AddSubscriptionFilter(topic)
@@ -1616,7 +1634,7 @@ func shouldDeliverRetained(retainHandling uint8, existed bool) bool {
 
 func (b *Broker) handleUnsubscribe(clientID string, sess *Session, pkt *protocol.UnsubscribePacket) {
 	var reasonCodes []byte
-	if sess != nil && sess.ProtocolVer == protocol.Version50 {
+	if sess != nil && sess.Spec().ReasonCodes {
 		reasonCodes = make([]byte, 0, len(pkt.Topics))
 	}
 
@@ -1857,7 +1875,7 @@ func (b *Broker) deliverQueuedMessages(clientID string, sess *Session) {
 		// The Message Expiry property is MQTT 5.0 wire syntax only; an MQTT
 		// 3.1.1 subscriber must not receive the property bytes (audit), even
 		// though the deadline itself is still enforced by doDeliver.
-		if sess.ProtocolVer == protocol.Version50 && !msg.ExpiresAt.IsZero() {
+		if sess.Spec().Properties && !msg.ExpiresAt.IsZero() {
 			remaining := uint32(time.Until(msg.ExpiresAt).Seconds())
 			if remaining < 1 {
 				remaining = 1 // never advertise 0 (0 means "already expired")
@@ -1924,7 +1942,7 @@ func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliver
 	// subscriber used to embed v5 property bytes into a v3.1.1 PUBLISH and
 	// corrupt the stream (audit). The expiry deadline is still enforced for
 	// bookkeeping; only its advertisement is version-gated.
-	if sess.ProtocolVer == protocol.Version50 &&
+	if sess.Spec().Properties &&
 		(len(subOpts) > 0 && subOpts[0].SubscriptionIdentifier != nil || !expiresAt.IsZero()) {
 		if pubPkt.Properties == nil {
 			pubPkt.Properties = &protocol.Properties{}
@@ -2180,8 +2198,15 @@ func (b *Broker) sendConnAck(clientID string, reasonCode byte, sessionPresent bo
 		return
 	}
 
+	// MQTT 3.1 has no Session Present flag: the first CONNACK byte is reserved
+	// and must be 0 regardless of the internal resume state
+	// (Spec.ConnAckSessionPresent is false for 3.1).
+	if sess != nil && !sess.Spec().ConnAckSessionPresent {
+		sessionPresent = false
+	}
+
 	pkt := buildConnAck(reasonCode, sessionPresent)
-	if sess != nil && sess.ProtocolVer == protocol.Version50 {
+	if sess != nil && sess.Spec().Properties {
 		pkt.Properties = b.buildConnAckProperties(sess)
 	}
 
@@ -2271,7 +2296,7 @@ func buildConnAck(reasonCode byte, sessionPresent bool) *protocol.ConnAckPacket 
 	}
 }
 
-func (b *Broker) sendConnAckRaw(conn net.Conn, codec *protocol.Codec, reasonCode byte, sessionPresent bool) {
+func (b *Broker) sendConnAckRaw(conn net.Conn, codec protocol.PacketCodec, reasonCode byte, sessionPresent bool) {
 	pkt := buildConnAck(reasonCode, sessionPresent)
 	if err := codec.Encode(conn, pkt); err != nil {
 		b.logger.Debug("failed to send CONNACK", "error", err)

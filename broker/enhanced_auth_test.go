@@ -113,7 +113,7 @@ func TestEnhancedAuth_MultiStep(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- b.HandleConnection(context.Background(), serverConn, nil)
+		done <- handleConnWithHandshake(context.Background(), b, serverConn, 0)
 	}()
 
 	clientCodec := protocol.NewCodec(0)
@@ -155,7 +155,7 @@ func TestEnhancedAuth_SingleStep(t *testing.T) {
 	defer clientConn.Close()
 
 	go func() {
-		_ = b.HandleConnection(context.Background(), serverConn, nil)
+		_ = handleConnWithHandshake(context.Background(), b, serverConn, 0)
 	}()
 
 	clientCodec := protocol.NewCodec(0)
@@ -180,7 +180,7 @@ func TestEnhancedAuth_UnsupportedMethod(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- b.HandleConnection(context.Background(), serverConn, nil)
+		done <- handleConnWithHandshake(context.Background(), b, serverConn, 0)
 	}()
 
 	clientCodec := protocol.NewCodec(0)
@@ -207,7 +207,7 @@ func TestEnhancedAuth_Rejected(t *testing.T) {
 	defer clientConn.Close()
 
 	go func() {
-		_ = b.HandleConnection(context.Background(), serverConn, nil)
+		_ = handleConnWithHandshake(context.Background(), b, serverConn, 0)
 	}()
 
 	clientCodec := protocol.NewCodec(0)
