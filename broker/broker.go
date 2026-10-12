@@ -21,6 +21,12 @@ import (
 // Compile-time interface compliance checks.
 var _ ConnectionHandler = (*Broker)(nil)
 
+// shutdownNotifyDelay bounds how long Stop waits for the per-connection
+// writeLoop to flush the DISCONNECT(0x8B) "server shutting down" notice before
+// the sockets are closed. The notice is best-effort: the delay is deliberately
+// short so a shutdown is never held up by a client that stopped reading.
+const shutdownNotifyDelay = 50 * time.Millisecond
+
 // clientState holds the connection and codec for a client.
 type clientState struct {
 	conn  net.Conn
@@ -91,9 +97,15 @@ type Broker struct {
 	connRate *connRateLimiter
 
 	started atomic.Bool // prevents double-Start
-	ctx     context.Context
-	cancel  context.CancelFunc
-	opts    brokerOptions
+	// shuttingDown is set by Stop before the client sockets are closed. While
+	// set, a connection teardown must NOT publish the client's will: a rolling
+	// restart closes every socket at once, and publishing a will per client
+	// would flood every will topic ("will storm") even though the clients did
+	// not fail. Cleared again by Start so a Stop->Start cycle behaves normally.
+	shuttingDown atomic.Bool
+	ctx          context.Context
+	cancel       context.CancelFunc
+	opts         brokerOptions
 
 	startedAt time.Time // broker start time, for $SYS/broker/uptime (R8)
 
@@ -690,6 +702,7 @@ func (b *Broker) Start() error {
 	// Rebuild the context so cleanup loops actually run after a Stop->Start
 	// cycle (Stop cancels the previous context).
 	b.ctx, b.cancel = context.WithCancel(context.Background())
+	b.shuttingDown.Store(false) // a Stop->Start cycle is not a shutdown any more
 	b.startedAt = time.Now()
 	b.qos.Start()
 	go b.sessionCleanupLoop()
@@ -902,15 +915,73 @@ func (b *Broker) publishSystem(topic string, payload []byte) {
 	}
 }
 
+// BeginShutdown marks a broker-wide shutdown as in progress and tells every
+// connected MQTT 5.0 client that the server is going away (DISCONNECT 0x8B,
+// MQTT 5.0 3.14.2.1).
+//
+// It must run BEFORE the client sockets are closed. While the shutdown flag is
+// set, a connection teardown does not publish the client's will: a rolling
+// restart closes every socket at once, and publishing one will per client would
+// flood every will topic ("will storm") even though no client failed. Stop
+// calls it, and api.Broker.Stop calls it before the network server closes the
+// sockets -- otherwise each of those closes would look like a client failure.
+//
+// BeginShutdown is idempotent and safe to call when the broker is not running.
+func (b *Broker) BeginShutdown() {
+	b.shuttingDown.Store(true)
+	b.notifyShuttingDown()
+}
+
+// notifyShuttingDown best-effort enqueues a DISCONNECT 0x8B notice for every
+// connected MQTT 5.0 client, then waits a short, bounded window for the
+// per-connection writeLoop to flush it. MQTT 3.1.1 and older have no
+// server-sent DISCONNECT (their DISCONNECT is client-to-server only), so for
+// them the following socket close is the only shutdown signal.
+func (b *Broker) notifyShuttingDown() {
+	b.mu.RLock()
+	conns := make([]*clientState, 0, len(b.connections))
+	for _, cs := range b.connections {
+		conns = append(conns, cs)
+	}
+	b.mu.RUnlock()
+
+	notified := false
+	for _, cs := range conns {
+		if cs.out == nil || !cs.codec.Spec().ReasonCodes {
+			continue
+		}
+		pkt := &protocol.DisconnectPacket{
+			FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeDisconnect},
+			ReasonCode:  protocol.DisconnectServerShuttingDown,
+		}
+		select {
+		case cs.out <- pkt:
+			notified = true
+		default:
+		}
+	}
+	// Only wait when something was actually queued: a shutdown with no clients
+	// (or no MQTT 5.0 clients) must not pay the delay.
+	if notified {
+		time.Sleep(shutdownNotifyDelay)
+	}
+}
+
 // Stop stops the broker's internal subsystems and closes all sessions.
-// Connections are closed first to stop readLoops and prevent new inflight
-// messages from arriving during shutdown. Then we drain remaining inflight
-// and stop QoS/will subsystems.
+//
+// Shutdown order matters. BeginShutdown runs first so the socket closes below
+// (whose readLoops exit through abnormalDisconnect) do not publish one will per
+// connected client -- a rolling restart would otherwise flood every will topic.
+// The connections are then closed to stop the readLoops, the remaining inflight
+// deliveries are drained, and the QoS/will subsystems are stopped.
 func (b *Broker) Stop() {
 	b.cancel()
 
-	// Close all client connections first — stops readLoops so no
-	// new messages can arrive during the drain phase.
+	// 1. Suppress wills and tell clients the server is going away.
+	b.BeginShutdown()
+
+	// 2. Close all client connections to stop readLoops so no new messages can
+	// arrive during the drain phase.
 	b.mu.Lock()
 	for id, cs := range b.connections {
 		if err := cs.conn.Close(); err != nil {
@@ -923,7 +994,7 @@ func (b *Broker) Stop() {
 	}
 	b.mu.Unlock()
 
-	// Drain remaining in-flight messages (they are already queued,
+	// 3. Drain remaining in-flight messages (they are already queued,
 	// no new ones can arrive since connections are closed).
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -2493,6 +2564,13 @@ func (b *Broker) publishWill(username string, topic string, payload []byte, qos 
 }
 
 func (b *Broker) abnormalDisconnect(clientID string, conn net.Conn) {
+	// A broker-initiated shutdown is not a client failure: publish no will, or
+	// a rolling restart would fire one will per connected client at once.
+	if b.shuttingDown.Load() {
+		b.will.RemoveWill(clientID)
+		b.disconnect(clientID, conn)
+		return
+	}
 	// The will is only fired when it belongs to THIS connection: after a
 	// takeover the old readLoop's late error must not trigger the new
 	// connection's will (audit).

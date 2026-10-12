@@ -146,6 +146,7 @@ const (
 	DisconnectClientReasonUnspecified     = 0x04
 	DisconnectProtocolError               = 0x82
 	DisconnectImplementationError         = 0x83
+	DisconnectServerShuttingDown          = 0x8B
 	DisconnectKeepAliveTimeout            = 0x8D
 	DisconnectSessionTakenOver            = 0x8E
 	DisconnectTopicFilterInvalid          = 0x8F

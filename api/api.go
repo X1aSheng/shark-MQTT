@@ -297,6 +297,13 @@ func (b *Broker) Start() error {
 
 // Stop gracefully shuts down both the server and broker.
 func (b *Broker) Stop() {
+	// Mark the broker as shutting down BEFORE the network server closes the
+	// client sockets. Otherwise every socket close would look like a client
+	// failure and fire that client's will -- a rolling restart would flood
+	// every will topic. BeginShutdown also tells MQTT 5.0 clients the server
+	// is going away (DISCONNECT 0x8B) while their sockets are still open.
+	b.broker.BeginShutdown()
+
 	if b.healthSrv != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
