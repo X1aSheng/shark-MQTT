@@ -15,7 +15,11 @@
 | **单机 Broker 语义** | QoS 0/1/2、持久会话、会话过期、接管、遗嘱（含延迟）、保留、共享订阅、主题别名、流控、$SYS —— 均已实现，**无实质缺口** |
 | **平台化能力（主要差距）** | 插件体系深度、HTTP 管理面、集群、数据出口 4 项为**结构性缺失** |
 | **优先级分布** | P0 结构性 4 项 / P1 功能 9 项 / P2 次要 8 项 |
-| **最危险的一项** | `deploy/k8s/` 已提供 Deployment/HPA/Helm 多副本模板，但节点间**零通信**——多副本 ≠ 集群，会直接导致漏投/重复投/遗嘱风暴 |
+| **最危险的一项** | `deploy/k8s/` 曾默认给出多副本模板（`deploy/k8s/app/deployment.yaml` `replicas: 2`、`hpa.yaml` `minReplicas: 2`、Helm `values-prod.yaml` `replicaCount: 3`），但节点间**零通信**——多副本 ≠ 集群，会导致漏投 / 重复投 / 保留消息分裂。**已修正默认值并补告警**（commit `f229539dd`） |
+| **本轮已修复（合规 + 健壮性）** | Retain As Published 投递（`be8021a91`）· 优雅停机遗嘱风暴 + DISCONNECT 0x8B（`b1b011794`）· k8s 多副本告警（`f229539dd`）· 拒绝连接审计日志 + 指标标签基数收敛（`ebe4aa52d`） |
+
+> 修订说明：第 3.4 节原有的两条"真缺口"（Maximum QoS 通告、Request Problem Information）
+> 经复核为**误判**，已在该节标注并给出反证；同时把本轮已修复项就地标记。其余结论不变。
 
 ---
 
@@ -130,15 +134,20 @@
 - `broker/broker.go:67` `connections map` 进程私有
 - `broker/session.go:129-134` `Manager.sessions` 进程私有
 - `broker/topic_tree.go` 每实例一份全量订阅树，无跨节点传播
-- `broker/broker.go:905-939` Stop() 立即关连接、无 drain、**不抑制遗嘱 → 滚动重启会引发遗嘱风暴**
+- ~~`broker/broker.go:905-939` Stop() 立即关连接、无 drain、**不抑制遗嘱 → 滚动重启会引发遗嘱风暴**~~
+  **已修复**（commit `b1b011794`）：`Stop()` 先置 `shuttingDown` 再关连接，抑制遗嘱；并对 MQTT 5.0 连接发送
+  `DISCONNECT 0x8B`。注意根因在 API 层顺序（`api.Broker.Stop()` 原先先 `srv.Stop()` 关 socket、后 `broker.Stop()`），
+  仅改 broker 层是死代码。
 
 **未完成清单**
 - [ ] 节点发现（静态列表 / memberlist / etcd）
 - [ ] 订阅关系 delta 广播 + anti-entropy
 - [ ] 跨节点消息路由（含 retained 与共享订阅的集群语义）
 - [ ] 全局唯一 msgID（当前为墙钟 + 进程内原子计数，无节点前缀）
-- [ ] 优雅停机 drain（滚动升级不触发遗嘱风暴）
-- [ ] **`deploy/k8s/` 文档修正**：`deployment.yaml` replicas/HPA 多副本模板必须标注"多副本 ≠ 集群，会导致漏投/重复投/retained 分裂"
+- [x] ~~优雅停机 drain（滚动升级不触发遗嘱风暴）~~ —— 遗嘱风暴已消除（`b1b011794`）；跨节点 drain 仍随集群一并搁置
+- [x] ~~**`deploy/k8s/` 文档修正**：`deployment.yaml` replicas/HPA 多副本模板必须标注"多副本 ≠ 集群，会导致漏投/重复投/retained 分裂"~~
+  **已完成**（commit `f229539dd`）：默认值改为 `replicas: 1` / Helm `replicaCount: 1` / `autoscaling.enabled: false`，
+  `hpa.yaml` 从默认 kustomization 注释掉，并在 manifest、Helm 模板、NOTES.txt、两个 README 中落地"多副本 ≠ 集群"告警
 
 ### 2.4 数据出口（Redis 桥接 / Kafka）
 
@@ -195,6 +204,14 @@
 
 **未完成清单**：[ ] 连接防抖闭环 · [ ] 日志轮转 · [ ] 指标项扩充 · [ ] 运行时日志 SSE · [ ] 版本检查
 
+**本轮已加固（commit `ebe4aa52d`）**：
+- 安全相关拒绝（认证失败 / 不支持的认证方法 / 会话归属冲突）原先**只计数不出日志**——默认 `info` 级别下
+  运维看不到任何记录。现补 `warn` 级审计日志（clientID + username + remote，**不含口令**）。
+- 指标字符串标签（`IncRejections` / `IncMessagesDropped` / `IncErrors` 的 `reason`、`component`）此前无
+  约束，调用方一旦传入用户可控值（clientID / topic）即造成时间线爆炸。现由
+  `broker/metrics_cardinality_test.go` 锁定为固定 allowlist token。
+- `pkg/logger` 不再在 `init()` 里改标准库全局 logger（可嵌入库不应污染宿主进程），改由 `cmd/main.go` 设置。
+
 ### 3.3 传输与配置
 
 | 能力 | smart-mqtt | shark-mqtt | 判定 |
@@ -215,10 +232,32 @@
 |---|---|---|---|
 | User Property 转发 | 协议层可编解码（`properties.go:32,301-315`），Broker 投递时不转发（`broker.go:1929-1960` 仅带 SubID+MessageExpiry） | **同样不转发**（broker 内无 getU*Property 引用） | 两者皆缺 |
 | Content Type / Response Topic / Correlation Data / Payload Format | 可编解码，Broker 不处理 | 同样不处理 | 两者皆缺 |
-| Retain As Published | 选项已解析存储（`subscribe.go:66`、`session.go:318`），投递未生效（`broker.go:1929-1937`） | — | **shark-mqtt 真缺口** |
-| Maximum QoS 通告 | CONNACK 未通告（`broker.go:2224-2260`） | — | **shark-mqtt 真缺口** |
-| Request Problem Information | 仅解析，未裁剪 Reason String | — | **shark-mqtt 真缺口** |
+| Retain As Published | ~~选项已解析存储（`subscribe.go:66`、`session.go:318`），投递未生效（`broker.go:1929-1937`）~~ | — | ~~真缺口~~ **已修复**（commit `be8021a91`） |
+| Maximum QoS 通告 | CONNACK 未通告（`broker.go:2224-2260`） | — | ~~真缺口~~ **非缺口**（误判，见 3.4.1） |
+| Request Problem Information | 仅解析，未裁剪 Reason String | — | ~~真缺口~~ **非缺口**（误判，见 3.4.2） |
 | 共享订阅策略 | 仅 round-robin，无 `$queue`（`topic_tree.go:228-267,304-415`） | 仅 `$share` + round-robin（`SharedOrderedMessageDeliver.java:29-108`） | 两者皆有限 |
+
+#### 3.4.1 Maximum QoS 通告 —— 误判，实为合规
+
+初判"CONNACK 未通告 Maximum QoS"为缺口，**该结论错误**。MQTT 5.0 §3.2.2.3.4 明确规定：
+Maximum QoS 只允许取值 0 或 1，**省略即表示支持 QoS 2**。shark-mqtt 支持 QoS 2，因此"省略"是
+唯一正确的编码；若强行通告 2 反而违反属性取值范围。
+
+反证（仓库内已有回归用例）：`broker/broker_test.go:207`
+`TestBroker_ConnAckPropertiesOmitMaximumQoSWhenQoS2Supported` 断言 `props.MaximumQoS == nil`，
+注释亦写明 "omission means QoS 2 supported"。此行为是**有意为之**，非遗漏。
+
+#### 3.4.2 Request Problem Information —— 误判，实为天然合规
+
+初判"仅解析、未裁剪 Reason String"为缺口，**该结论同样错误**。MQTT 5.0 §3.1.2.11.7 要求：
+客户端将 Request Problem Information 置 0 时，服务端**不得**发送 Reason String / User Property。
+
+复核生产代码：`broker/` 中 `ReasonString`、`UserProperties` **零引用**（仅在 `protocol/properties.go`
+的编解码表中存在），即 Broker 在任何路径下都不会主动发出这两类属性。因此"置 0 时不得发送"这一
+约束**天然满足**，无需裁剪逻辑，不构成缺口。
+
+> 结论修正口径：判断某属性是否"未完成"，必须先确认**当前实现是否已经满足规范**，而不能仅因
+> "字段被解析但没有后续处理代码"就判定为缺口。上述两条均属此类误判。
 
 ---
 
@@ -258,7 +297,7 @@
   T01 listener 数组化 + 插件化端口
   T02 插件生命周期抽象（版本/优先级/初始化/销毁 + 配置模型）
   T03 事件总线（复用现有 OnAccept/OnConnected/OnMessage/OnClose 语义，扩展为全事件）
-  T04 k8s 模板"多副本 ≠ 集群"告警补丁   ← 立即做，防误导部署
+  T04 k8s 模板"多副本 ≠ 集群"告警补丁   ← 已完成（f229539dd）
 
 阶段 1（管理面）
   T05 HTTP 管理 API（只读：连接/订阅/主题统计）
@@ -268,7 +307,7 @@
 阶段 2（出口与集群）
   T08 消息出站抽象 + Redis/Webhook 出口
   T09 集群：节点发现 + 订阅 delta 广播 + 粘性路由
-  T10 优雅停机 drain（先行，独立于集群，解决遗嘱风暴）
+  T10 优雅停机 drain（先行，独立于集群，解决遗嘱风暴）   ← 遗嘱风暴部分已完成（b1b011794）
 ```
 
 ---
@@ -295,3 +334,6 @@
 ---
 
 *生成时间：2026-10-12 · 对比基线：smart-mqtt v1.8.0 代码树 / shark-mqtt HEAD*
+*复核与修订：2026-10-12 第二轮 —— 修正 3.4 节两处误判（Maximum QoS、Request Problem Information），
+并标注本轮已修复项（RAP `be8021a91`、遗嘱风暴 `b1b011794`、k8s 多副本告警 `f229539dd`、
+可观测加固 `ebe4aa52d`）。被评估的 shark-mqtt 基线推进到 `ebe4aa52d`。*
