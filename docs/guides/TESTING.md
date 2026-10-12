@@ -1,6 +1,6 @@
 # Testing Guide
 
-Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。最新完整脚本运行为 `tests/logs/20260806_*`：344 个单元测试运行通过、13 个 Redis 测试跳过（本地无 Redis）、96 个集成测试运行通过、65 个基准测试执行通过。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
+Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。当前基线为 **409 个单元测试**、**140 个集成测试**、**61 个基准测试**（口径：源码中声明的顶层 `Test*` / `Benchmark*` 函数数，复现方式见 [测试统计](#测试统计)）。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
 
 ---
 
@@ -24,24 +24,22 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 
 ```
 +------------------------------------------------------------+
-|  Benchmark Tests (65 executed)                            |
-|  tests/bench/                                             |
-|  +-- broker_bench_test.go    - 全栈 TCP 基准              |
-|  +-- data_delivery_bench_test.go - E2E 数据验证基准       |
-|  +-- micro_bench_test.go     - 组件级微基准               |
+|  Benchmarks (61 declared, 58 run on Windows)               |
+|  tests/bench/ + plugin/ + pkg/metrics/                     |
+|  +-- broker_bench_test.go        - 全栈 TCP 基准 (18)      |
+|  +-- data_delivery_bench_test.go - E2E 数据验证基准 (12)   |
+|  +-- micro_bench_test.go         - 组件级微基准 (27)       |
 +------------------------------------------------------------+
-|  Integration Tests (96 latest passed runs)                 |
-|  tests/integration/                                        |
-|  +-- connect_test.go         - 连接与会话                 |
-|  +-- pubsub_test.go          - 发布订阅                   |
-|  +-- delivery_test.go        - 多订阅者消息投递           |
-|  +-- qos_test.go             - QoS 0/1/2 完整流程         |
-|  +-- persistent_session_test.go - 持久会话               |
-|  +-- will_test.go            - 遗嘱消息                   |
-|  +-- topic_wildcard_test.go  - 通配符匹配                 |
-|  +-- unsubscribe_test.go     - 取消订阅                   |
-|  +-- retained_test.go        - 保留消息                   |
-|  +-- edge_case_test.go       - 边界与异常                 |
+|  Integration Tests (140 declared)                          |
+|  tests/integration/  (26 files)                            |
+|  +-- connect / pubsub / qos / persistent_session           |
+|  +-- delivery / retained / will / topic_wildcard           |
+|  +-- session_expiry / message_expiry / outbound_retry      |
+|  +-- mqtt31 / qa_mqtt31_verify / subscription_id           |
+|  +-- websocket / wss / request_response                    |
+|  +-- deploy / observability / graceful_shutdown            |
+|  +-- retain_as_published / lifecycle_regression            |
+|  (完整文件清单见「集成测试」章)                              |
 +------------------------------------------------------------+
 |  Defect Regression Tests (tests/defects + package tests)   |
 |  tests/defects/                                            |
@@ -51,10 +49,10 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 |  +-- topic_filter_defect_test.go - topic filter 边界       |
 |  +-- windows_benchmark_test.go - Windows benchmark 隔离    |
 +------------------------------------------------------------+
-|  Unit Tests (344 top-level passed runs)                    |
+|  Unit Tests (409 declared)                                 |
 |  各包内 *_test.go 文件                                     |
-|  broker/ protocol/ store/ pkg/ api/ client/ config/       |
-|  plugin/ errs/                                             |
+|  broker/ protocol/ client/ config/ plugin/ store/memory/   |
+|  pkg/ api/ errs/                                           |
 +------------------------------------------------------------+
 ```
 
@@ -64,32 +62,54 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 
 | 类型 | 数量 | 位置 |
 |------|------|------|
-| 单元测试 | 344 top-level passed runs | 各包 `*_test.go` |
-| 集成测试 | 96 latest passed runs | `tests/integration/` |
-| 缺陷回归测试 | `tests/defects` + package-level regressions | `tests/defects/`, `broker/`, `client/` |
-| 基准测试 | 65 executed | `tests/bench/`, `store/redis/`, `plugin/` |
-| **最新脚本运行** | **344 unit passed, 96 integration passed, 65 benchmarks passed** | `tests/logs/20260806_*` |
+| 单元测试 | 409 | 各包 `*_test.go`（含 `tests/defects/`） |
+| 集成测试 | 140 | `tests/integration/` |
+| 缺陷回归测试 | `tests/defects/` 7 个 + 包内回归 | `tests/defects/`、`broker/`、`client/` |
+| 基准测试 | 61（Windows 本地实际执行 58） | `tests/bench/`、`plugin/`、`pkg/metrics/` |
+
+**统计口径**：以上均为源码中**声明的顶层 `Test*` / `Benchmark*` 函数数**，不是 `go test -json` 的"运行条数"（后者会把每个子测试 `t.Run` 计一条）。复现命令：
+
+```bash
+# 单元测试（默认构建，不含 store/redis 与 store/badger）
+go test -list '.*' ./api/... ./broker/... ./client/... ./config/... ./errs/... \
+  ./pkg/... ./plugin/... ./protocol/... ./store/memory/... ./tests/defects/... \
+  | grep -c '^Test'
+
+# 集成测试
+grep -c '^func Test' tests/integration/*_test.go
+
+# 基准测试（默认构建；加 store/redis 的 9 个为 70）
+grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/metrics | wc -l
+```
+
+三点注意事项：
+
+- **构建标签**：`store/redis/`（18 个测试 + 9 个基准）仅在 `-tags store_redis` 下编译，`store/badger/`（10 个测试）仅在 `-tags store_badger` 下编译，因此**不计入**默认口径。
+- **Windows 跳过**：`tests/bench/` 中 3 个连接 churn 基准在 Windows 下主动 `b.Skip`（见 [基准测试](#基准测试)），故本地执行数为 `61 - 3 = 58`。
+- **历史日志**：`tests/logs/` 下的历史运行日志（如 `20260806_*`）记录的是当时的运行条数口径，与上表不可直接比较。
 
 ### 各包测试明细
 
 | 包 | 测试数 | 基准测试数 | 说明 |
 |----|--------|-----------|------|
-| broker/ | 99 | 0 | 核心逻辑：TopicTree、QoS引擎、会话、遗嘱、认证、服务器、retained metrics |
-| store/memory/ | 20 | 0 | 内存存储：会话、消息、保留消息 |
-| store/redis/ | 13 | 9 | Redis 存储：消息、保留、会话 |
-| store/badger/ | 9 | 0 | BadgerDB 持久化存储 |
-| protocol/ | 12 | 0 | MQTT 3.1.1 & 5.0 编解码与协议 flags 校验（15种报文） |
-| client/ | 9 | 0 | MQTT 客户端连接、发布、订阅、断开清理 |
-| plugin/ | 14 | 3 | 插件系统：注册、分发 |
-| config/ | 7 | 0 | 配置解析与校验 |
-| pkg/logger/ | 7 | 0 | slog 日志适配 |
+| broker/ | 178 | 0 | 核心逻辑：TopicTree、QoS 引擎、会话、遗嘱、认证、服务器、retained metrics |
+| protocol/ | 74 | 0 | MQTT 3.1 / 3.1.1 / 5.0 编解码、属性、报文 flags 校验、协议适配层（15 种报文） |
+| client/ | 35 | 0 | MQTT 客户端连接、发布、订阅、断开清理 |
+| config/ | 24 | 0 | 配置解析与校验 |
+| api/ | 22 | 0 | 公共 API 与健康端点 |
+| store/memory/ | 21 | 0 | 内存存储：会话、消息、保留消息 |
+| plugin/ | 16 | 3 | 插件系统：注册、分发、超时与 panic 隔离 |
 | pkg/bufferpool/ | 10 | 0 | 缓冲池管理 |
-| pkg/metrics/ | 3 | 0 | Prometheus 指标 |
-| api/ | 4 | 0 | 公共 API 与健康端点 |
+| pkg/metrics/ | 10 | 1 | Prometheus 指标 |
+| pkg/logger/ | 7 | 0 | slog 日志适配 |
 | errs/ | 4 | 0 | 错误定义 |
-| tests/integration/ | 90 latest passed runs | 0 | 端到端集成测试（含部署验证） |
-| tests/defects/ | 2 | 0 | 审查发现缺陷的最小复现和回归测试 |
+| tests/defects/ | 8 | 0 | 审查发现缺陷的最小复现和回归测试 |
+| **单元测试合计** | **409** | **4** | |
+| tests/integration/ | 140 | 0 | 端到端集成测试（含部署验证） |
 | tests/bench/ | 0 | 57 | 全栈 TCP、E2E 数据验证、微基准 |
+| **基准测试合计** | | **61** | |
+| store/redis/（`store_redis`） | 18 | 9 | Redis 存储：消息、保留、会话（默认不编译） |
+| store/badger/（`store_badger`） | 10 | 0 | BadgerDB 持久化存储（默认不编译） |
 
 ---
 
@@ -112,7 +132,15 @@ go test -v ./store/memory/...
 go test -v -race -count=1 ./...
 ```
 
-注意：Go race detector 依赖 CGO 和 C 编译器。Windows 本机可安装 w64devkit，并在当前 shell 中加入 `D:\Programs\w64devkit\bin` 后执行：`CGO_ENABLED=1 go test -race -count=1 ./...`。本轮已用该环境通过全仓 race 测试。
+注意：Go race detector 依赖 CGO 和 C 编译器，默认 `PATH` 中没有 `gcc` 时 `-race` 无法编译（报 `-race requires cgo`）。Windows 本机可安装 w64devkit，并在当前 shell 中把 `D:\Programs\w64devkit\bin` 加入 `PATH` 后执行：
+
+```bash
+PATH="/d/Programs/w64devkit/bin:$PATH" CGO_ENABLED=1 go test -race -count=1 ./...
+```
+
+CI 无条件覆盖 race 检查：`.github/workflows/ci.yml` 在 Linux / macOS 上执行 `go test -race -count=1 ./...`，Windows job 因不提供 CGO 而明确跳过。本地装不出 CGO 时以 CI 结果为准。
+
+已知需要在 `-race` 下覆盖的敏感路径：`Broker` 的 **Stop -> Start 重启周期**（后台循环必须在 `Stop()` 返回前退出，见 [缺陷回归测试](#缺陷回归测试) 中的 `TestDefectBrokerStopStartLeavesNoRacingLoop`）。
 
 ### 编写规范
 
@@ -140,132 +168,41 @@ func TestTopicTree_Subscribe(t *testing.T) {
 
 ### 测试清单
 
-#### 连接与会话（7 项）
+集成测试按文件组织，每个文件覆盖一个语义域。下表由源码直接统计
+（`grep -c '^func Test' tests/integration/*_test.go`），合计 **140 个**：
 
-| 测试函数 | 说明 |
-|----------|------|
-| `TestConnectFlow` | CONNECT/CONNACK 握手完整流程 |
-| `TestPersistentSession_CleanSessionFalse` | CleanSession=false 会话保持 |
-| `TestPersistentSession_Reconnect` | 断线重连后会话恢复 |
-| `TestQoS1Publish_PubAckFlow` | QoS 1 发布-确认完整流程 |
-| `TestPersistentSession_KickPrevious` | 重复 ClientID 踢掉旧连接 |
-| `TestPubSub` | 基础发布-订阅消息验证 |
+| 文件 | 测试数 | 覆盖重点 |
+|------|--------|----------|
+| `deploy_test.go` | 44 | Dockerfile / docker-compose / K8s / Helm 清单、安全默认值与（单副本）部署告警 |
+| `delivery_test.go` | 13 | 多订阅者投递、QoS 降级、顺序保证、各类负载（64KB / 二进制 / 空 / Unicode） |
+| `retained_test.go` | 8 | 保留消息投递、更新、删除、通配符匹配、RetainHandling |
+| `qa_mqtt31_verify_test.go` | 8 | MQTT 3.1 语义专项验收 |
+| `unsubscribe_test.go` | 8 | 取消订阅、批量取消、通配符取消、重新订阅、系统主题隔离 |
+| `edge_case_test.go` | 5 | 认证失败、重复 ClientID、非法主题过滤器、连接数上限、空 ClientID |
+| `persistent_session_test.go` | 5 | CleanSession=false 会话保持、重连恢复、重复 ClientID 接管 |
+| `retain_as_published_test.go` | 5 | Retain As Published 对出站 RETAIN 的影响（本轮修复回归） |
+| `topic_wildcard_test.go` | 5 | `+` / `#` 通配符匹配（含根级 `#` 与混合形式） |
+| `graceful_shutdown_test.go` | 4 | 优雅停机：抑制遗嘱风暴、MQTT 5.0 DISCONNECT 0x8B（本轮修复回归） |
+| `mqtt31_test.go` | 4 | MQTT 3.1 连接、版本协商与字节级兼容 |
+| `will_test.go` | 4 | 遗嘱触发、优雅断开不触发、遗嘱 QoS |
+| `observability_test.go` | 3 | 拒绝连接的审计日志与凭据脱敏（本轮加固回归） |
+| `pubsub_test.go` | 3 | 基础发布-订阅、自发布投递、MQTT 5.0 No Local |
+| `qos_test.go` | 3 | QoS 0 / 1 / 2 完整流程 |
+| `session_expiry_test.go` | 3 | 会话过期与清理 |
+| `lifecycle_regression_test.go` | 2 | 服务生命周期回归 |
+| `message_expiry_test.go` | 2 | 消息过期（Message Expiry Interval） |
+| `qos1_regression_test.go` | 2 | QoS 1 回归 |
+| `websocket_test.go` | 2 | WebSocket 传输 |
+| `wss_test.go` | 2 | WSS（WebSocket over TLS） |
+| `connect_test.go` | 1 | CONNECT / CONNACK 握手完整流程 |
+| `outbound_retry_test.go` | 1 | 出站消息重试 |
+| `request_response_test.go` | 1 | 请求 / 响应模式（Response Topic） |
+| `subscription_id_test.go` | 1 | MQTT 5.0 Subscription Identifier |
+| `write_queue_test.go` | 1 | 写队列与背压 |
+| **合计** | **140** | |
 
-#### 发布订阅（6 项）
-
-| 测试函数 | 说明 |
-|----------|------|
-| `TestQoS0` | QoS 0 消息投递 |
-| `TestQoS1` | QoS 1 完整 PUBACK 流程 |
-| `TestQoS2` | QoS 2 四报文握手（PUBLISH->PUBREC->PUBREL->PUBCOMP） |
-| `TestPubSub` | 基础发布-订阅消息验证 |
-| `TestSelfPublishDeliveredByDefault` | 默认允许发布者收到自己的匹配订阅消息 |
-| `TestNoLocalSuppressesSelfPublish` | MQTT 5.0 No Local 抑制自发布投递 |
-
-#### 多订阅者消息投递（12 项）
-
-| 测试函数 | 说明 |
-|----------|------|
-| `TestMultipleSubscribers_SameTopic` | 同一主题多订阅者广播 |
-| `TestMixedQoSSubscribers` | 混合 QoS 订阅者降级投递 |
-| `TestMessageOrdering` | 消息顺序保证 |
-| `TestBurstPublish` | 连续发布多条消息 |
-| `TestLargePayload` | 大负载投递（64KB） |
-| `TestBinaryPayload` | 二进制负载投递 |
-| `TestEmptyPayload` | 空负载投递 |
-| `TestUnicodePayload` | Unicode 负载投递 |
-| `TestOverlappingSubscriptions` | 重叠订阅匹配 |
-| `TestMultiTopicSubscribe` | 单次 SUBSCRIBE 多主题 |
-| `TestPublishToSelf` | 发布者也是订阅者（默认接收自身消息） |
-| `TestStructuredBinaryPayload` | 结构化二进制数据 |
-
-#### 遗嘱消息（3 项）
-
-| 测试函数 | 说明 |
-|----------|------|
-| `TestWillMessageOnAbnormalDisconnect` | 异常断连触发遗嘱 |
-| `TestWillMessageNotPublishedOnGracefulDisconnect` | 正常 DISCONNECT 不触发 |
-| `TestWillMessageQoS` | 遗嘱消息 QoS 投递 |
-
-#### 通配符匹配（5 项）
-
-| 测试函数 | 说明 |
-|----------|------|
-| `TestWildcardPlus` | 单层通配符 `+` |
-| `TestWildcardHash` | 多层通配符 `#` |
-| `TestWildcardHashRoot` | 根级 `#` 匹配所有 |
-| `TestWildcardMixed` | 混合 `+` 和 `#` |
-| `TestWildcardMultipleSubscribers` | 多订阅者通配符 |
-
-#### 保留消息（7 项）
-
-| 测试函数 | 说明 |
-|----------|------|
-| `TestRetainedMessage_NewSubscriber` | 新订阅者获取保留消息 |
-| `TestRetainedMessage_Update` | 更新保留消息 |
-| `TestRetainedMessage_Delete` | 空负载删除保留消息 |
-| `TestRetainedMessage_WildcardDelivery` | 通配符匹配保留消息 |
-| `TestRetainedMessage_QoSDowngrade` | QoS 降级投递 |
-| `TestRetainHandlingDoNotSend` | MQTT 5.0 RetainHandling=2 不发送保留消息 |
-| `TestRetainHandlingSendOnlyOnNewSubscription` | MQTT 5.0 RetainHandling=1 仅新订阅发送 |
-
-#### 取消订阅与系统主题（8 项）
-
-| 测试函数 | 说明 |
-|----------|------|
-| `TestUnsubscribe_StopsDelivery` | 取消后停止投递 |
-| `TestUnsubscribe_MultipleTopics` | 批量取消订阅 |
-| `TestUnsubscribe_WildcardTopic` | 通配符取消订阅 |
-| `TestResubscribeAfterUnsubscribe` | 取消后重新订阅 |
-| `TestSystemTopic_NotReceivedByNormalSub` | 系统主题隔离 |
-| `TestQoS1_PublisherAck` | QoS 1 发布者收到 PUBACK |
-| `TestQoS2_FullHandshake` | QoS 2 四报文握手验证 |
-| `TestQoS1_PublishNoSubscriber` | 无订阅者时正常完成 |
-
-#### 边界与异常（5 项）
-
-| 测试函数 | 说明 |
-|----------|------|
-| `TestAuth_Failure` | 认证失败返回 CONNACK 拒绝 |
-| `TestDuplicateClientID` | 重复 ClientID 踢掉旧连接 |
-| `TestInvalidTopicFilter` | 无效主题过滤器 |
-| `TestMaxConnections` | 连接数上限 |
-| `TestEmptyClientID` | 空 ClientID 处理 |
-
-#### 部署验证（30 项）
-
-| 测试函数 | 说明 |
-|----------|------|
-| `TestDockerfileExists` | Dockerfile 文件存在 |
-| `TestDockerfileBuildsCorrectTarget` | 构建目标验证 |
-| `TestDockerfileHasAllPorts` | 端口暴露（18983, 18993, 18999） |
-| `TestDockerfileHasHealthcheck` | HEALTHCHECK 指令 |
-| `TestDockerfileHasNonRootUser` | 非 root 用户 |
-| `TestDockerComposeExists` | docker-compose 文件存在 |
-| `TestDockerComposeHasAllPorts` | 端口映射 |
-| `TestDockerComposeHasHealthcheck` | 健康检查配置 |
-| `TestDockerComposeTestExists` | 测试 compose 文件 |
-| `TestDockerignoreExists` | .dockerignore 文件 |
-| `TestPrometheusDockerConfigExists` | Prometheus 配置 |
-| `TestK8sManifestsExist` | K8s 清单文件存在 |
-| `TestK8sDeploymentHasAllPorts` | Deployment 端口 |
-| `TestK8sDeploymentHasSecurityContext` | 安全上下文 |
-| `TestK8sDeploymentHasProbes` | 就绪/存活探针 |
-| `TestK8sServiceHasMQTTPort` | Service MQTT 端口 |
-| `TestK8sHPAExists` | HPA 存在 |
-| `TestK8sNetworkPolicyExists` | NetworkPolicy 存在 |
-| `TestK8sAppConfigmapExists` | ConfigMap 存在 |
-| `TestK8sInfraPrometheusExists` | Prometheus 基础设施 |
-| `TestHelmChartExists` | Helm Chart 存在 |
-| `TestHelmTemplatesExist` | Helm 模板文件 |
-| `TestHelmChartYamlValid` | Chart.yaml 有效性 |
-| `TestHelmValuesHasConfig` | values.yaml 配置 |
-| `TestHelmHelpersDefinesLabels` | _helpers.tpl 标签 |
-| `TestHelmNotesHasEndpoints` | NOTES.txt 端点 |
-| `TestOldK8sDirRemoved` | 旧 k8s 目录已迁移 |
-| `TestOldDockerfileRemoved` | 旧 Dockerfile 已迁移 |
-| `TestDeployReadmeExists` | 部署文档存在 |
-| `TestEntryPointExists` | 入口脚本存在 |
+具体测试函数名可用 `go test -list '.*' ./tests/integration/...` 列出。本表**不逐条维护函数名**，
+以免每次新增用例都要同步文档、产生漂移；只维护"文件 -> 数量 -> 语义域"这一层。
 
 ### 运行方式
 
@@ -493,15 +430,20 @@ make ci                # CI 完整流水线
 
 ## 缺陷回归测试
 
-审查过程中确认的缺陷必须先在 `tests/defects/` 中添加最小复现，再修复代码。当前回归项：
+审查过程中确认的缺陷必须先在 `tests/defects/` 中添加最小复现，再修复代码。当前回归项（8 个在 `tests/defects/`，另 2 个在所属包内）：
 
-| 测试函数 | 覆盖缺陷 |
-|----------|----------|
-| `TestDefectTopicFiltersMayContainEmptyLevels` | MQTT topic filter 中合法的零长度 topic level |
-| `TestDefectLongMQTT5PropertyStringReturnsEncodeError` | MQTT 5.0 UTF-8 属性字符串长度上限 |
-| `TestDefectInvalidWillTopicDoesNotConsumeBrokerConnectionSlot` | 非法 Will Topic CONNECT 被拒绝后不能残留 session/connection 槽 |
-| `client.TestDisconnectClosesConnectionBeforeWaitingForReadLoop` | 客户端主动断开时必须先唤醒阻塞读循环，避免 `Disconnect` 卡住 |
-| `broker.TestQoSEngine_Retry_MaxRetriesExceededReportsError` | QoS inflight 消息达到最大重试次数被丢弃时必须发出错误回调 |
+| 位置 | 测试函数 | 覆盖缺陷 |
+|------|----------|----------|
+| `tests/defects/api_default_auth_test.go` | `TestDefectAPIDefaultBrokerRejectsUnauthenticatedClient` | 默认认证下匿名客户端必须被拒绝 |
+| `tests/defects/broker_lifecycle_test.go` | `TestDefectMQTTServerRestartAfterStopAcceptsConnections` | `Stop()` 后重启必须能重新接受连接 |
+| `tests/defects/broker_stop_start_race_test.go` | `TestDefectBrokerStopStartLeavesNoRacingLoop` | `Stop()` 必须等后台循环退出，否则 `-race` 在 Stop -> Start 周期上报 `b.ctx` / `b.startedAt` 数据竞争 |
+| `tests/defects/invalid_will_topic_leak_test.go` | `TestDefectInvalidWillTopicDoesNotConsumeBrokerConnectionSlot` | 非法 Will Topic CONNECT 被拒绝后不能残留 session/connection 槽 |
+| `tests/defects/properties_defect_test.go` | `TestDefectLongMQTT5PropertyStringReturnsEncodeError` | MQTT 5.0 UTF-8 属性字符串长度上限 |
+| `tests/defects/topic_filter_defect_test.go` | `TestDefectTopicFiltersMayContainEmptyLevels` | MQTT topic filter 中合法的零长度 topic level |
+| `tests/defects/windows_benchmark_test.go` | `TestDefectWindowsConnectionChurnBenchmarksDoNotPoisonSuite` | Windows 连接 churn 基准不得污染同进程后续基准 |
+| `tests/defects/windows_benchmark_test.go` | `TestDefectWindowsWillMessageBenchmarkDoesNotPoisonSuite` | Windows 遗嘱基准不得污染同进程后续基准 |
+| `client/` | `client.TestDisconnectClosesConnectionBeforeWaitingForReadLoop` | 客户端主动断开时必须先唤醒阻塞读循环，避免 `Disconnect` 卡住 |
+| `broker/` | `broker.TestQoSEngine_Retry_MaxRetriesExceededReportsError` | QoS inflight 消息达到最大重试次数被丢弃时必须发出错误回调 |
 
 运行方式：
 
@@ -528,7 +470,8 @@ golangci-lint run ./...
 
 所有运行时日志和测试日志的时间戳精度为 **毫秒**。
 
-- Go 运行时日志：`log.SetFlags(log.LstdFlags | log.Lmicroseconds)`（`pkg/logger/slog.go`）
+- Go 运行时日志：`log.SetFlags(log.LstdFlags | log.Lmicroseconds)`，由 `cmd/main.go` 在启动时设置。
+  `pkg/logger` 作为可嵌入库**不改动标准库全局 logger**，避免污染宿主进程（历史上曾放在 `init()` 中，已移除）。
 - 测试脚本日志：`{YYYYMMDD_HHmmss}` 时间戳
 - Broker 连接日志：EOF/早关连接使用原子计数器汇总，每轮测试结束时输出 1 条统计（如 `[server] 10000 connections closed before CONNECT`）
 

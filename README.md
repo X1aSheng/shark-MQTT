@@ -153,11 +153,18 @@ Details: [docs/guides/PERFORMANCE.md](docs/guides/PERFORMANCE.md)
 
 | Suite | Count | Status |
 |---|---|---|
-| Unit tests (incl. defect regressions) | 375 | Pass |
-| Integration tests (end-to-end, incl. deploy verification) | 111 | Pass |
-| Benchmarks | 65 | Pass |
+| Unit tests (incl. defect regressions) | 409 | Pass |
+| Integration tests (end-to-end, incl. deploy verification) | 140 | Pass |
+| Benchmarks | 61 | Pass |
 | Race detector | full suite | Clean |
 | Protocol fuzz (2 fuzzers) | 8.4M+ executions | No crashes |
+
+Counts are declared test/benchmark functions and are reproducible with
+`go test -list '.*' <packages> | grep -c '^Test'`. Two caveats when reproducing:
+three connection-churn benchmarks are skipped on Windows by design (a local run
+reports 58), and the `store/redis` / `store/badger` suites only compile under the
+`store_redis` / `store_badger` build tags, so they are not part of the default
+counts. Per-package detail: [docs/guides/TESTING.md](docs/guides/TESTING.md).
 
 Cross-platform runner: `go run scripts/run_tests.go -mode all` (unit, integration,
 benchmark, cover). Logs go to `tests/logs/`, artifacts to `tests/artifacts/`.

@@ -137,11 +137,16 @@ defer b.Stop()
 
 | 套件 | 数量 | 状态 |
 |---|---|---|
-| 单元测试（含缺陷回归） | 375 | 通过 |
-| 集成测试（端到端，含部署校验） | 111 | 通过 |
-| 基准 | 65 | 通过 |
+| 单元测试（含缺陷回归） | 409 | 通过 |
+| 集成测试（端到端，含部署校验） | 140 | 通过 |
+| 基准 | 61 | 通过 |
 | 竞态检测（全量） | — | 干净 |
 | 协议 fuzz（2 个 fuzzer） | 840 万+ 次执行 | 无崩溃 |
+
+数量口径为**声明的测试/基准函数个数**，可用 `go test -list '.*' <packages> | grep -c '^Test'` 复现。
+复现时注意两点：3 个连接churn 基准在 Windows 上按设计跳过（本机跑出 58）；`store/redis`、
+`store/badger` 两套件需 `store_redis` / `store_badger` 构建标签，不计入默认统计。
+逐包明细见 [docs/guides/TESTING.md](docs/guides/TESTING.md)。
 
 跨平台运行器：`go run scripts/run_tests.go -mode all`（单元、集成、基准、覆盖率）。
 日志输出至 `tests/logs/`，过程产物至 `tests/artifacts/`。文档链接由 CI 中的
