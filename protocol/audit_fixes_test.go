@@ -203,11 +203,12 @@ func TestEncodePublishPropertySectionVersionGated(t *testing.T) {
 
 // TestPropertySectionVersionGatedAcrossPackets extends the PUBLISH-only gate
 // test to every encoder that writes an MQTT 5 property section. CONNACK,
-// SUBSCRIBE and UNSUBSCRIBE wrote the section whenever Properties was non-nil,
-// regardless of the codec's version, so a v3.1.1 peer read the property bytes as
-// payload -- and for CONNACK as trailing bytes its decoder rejects outright. The
-// acknowledgement family was already covered by its own ReasonCodes check, so it
-// is included here only to hold that guard in place.
+// SUBSCRIBE, UNSUBSCRIBE and SUBACK wrote the section whenever Properties was
+// non-nil, regardless of the codec's version, so a v3.1.1 peer would read the
+// property bytes as payload, as the topic list, or (for CONNACK) as trailing
+// bytes its decoder rejects. The acknowledgement family was already covered by
+// its own ReasonCodes check, so it is included here only to hold that guard in
+// place.
 //
 // Each case builds the same packet twice under a pre-v5 codec, with and without
 // properties, plus once under a v5 codec. A pre-v5 codec must refuse the first
@@ -260,6 +261,30 @@ func TestPropertySectionVersionGatedAcrossPackets(t *testing.T) {
 		{"CONNACK", func(_ uint8, props *Properties) Packet {
 			return &ConnAckPacket{
 				FixedHeader: FixedHeader{PacketType: PacketTypeConnAck},
+				Properties:  props,
+			}
+		}},
+		{"SUBSCRIBE", func(_ uint8, props *Properties) Packet {
+			return &SubscribePacket{
+				FixedHeader: FixedHeader{PacketType: PacketTypeSubscribe, QoS: 1},
+				PacketID:    1,
+				Topics:      []TopicFilter{{Topic: "gate/topic", QoS: 1}},
+				Properties:  props,
+			}
+		}},
+		{"UNSUBSCRIBE", func(_ uint8, props *Properties) Packet {
+			return &UnsubscribePacket{
+				FixedHeader: FixedHeader{PacketType: PacketTypeUnsubscribe, QoS: 1},
+				PacketID:    1,
+				Topics:      []string{"gate/topic"},
+				Properties:  props,
+			}
+		}},
+		{"SUBACK", func(_ uint8, props *Properties) Packet {
+			return &SubAckPacket{
+				FixedHeader: FixedHeader{PacketType: PacketTypeSubAck},
+				PacketID:    1,
+				ReasonCodes: []byte{0x01},
 				Properties:  props,
 			}
 		}},

@@ -90,15 +90,11 @@ func (c *Codec) encodeSubscribe(w io.Writer, pkt *SubscribePacket) error {
 		return err
 	}
 
-	// Properties (MQTT 5.0)
-	if pkt.Properties != nil {
-		if err := c.encodeProperties(&buf, pkt.Properties); err != nil {
-			return err
-		}
-	} else if c.spec.Properties {
-		if err := writeVarInt(&buf, 0); err != nil {
-			return err
-		}
+	// Properties (MQTT 5.0). The section is always present in a v5 SUBSCRIBE;
+	// writePropertySection refuses a pre-v5 codec that was handed properties
+	// instead of writing v5 bytes into a 3.1/3.1.1 frame.
+	if err := c.writePropertySection(&buf, pkt.Properties); err != nil {
+		return err
 	}
 
 	for _, topic := range pkt.Topics {
@@ -196,14 +192,12 @@ func (c *Codec) encodeSubAck(w io.Writer, pkt *SubAckPacket) error {
 		return err
 	}
 
-	if pkt.Properties != nil {
-		if err := c.encodeProperties(&buf, pkt.Properties); err != nil {
-			return err
-		}
-	} else if c.spec.Properties {
-		if err := writeVarInt(&buf, 0); err != nil {
-			return err
-		}
+	// Properties (MQTT 5.0). A v5 SUBACK always carries the section (its
+	// Remaining Length is at least 4). This block was the one acknowledgement
+	// without a version gate: SUBACK has no reason-code check to fall back on,
+	// because in 3.1.1 its payload *is* the return codes.
+	if err := c.writePropertySection(&buf, pkt.Properties); err != nil {
+		return err
 	}
 
 	if len(pkt.ReasonCodes) > 0 {
@@ -279,14 +273,12 @@ func (c *Codec) encodeUnsubscribe(w io.Writer, pkt *UnsubscribePacket) error {
 		return err
 	}
 
-	if pkt.Properties != nil {
-		if err := c.encodeProperties(&buf, pkt.Properties); err != nil {
-			return err
-		}
-	} else if c.spec.Properties {
-		if err := writeVarInt(&buf, 0); err != nil {
-			return err
-		}
+	// Properties (MQTT 5.0), always present in a v5 UNSUBSCRIBE. The pre-v5
+	// refusal comes from writePropertySection itself: UNSUBSCRIBE has no reason
+	// code to check, so nothing else would catch a properties-bearing v3.1.1
+	// packet and the v5 bytes would be read as the topic list.
+	if err := c.writePropertySection(&buf, pkt.Properties); err != nil {
+		return err
 	}
 
 	for _, topic := range pkt.Topics {
@@ -377,14 +369,12 @@ func (c *Codec) encodeUnsubAck(w io.Writer, pkt *UnsubAckPacket) error {
 		return err
 	}
 
-	if pkt.Properties != nil {
-		if err := c.encodeProperties(&buf, pkt.Properties); err != nil {
-			return err
-		}
-	} else if c.spec.Properties {
-		if err := writeVarInt(&buf, 0); err != nil {
-			return err
-		}
+	// Properties (MQTT 5.0), always present in a v5 UNSUBACK. The pre-v5 refusal
+	// above already rejects a properties-bearing pre-v5 packet, so this call can
+	// only fail on a malformed property set; it goes through the helper anyway so
+	// that every mandatory property section is written the same way.
+	if err := c.writePropertySection(&buf, pkt.Properties); err != nil {
+		return err
 	}
 
 	if len(pkt.ReasonCodes) > 0 {
