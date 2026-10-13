@@ -133,17 +133,7 @@ func TestRestoreSessionInflightUsesTheSavedStage(t *testing.T) {
 // disappears without its PUBCOMP, and must be met with the PUBREL -- not a
 // replayed PUBLISH -- when it resumes.
 func TestBroker_QoS2OutboundResendsPubRelOnReconnect(t *testing.T) {
-	// The retry tick is pushed far past the test's patience, so anything that
-	// arrives has to come from the reconnect path rather than from doRetry.
-	b := New(
-		WithAuth(AllowAllAuth{}),
-		WithSessionStore(memory.NewSessionStore()),
-		WithQoSOptions(WithRetryInterval(time.Hour)),
-	)
-	if err := b.Start(); err != nil {
-		t.Fatalf("broker start: %v", err)
-	}
-	t.Cleanup(b.Stop)
+	b := publishRelayBroker(t)
 	addr := startTcpBroker(t, b)
 
 	// A persistent subscriber with a QoS 2 subscription.
@@ -229,15 +219,7 @@ func TestBroker_QoS2OutboundResendsPubRelOnReconnect(t *testing.T) {
 // and has to be resent as one, with the DUP flag set and the original Packet
 // Identifier.
 func TestBroker_QoS2OutboundResendsPublishBeforePubRec(t *testing.T) {
-	b := New(
-		WithAuth(AllowAllAuth{}),
-		WithSessionStore(memory.NewSessionStore()),
-		WithQoSOptions(WithRetryInterval(time.Hour)),
-	)
-	if err := b.Start(); err != nil {
-		t.Fatalf("broker start: %v", err)
-	}
-	t.Cleanup(b.Stop)
+	b := publishRelayBroker(t)
 	addr := startTcpBroker(t, b)
 
 	sub, subCodec, _ := dialAndConnect(t, addr, "noack-sub", false)
@@ -292,6 +274,24 @@ func TestBroker_QoS2OutboundResendsPublishBeforePubRec(t *testing.T) {
 		t.Errorf("retransmitted PUBLISH = %q/%q, want d39/republish/not-acked",
 			retransmit.Topic, retransmit.Payload)
 	}
+}
+
+// publishRelayBroker builds a broker wired for QoS 2 delivery-path tests: a
+// session store so a resumed session is really restored, and a retry tick pushed
+// far past any test's patience so nothing can arrive from doRetry. Anything a
+// test observes therefore comes from the path under test, not from the ticker.
+func publishRelayBroker(t *testing.T) *Broker {
+	t.Helper()
+	b := New(
+		WithAuth(AllowAllAuth{}),
+		WithSessionStore(memory.NewSessionStore()),
+		WithQoSOptions(WithRetryInterval(time.Hour)),
+	)
+	if err := b.Start(); err != nil {
+		t.Fatalf("broker start: %v", err)
+	}
+	t.Cleanup(b.Stop)
+	return b
 }
 
 // dialAndConnect opens a TCP connection to addr, completes the MQTT 5.0

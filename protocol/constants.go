@@ -98,6 +98,21 @@ const (
 	ConnAckBanned                      = 0x8A
 )
 
+// ReasonCodeFailureBase is the boundary between an acknowledgment that accepts
+// the message and one that refuses it.
+//
+// §3.4.2.1 (PUBACK) and §3.5.2.1 (PUBREC) list their sub-0x80 values as
+// accepting: 0x00 Success and, for PUBREC, 0x10 No matching subscribers -- "The
+// message is accepted but there are no subscribers". Every value at or above
+// 0x80 means the PUBLISH was not accepted, and [MQTT-4.4.0-2] makes such a
+// PUBACK/PUBREC an acknowledgment that the corresponding PUBLISH must not be
+// retransmitted. §4.3.3 uses the same boundary for releasing the Packet
+// Identifier: it becomes reusable after the PUBCOMP "or a PUBREC with a Reason
+// Code of 0x80 or greater".
+const (
+	ReasonCodeFailureBase = 0x80
+)
+
 // PubAck/SubAck reason codes.
 const (
 	ReasonCodeSuccess     = 0x00

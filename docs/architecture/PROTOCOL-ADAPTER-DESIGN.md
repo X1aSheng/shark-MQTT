@@ -471,6 +471,12 @@ func (r *Registry) Select(conn PeekConn, bound string) (Adapter, error)
   - 尚未到 PUBREC -> 仍是未确认 PUBLISH，带 DUP 重发（`TrackOutboundQoS2` / `TrackOutboundQoS1`）。
   - 重传必须在 **CONNACK 之后立即**发出，不能只靠重试 tick：§4.4 把重连本身当作恢复时机，把恢复推迟到一个与重连无关的定时器上，等于把「重连即恢复」变成「重连后 10 秒才恢复」。
   - 阶段位零值为 `false`，对旧快照、QoS 1 条目与 inbound 暂存条目都成立；时间语义上仍是「绝对截止时间落盘、重传时重推剩余量」，与上一条一致，重连路径不重复施加 Message Expiry（[MQTT-4.3.3-7]）。
+- **`0x80` 是「接受 / 拒绝」的分界，收到 PUBACK / PUBREC 必须判它**：§3.4.2.1 与 §3.5.2.1 把 sub-0x80 的取值定义为接受（0x00 Success；PUBREC 另有 0x10 No matching subscribers，其描述正是「The message is accepted but there are no subscribers」），而 `0x80` 及以上表示 PUBLISH 未被接受。据此：
+  - [MQTT-4.3.3-4]：只有 Reason Code **小于 0x80** 的 PUBREC 才要求发送 PUBREL；因此 `>= 0x80` 时**一个字节都不回**。
+  - [MQTT-4.4.0-2]：「If PUBACK or PUBREC is received containing a Reason Code of 0x80 or greater the corresponding PUBLISH packet is treated as acknowledged, and MUST NOT be retransmitted」——被拒绝的投递既不能再发 PUBLISH，也不能再发 PUBREL。
+  - §4.3.3：Packet Identifier 在收到 PUBCOMP **或**一个 `>= 0x80` 的 PUBREC 时即可复用；同时必须像正常确认一样释放 `outboundUnacked` 槽位，否则持续拒绝的订户会把接收窗口永久压小，最终彻底投不进去。
+  - 比较必须是 `>=` 而不是 `>`：`0x80` 本身就是第一个拒绝值。阈值统一取 `protocol.ReasonCodeFailureBase`，不要在两侧各写一遍字面量 `0x80`。
+  - 我方 broker 作为**发送方**（转发给订户）已在 `handlePubRec` 落地；作为**接收方**时给出的拒绝码由 `ackDiscardedPublish` 发出，注意那时 `>= 0x80` 意味着握手到此结束，**不应**期待对端再回 PUBREL——为未知 packet id 的 PUBREL 回 PUBCOMP 只是安全网（MQTT 3.1.1 对端拿不到 reason code、必须照旧走完握手）。
 
 ### 4.2 主要回归风险与规避
 
@@ -487,6 +493,7 @@ func (r *Registry) Select(conn PeekConn, bound string) (Adapter, error)
 | R9 会话记录格式即持久化 schema | `store.InflightMessage` 被 `store/badger` 与 `store/redis` 直接 `json.Marshal`，字段重命名或语义变更会让已落盘的会话静默丢数据；中继属性若只加在在线投递路径，QoS 2 中转与重启重传都会丢属性 | 只追加字段、不改名；`store/inflight_json_test.go` 用旧快照字面量固定向后兼容并断言 nil / 空 slice 不被 JSON 互转；`broker/publish_properties_test.go` 的 `TestSessionRestoreKeepsForwardedProperties`、`TestSessionRestoreDropsExpiredInflight` 覆盖 保存 -> 恢复 -> 重传 全链路 |
 | R10 保留消息丢失中继数据 | retained 记录原先只存 topic / QoS / payload，于是订阅时重放会丢掉全部 MQTT 5 中继属性并忽略发布者的 Message Expiry（§3.3.1.3 + §3.3.2.3），经 retained 引导的请求 / 响应永远无法完成；`store/memory` 的浅拷贝还会让调用方缓冲区与库内记录互相别名 | `store.RetainedMessage` 携带 `MessageProperties` + `ExpiresAt`，`SaveRetained` 改为接收完整记录使后端无法丢字段；`store/memory` 的 `GetRetained` / trie `match` / `collectAll` 统一走 `copyRetainedMessage` 深拷贝；`TestRetainedMessageRelaysPublisherProperties`、`TestRetainedMessageReplayDecrementsExpiry`、`TestRetainedMessageExpiredIsNotDelivered` 覆盖重放、递减与过期丢弃 |
 | R11 重连重传停在错误的握手阶段 | 会话恢复路径原先无条件按 `StateSent` 重新登记 inflight：已过 PUBREC 的 QoS 2 投递被当成未确认 PUBLISH 重发，既违反 §4.4 与 [MQTT-4.3.3-6]，又让重连后的握手从 PUBLISH 重新开始而非以 PUBREL 收尾；且恢复只能等 10s 重试 tick，重连当下并不重发，重连不再是恢复时机 | 会话记录新增 `PendingPubRel` 阶段并随快照 / 恢复往返（JSON 仅追加，`store/inflight_json_test.go` + `store/memory` 往返用例固定）；`restoreSessionInflight` 按阶段选择登记入口，`resendSessionInflight` 在 CONNACK 之后立即发 PUBLISH(DUP=1) 或 PUBREL，两条重传路径共用 `buildRetransmitPublish` / `pubRelPacket` 以免漂移；`TestBroker_QoS2OutboundResendsPubRelOnReconnect`、`TestBroker_QoS2OutboundResendsPublishBeforePubRec`、`TestRestoreSessionInflightUsesTheSavedStage`、`TestSessionInflightPubRelStageSurvivesRestart` 分别钉住重连收尾、对偶守护、接线与持久化 |
+| R12 PUBREC 的 Reason Code 被丢弃 | `handlePubRec(clientID, p.PacketID)` 从不接收 Reason Code，`AckPubRec` 也无条件置 `StateAcked` 并回 PUBREL：于是一个「已声明不接受该消息」的 PUBREC 仍会被回 PUBREL、仍会被重传，Packet Identifier 与接收窗口槽位都不释放（订户持续拒绝时窗口被永久压小）。同一疏漏在 `client/` 侧也存在，但 client 当前硬编码 3.1.1（`client/client.go:152`），broker 对非 v5 会话强制回 `ReasonCodeSuccess`，故该路径**当前不可达**，未一并改动 | `handlePubRec` 接收 Reason Code，`>= protocol.ReasonCodeFailureBase` 走 `dropRejectedDelivery`：不发送任何报文、`QoSEngine.ReleaseInflight` 释放 packet id、`sess.RemoveInflight` + `DecOutboundUnacked` + `flushBufferedOutbound` 还回窗口，并按 `pubrec_rejected` 计入 `shark_mqtt_messages_dropped_total`（新标签已加入 `broker/metrics_cardinality_test.go` 白名单）。`TestBroker_QoS2PubRecReasonCodeSelectsTheHandshakeEnding` 用 5 个子用例覆盖 0x00 / 0x10（必须回 PUBREL）与 0x87 / 0x97 / 0x80（必须静默且释放），其中 0x80 专门守住 `>=` 的边界 |
 
 ### 4.3 护栏建议
 - 新增 `tests/integration/mqtt31_test.go`：3.1 CONNECT 全流程（ClientID 边界 23/24、空 ID、CONNACK SP=0、SUBACK 无 `0x80`）。

@@ -282,6 +282,23 @@ func (q *QoSEngine) AckPubRec(clientID string, packetID uint16) {
 	}
 }
 
+// ReleaseInflight stops tracking a delivery without sending anything, because
+// the peer declared the exchange over in a way that owes no packet.
+//
+// A PUBREC with a Reason Code of 0x80 or greater is the case this exists for:
+// [MQTT-4.4.0-2] makes it an acknowledgment that the corresponding PUBLISH must
+// not be retransmitted, and §4.3.3 frees the Packet Identifier at that point.
+// The PUBREL the QoS 2 handshake would otherwise owe must therefore never be
+// sent, which is exactly why this is not AckPubRec -- AckPubRec is the
+// accepting path and emits the PUBREL ([MQTT-4.3.3-4]).
+func (q *QoSEngine) ReleaseInflight(clientID string, packetID uint16) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if clientInflight, ok := q.inflight[clientID]; ok {
+		delete(clientInflight, packetID)
+	}
+}
+
 // AckPubRel acknowledges a QoS 2 PUBREL and sends PUBCOMP.
 func (q *QoSEngine) AckPubRel(clientID string, packetID uint16) {
 	q.mu.RLock()

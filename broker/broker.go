@@ -1269,7 +1269,7 @@ func (b *Broker) readLoop(clientID string, sess *Session, codec protocol.PacketC
 		case *protocol.PubAckPacket:
 			b.handlePubAck(clientID, p.PacketID)
 		case *protocol.PubRecPacket:
-			b.handlePubRec(clientID, p.PacketID)
+			b.handlePubRec(clientID, p.PacketID, p.ReasonCode)
 		case *protocol.PubRelPacket:
 			b.handlePubRel(clientID, p.PacketID)
 		case *protocol.PubCompPacket:
@@ -1536,8 +1536,17 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 // id instead of retransmitting forever. MQTT 3.1.1 PUBACK/PUBREC carry no
 // reason field, so those clients get a success acknowledgement and the message
 // is simply not routed; MQTT 5 clients receive the provided reason code. QoS 2
-// messages get a PUBREC (never a PUBACK) so the QoS 2 handshake stays valid:
-// the later PUBREL finds no tracked message and is answered with PUBCOMP.
+// messages get a PUBREC (never a PUBACK) so the QoS 2 handshake stays valid.
+//
+// For an MQTT 5 client that reason code is at or above 0x80, which
+// [MQTT-4.4.0-2] makes the end of the exchange: the PUBLISH is treated as
+// acknowledged, the sender must not retransmit it, and §4.3.3 frees the Packet
+// Identifier immediately -- so no PUBREL is expected to follow, and this is not
+// a half-finished handshake waiting to be completed. The PUBCOMP that
+// handlePubRel produces for an unknown packet id is therefore a safety net for
+// senders that send the PUBREL anyway (MQTT 3.1.1 clients must, having been
+// given no reason code, and §4.3.3 obliges a receiver to answer every PUBREL
+// with PUBCOMP), not the normal continuation of this flow.
 func (b *Broker) ackDiscardedPublish(clientID string, sess *Session, pkt *protocol.PublishPacket, v5Reason byte) {
 	if pkt.QoS == 0 {
 		return
@@ -2496,16 +2505,55 @@ func (b *Broker) handlePubAck(clientID string, packetID uint16) {
 	}
 }
 
-func (b *Broker) handlePubRec(clientID string, packetID uint16) {
+// handlePubRec processes a subscriber's acknowledgment of an outbound QoS 2
+// PUBLISH.
+//
+// The Reason Code decides which of the two handshake endings applies.
+// [MQTT-4.3.3-4]: a PUBREC "with a Reason Code value less than 0x80" obliges us
+// to send the PUBREL that carries the exchange forward. A PUBREC at or above
+// 0x80 is the opposite: the peer is telling us it did not accept the PUBLISH, so
+// per [MQTT-4.4.0-2] the PUBLISH "is treated as acknowledged, and MUST NOT be
+// retransmitted" -- no PUBREL may follow, and §4.3.3 makes the Packet
+// Identifier reusable right there.
+func (b *Broker) handlePubRec(clientID string, packetID uint16, reasonCode byte) {
+	if reasonCode >= protocol.ReasonCodeFailureBase {
+		b.dropRejectedDelivery(clientID, packetID, reasonCode)
+		return
+	}
+
 	// Record the handshake stage before the PUBREL leaves. A QoS 2 delivery
 	// answered with a PUBREC owes its peer a PUBREL, and that -- not the
 	// PUBLISH -- is what a reconnect has to resend (MQTT 5.0 §4.4,
 	// [MQTT-4.3.3-6]). Marking first is the conservative order: re-sending a
-	// PUBREL is always safe, re-sending the PUBLISH after one is not.
+	// PUBREL is always safe, re-sending the PUBLISH after one is not. The
+	// refusing path above must never reach this, or the session would record a
+	// PUBREL debt for a delivery the peer already refused.
 	if sess, ok := b.sessions.GetSession(clientID); ok {
 		sess.MarkInflightPubRel(packetID)
 	}
 	b.qos.AckPubRec(clientID, packetID)
+}
+
+// dropRejectedDelivery discards an outbound QoS 2 delivery the peer refused
+// with a PUBREC Reason Code of 0x80 or greater.
+//
+// Nothing is sent back for it: the peer has already stated it is not accepting
+// the Application Message, so there is no PUBREL to send and no PUBLISH to
+// retransmit ([MQTT-4.4.0-2]). The receive-window slot is released exactly as a
+// successful acknowledgment would release it, otherwise a subscriber that keeps
+// refusing deliveries would shrink the window permanently and the broker would
+// stop delivering to it.
+func (b *Broker) dropRejectedDelivery(clientID string, packetID uint16, reasonCode byte) {
+	b.qos.ReleaseInflight(clientID, packetID)
+	if sess, ok := b.sessions.GetSession(clientID); ok {
+		if sess.RemoveInflight(packetID) {
+			sess.DecOutboundUnacked()
+		}
+		b.flushBufferedOutbound(clientID, sess)
+	}
+	b.metrics.IncMessagesDropped("pubrec_rejected")
+	b.logger.Debug("outbound QoS 2 delivery refused by peer",
+		"clientID", clientID, "packetID", packetID, "reasonCode", reasonCode)
 }
 
 func (b *Broker) handlePubRel(clientID string, packetID uint16) {
