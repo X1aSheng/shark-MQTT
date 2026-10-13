@@ -94,9 +94,24 @@ type StoredMessage struct {
 }
 
 // RetainedMessage represents a retained message.
+//
+// It carries the MQTT 5 relay data alongside the payload because a retained
+// message is stored now and delivered later to a subscriber that was not
+// connected at publish time -- that subscriber is still "receiving the
+// Application Message", so §3.3.2.3 requires the Payload Format Indicator,
+// Content Type, Response Topic, Correlation Data and User Properties to be
+// replayed unaltered, and §3.3.2.3.3 requires the Message Expiry Interval to be
+// decremented by the waiting time.
 type RetainedMessage struct {
 	Topic     string
 	QoS       uint8
 	Payload   []byte
 	Timestamp time.Time
+	// Properties is the MQTT 5 per-message relay data to replay with the
+	// retained copy. Zero value for a 3.1/3.1.1 publisher.
+	Properties MessageProperties
+	// ExpiresAt is the absolute Message Expiry deadline derived from the
+	// publisher's Message Expiry Interval; zero means the retained message does
+	// not expire on its own (§3.3.1.3: an expired retained message is discarded).
+	ExpiresAt time.Time
 }

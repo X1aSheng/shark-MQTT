@@ -243,7 +243,7 @@ func TestRetainedStore_SaveAndGet(t *testing.T) {
 	r := NewRetainedStore()
 
 	// Test save and get
-	if err := r.SaveRetained(ctx, "sensor/temp", 1, []byte("25.5")); err != nil {
+	if err := r.SaveRetained(ctx, &store.RetainedMessage{Topic: "sensor/temp", QoS: 1, Payload: []byte("25.5")}); err != nil {
 		t.Fatalf("save error: %v", err)
 	}
 
@@ -278,9 +278,9 @@ func TestRetainedStore_Match(t *testing.T) {
 	ctx := context.Background()
 	r := NewRetainedStore()
 
-	r.SaveRetained(ctx, "sensor/room1/temp", 1, []byte("20"))
-	r.SaveRetained(ctx, "sensor/room2/temp", 1, []byte("22"))
-	r.SaveRetained(ctx, "sensor/room1/humidity", 1, []byte("60"))
+	r.SaveRetained(ctx, &store.RetainedMessage{Topic: "sensor/room1/temp", QoS: 1, Payload: []byte("20")})
+	r.SaveRetained(ctx, &store.RetainedMessage{Topic: "sensor/room2/temp", QoS: 1, Payload: []byte("22")})
+	r.SaveRetained(ctx, &store.RetainedMessage{Topic: "sensor/room1/humidity", QoS: 1, Payload: []byte("60")})
 
 	// Test wildcard +
 	matched, err := r.MatchRetained(ctx, "sensor/+/temp")
@@ -315,8 +315,8 @@ func TestRetainedStore_EmptyPayload(t *testing.T) {
 	r := NewRetainedStore()
 
 	// Save with payload, then save empty to clear
-	r.SaveRetained(ctx, "test/topic", 1, []byte("data"))
-	r.SaveRetained(ctx, "test/topic", 1, []byte{})
+	r.SaveRetained(ctx, &store.RetainedMessage{Topic: "test/topic", QoS: 1, Payload: []byte("data")})
+	r.SaveRetained(ctx, &store.RetainedMessage{Topic: "test/topic", QoS: 1, Payload: []byte{}})
 
 	_, err := r.GetRetained(ctx, "test/topic")
 	if err != store.ErrRetainedNotFound {
@@ -328,8 +328,8 @@ func TestRetainedStore_UpdateRetained(t *testing.T) {
 	ctx := context.Background()
 	r := NewRetainedStore()
 
-	r.SaveRetained(ctx, "test/topic", 1, []byte("v1"))
-	r.SaveRetained(ctx, "test/topic", 2, []byte("v2"))
+	r.SaveRetained(ctx, &store.RetainedMessage{Topic: "test/topic", QoS: 1, Payload: []byte("v1")})
+	r.SaveRetained(ctx, &store.RetainedMessage{Topic: "test/topic", QoS: 2, Payload: []byte("v2")})
 
 	got, err := r.GetRetained(ctx, "test/topic")
 	if err != nil {
@@ -365,7 +365,7 @@ func TestRetainedStore_ConcurrentAccess(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		go func(id int) {
 			topic := "test/" + string(rune('0'+id))
-			r.SaveRetained(ctx, topic, 1, []byte("data"))
+			r.SaveRetained(ctx, &store.RetainedMessage{Topic: topic, QoS: 1, Payload: []byte("data")})
 			r.GetRetained(ctx, topic)
 			r.MatchRetained(ctx, "test/#")
 			done <- true
@@ -533,5 +533,101 @@ func TestSessionStore_InflightPropertiesRoundTrip(t *testing.T) {
 	if again.Inflight[7].Properties.CorrelationData[0] != 0xDE {
 		t.Errorf("store mutated through the returned correlation data: %x",
 			again.Inflight[7].Properties.CorrelationData)
+	}
+}
+
+// TestRetainedStore_PropertiesAreDeepCopied guards the aliasing trap: the store
+// record outlives the decoded packet it was built from, so the payload and every
+// pointer/slice field of the MQTT 5 property set must be copied in both
+// directions. A shallow struct copy (the shape the code had before) would let a
+// later packet mutation silently rewrite a stored retained message, which then
+// goes out to subscribers as if the publisher had sent it.
+func TestRetainedStore_PropertiesAreDeepCopied(t *testing.T) {
+	ctx := context.Background()
+	r := NewRetainedStore()
+
+	pfi := byte(1)
+	sid := uint32(9)
+	payload := []byte("payload")
+	corr := []byte{0xAA, 0xBB}
+	ups := []store.UserProperty{{Key: "trace", Value: "1"}}
+
+	msg := &store.RetainedMessage{
+		Topic:   "retained/copy",
+		QoS:     1,
+		Payload: payload,
+		Properties: store.MessageProperties{
+			PayloadFormat:          &pfi,
+			ContentType:            "text/plain",
+			CorrelationData:        corr,
+			UserProperties:         ups,
+			SubscriptionIdentifier: &sid,
+		},
+	}
+	if err := r.SaveRetained(ctx, msg); err != nil {
+		t.Fatalf("SaveRetained: %v", err)
+	}
+
+	// Mutating the caller's buffers after the save must not reach the store.
+	payload[0] = 'X'
+	corr[0] = 0x00
+	ups[0].Key = "mutated"
+	pfi = 7
+	sid = 0
+
+	got, err := r.GetRetained(ctx, "retained/copy")
+	if err != nil {
+		t.Fatalf("GetRetained: %v", err)
+	}
+	if string(got.Payload) != "payload" {
+		t.Errorf("stored Payload = %q, want %q (the store aliased the caller's buffer)", got.Payload, "payload")
+	}
+	if got.Properties.CorrelationData[0] != 0xAA {
+		t.Errorf("stored CorrelationData = %v, want [170 187]", got.Properties.CorrelationData)
+	}
+	if got.Properties.UserProperties[0].Key != "trace" {
+		t.Errorf("stored UserProperties = %+v, want the saved pair", got.Properties.UserProperties)
+	}
+	if got.Properties.PayloadFormat == nil || *got.Properties.PayloadFormat != 1 {
+		t.Errorf("stored PayloadFormat = %v, want pointer to 1", got.Properties.PayloadFormat)
+	}
+	if got.Properties.SubscriptionIdentifier == nil || *got.Properties.SubscriptionIdentifier != 9 {
+		t.Errorf("stored SubscriptionIdentifier = %v, want pointer to 9", got.Properties.SubscriptionIdentifier)
+	}
+
+	// The reverse direction: a caller that mutates what it was handed must not
+	// be able to rewrite the store through it.
+	got.Payload[0] = 'Y'
+	got.Properties.CorrelationData[0] = 0x11
+	got.Properties.UserProperties[0].Key = "clobbered"
+	*got.Properties.PayloadFormat = 9
+
+	again, err := r.GetRetained(ctx, "retained/copy")
+	if err != nil {
+		t.Fatalf("GetRetained (second): %v", err)
+	}
+	if string(again.Payload) != "payload" ||
+		again.Properties.CorrelationData[0] != 0xAA ||
+		again.Properties.UserProperties[0].Key != "trace" ||
+		*again.Properties.PayloadFormat != 1 {
+		t.Errorf("a caller mutated the store through a returned record: %+v", again)
+	}
+
+	// MatchRetained must hand out copies too.
+	matched, err := r.MatchRetained(ctx, "#")
+	if err != nil {
+		t.Fatalf("MatchRetained: %v", err)
+	}
+	if len(matched) != 1 {
+		t.Fatalf("MatchRetained returned %d records, want 1", len(matched))
+	}
+	matched[0].Payload[0] = 'Z'
+	matched[0].Properties.UserProperties[0].Key = "clobbered-match"
+	final, err := r.GetRetained(ctx, "retained/copy")
+	if err != nil {
+		t.Fatalf("GetRetained (third): %v", err)
+	}
+	if string(final.Payload) != "payload" || final.Properties.UserProperties[0].Key != "trace" {
+		t.Errorf("MatchRetained handed out a record aliasing the store: %+v", final)
 	}
 }

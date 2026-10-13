@@ -733,9 +733,11 @@ func (b *Broker) Start() error {
 	b.startedAt = time.Now()
 	b.qos.Start()
 	b.startLoop(b.sessionCleanupLoop)
-	if b.opts.retainedExpiry > 0 {
+	if b.retainedStore != nil {
 		// Rebuild the in-memory expiry map from persisted retained messages so
-		// TTL cleanup survives a restart (P3-5).
+		// TTL cleanup survives a restart (P3-5), and so a retained message
+		// carrying its own Message Expiry Interval is reaped even when no
+		// operator TTL is configured.
 		b.rebuildRetainedExpirations()
 		b.startLoop(b.retainedCleanupLoop)
 	}
@@ -758,7 +760,7 @@ func (b *Broker) startLoop(fn func()) {
 // rebuildRetainedExpirations reconstructs the in-memory retained-expiry map and
 // count from the store after a restart (P3-5).
 func (b *Broker) rebuildRetainedExpirations() {
-	if b.retainedStore == nil || b.opts.retainedExpiry <= 0 {
+	if b.retainedStore == nil {
 		return
 	}
 	msgs, err := b.retainedStore.MatchRetained(b.ctx, "#")
@@ -774,7 +776,20 @@ func (b *Broker) rebuildRetainedExpirations() {
 		if base.IsZero() {
 			base = time.Now()
 		}
-		b.retainedExpirations[m.Topic] = base.Add(b.opts.retainedExpiry)
+		// Two independent bounds: the operator's retained TTL, and the
+		// publisher's own Message Expiry Interval, which is stored as an
+		// absolute deadline. Whichever comes first wins, so a restart cannot
+		// extend a message's life past the deadline the publisher asked for.
+		var deadline time.Time
+		if b.opts.retainedExpiry > 0 {
+			deadline = base.Add(b.opts.retainedExpiry)
+		}
+		if !m.ExpiresAt.IsZero() && (deadline.IsZero() || m.ExpiresAt.Before(deadline)) {
+			deadline = m.ExpiresAt
+		}
+		if !deadline.IsZero() {
+			b.retainedExpirations[m.Topic] = deadline
+		}
 		b.retainedCount.Add(1)
 	}
 	b.retainedMu.Unlock()
@@ -1607,7 +1622,22 @@ func (b *Broker) handleRetainedMessage(pkt *protocol.PublishPacket) {
 		return
 	}
 
-	if err := b.retainedStore.SaveRetained(b.ctx, pkt.Topic, pkt.FixedHeader.QoS, pkt.Payload); err != nil {
+	storedAt := time.Now()
+	record := &store.RetainedMessage{
+		Topic:     pkt.Topic,
+		QoS:       pkt.FixedHeader.QoS,
+		Payload:   pkt.Payload,
+		Timestamp: storedAt,
+		// The retained copy is delivered later to subscribers that were not
+		// connected now, and §3.3.2.3 still applies to them: the publisher's
+		// relayable properties have to be stored so they can be replayed
+		// unaltered, and the Message Expiry Interval becomes an absolute
+		// deadline so the replay can advertise the time actually left
+		// (§3.3.2.3.3) and an expired retained message is discarded (§3.3.1.3).
+		Properties: storeProperties(pkt.Properties),
+		ExpiresAt:  messageExpiresAt(pkt),
+	}
+	if err := b.retainedStore.SaveRetained(b.ctx, record); err != nil {
 		b.logger.Warn("failed to save retained message", "topic", pkt.Topic, "error", err)
 		b.metrics.IncErrors("retained_store")
 		return
@@ -1615,9 +1645,20 @@ func (b *Broker) handleRetainedMessage(pkt *protocol.PublishPacket) {
 	if !existed {
 		b.retainedCount.Add(1)
 	}
-	// Record expiry for retained TTL cleanup if configured
+	// Track the soonest deadline the retained message has: the operator's
+	// retained TTL and the publisher's own Message Expiry Interval both bound
+	// how long it may stay in the store.
+	deadline := record.ExpiresAt
 	if b.opts.retainedExpiry > 0 {
-		b.retainedExpirations[pkt.Topic] = time.Now().Add(b.opts.retainedExpiry)
+		ttl := storedAt.Add(b.opts.retainedExpiry)
+		if deadline.IsZero() || ttl.Before(deadline) {
+			deadline = ttl
+		}
+	}
+	if deadline.IsZero() {
+		delete(b.retainedExpirations, pkt.Topic)
+	} else {
+		b.retainedExpirations[pkt.Topic] = deadline
 	}
 	b.metrics.SetRetainedMessages(int(b.retainedCount.Load()))
 }
@@ -2212,12 +2253,20 @@ func (b *Broker) deliverRetainedMessages(clientID string, sess *Session, topicFi
 			},
 			Topic:   msg.Topic,
 			Payload: msg.Payload,
+			// The retained copy still is the publisher's Application Message, so
+			// §3.3.2.3 applies to this replay exactly as it did to the live
+			// forward: the relayable properties go out unaltered. The stored set
+			// deliberately excludes the Message Expiry Interval, which is passed
+			// as the absolute deadline below so doDeliver can re-derive the
+			// remaining time (§3.3.2.3.3) and refuse an already-expired retained
+			// message.
+			Properties: protocolProperties(msg.Properties),
 		}
 		// doDeliver applies flow control (buffering when the window is full),
-		// assigns the packet ID, and tracks the delivery (NEW-4). Retained
-		// messages carry no per-message expiry here; their lifecycle is handled
-		// by the retained-message TTL (retained_expiry).
-		b.doDeliver(clientID, pubPkt, deliverQoS, time.Time{}, subOpts, true)
+		// assigns the packet ID, and tracks the delivery (NEW-4). The operator's
+		// retained TTL is policy rather than a publisher-set lifetime, so it is
+		// not advertised as a Message Expiry Interval here.
+		b.doDeliver(clientID, pubPkt, deliverQoS, msg.ExpiresAt, subOpts, true)
 	}
 }
 

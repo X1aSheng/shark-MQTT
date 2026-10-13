@@ -150,7 +150,7 @@ func TestBadgerRetainedStore_SaveAndGet(t *testing.T) {
 	db := setupBadger(t)
 	r := NewRetainedStore(RetainedStoreConfig{DB: db})
 
-	if err := r.SaveRetained(ctx, "sensor/temp", 1, []byte("25.5")); err != nil {
+	if err := r.SaveRetained(ctx, &store.RetainedMessage{Topic: "sensor/temp", QoS: 1, Payload: []byte("25.5")}); err != nil {
 		t.Fatalf("save error: %v", err)
 	}
 
@@ -173,9 +173,9 @@ func TestBadgerRetainedStore_Match(t *testing.T) {
 	db := setupBadger(t)
 	r := NewRetainedStore(RetainedStoreConfig{DB: db})
 
-	r.SaveRetained(ctx, "sensor/room1/temp", 1, []byte("20"))
-	r.SaveRetained(ctx, "sensor/room2/temp", 1, []byte("22"))
-	r.SaveRetained(ctx, "sensor/room1/humidity", 1, []byte("60"))
+	r.SaveRetained(ctx, &store.RetainedMessage{Topic: "sensor/room1/temp", QoS: 1, Payload: []byte("20")})
+	r.SaveRetained(ctx, &store.RetainedMessage{Topic: "sensor/room2/temp", QoS: 1, Payload: []byte("22")})
+	r.SaveRetained(ctx, &store.RetainedMessage{Topic: "sensor/room1/humidity", QoS: 1, Payload: []byte("60")})
 
 	matched, err := r.MatchRetained(ctx, "sensor/+/temp")
 	if err != nil {
@@ -199,7 +199,7 @@ func TestBadgerRetainedStore_DeleteRetained(t *testing.T) {
 	db := setupBadger(t)
 	r := NewRetainedStore(RetainedStoreConfig{DB: db})
 
-	r.SaveRetained(ctx, "test/topic", 1, []byte("data"))
+	r.SaveRetained(ctx, &store.RetainedMessage{Topic: "test/topic", QoS: 1, Payload: []byte("data")})
 	if err := r.DeleteRetained(ctx, "test/topic"); err != nil {
 		t.Fatalf("delete error: %v", err)
 	}
@@ -215,9 +215,9 @@ func TestBadgerRetainedStore_EmptyPayload(t *testing.T) {
 	db := setupBadger(t)
 	r := NewRetainedStore(RetainedStoreConfig{DB: db})
 
-	r.SaveRetained(ctx, "test/topic", 1, []byte("data"))
+	r.SaveRetained(ctx, &store.RetainedMessage{Topic: "test/topic", QoS: 1, Payload: []byte("data")})
 	// Per MQTT spec, a retained message with zero-length payload deletes the existing retained message.
-	r.SaveRetained(ctx, "test/topic", 1, []byte{})
+	r.SaveRetained(ctx, &store.RetainedMessage{Topic: "test/topic", QoS: 1, Payload: []byte{}})
 
 	_, err := r.GetRetained(ctx, "test/topic")
 	if err == nil {

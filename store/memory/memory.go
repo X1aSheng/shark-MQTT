@@ -36,24 +36,49 @@ func copyInflightMessage(v *store.InflightMessage) *store.InflightMessage {
 		msgCopy.Payload = make([]byte, len(v.Payload))
 		copy(msgCopy.Payload, v.Payload)
 	}
-	if v.Properties.PayloadFormat != nil {
-		pf := *v.Properties.PayloadFormat
-		msgCopy.Properties.PayloadFormat = &pf
-	}
-	if v.Properties.CorrelationData != nil {
-		msgCopy.Properties.CorrelationData = make([]byte, len(v.Properties.CorrelationData))
-		copy(msgCopy.Properties.CorrelationData, v.Properties.CorrelationData)
-	}
-	if v.Properties.UserProperties != nil {
-		up := make([]store.UserProperty, len(v.Properties.UserProperties))
-		copy(up, v.Properties.UserProperties)
-		msgCopy.Properties.UserProperties = up
-	}
-	if v.Properties.SubscriptionIdentifier != nil {
-		sid := *v.Properties.SubscriptionIdentifier
-		msgCopy.Properties.SubscriptionIdentifier = &sid
-	}
+	msgCopy.Properties = copyMessageProperties(v.Properties)
 	return &msgCopy
+}
+
+// copyMessageProperties deep-copies the store-neutral MQTT 5 property set.
+//
+// The pointer and slice fields must never be shared with the caller: the store
+// record outlives the decoded packet it was built from, so aliasing them would
+// let a later packet mutation rewrite a stored message (or the reverse). Both
+// the inflight and the retained paths need this, and having one helper keeps
+// them from drifting apart when a property kind is added.
+func copyMessageProperties(p store.MessageProperties) store.MessageProperties {
+	out := p
+	if p.PayloadFormat != nil {
+		pf := *p.PayloadFormat
+		out.PayloadFormat = &pf
+	}
+	if p.CorrelationData != nil {
+		out.CorrelationData = make([]byte, len(p.CorrelationData))
+		copy(out.CorrelationData, p.CorrelationData)
+	}
+	if p.UserProperties != nil {
+		up := make([]store.UserProperty, len(p.UserProperties))
+		copy(up, p.UserProperties)
+		out.UserProperties = up
+	}
+	if p.SubscriptionIdentifier != nil {
+		sid := *p.SubscriptionIdentifier
+		out.SubscriptionIdentifier = &sid
+	}
+	return out
+}
+
+// copyRetainedMessage deep-copies a retained record, payload and MQTT 5 relay
+// data included.
+func copyRetainedMessage(v *store.RetainedMessage) *store.RetainedMessage {
+	out := *v
+	if v.Payload != nil {
+		out.Payload = make([]byte, len(v.Payload))
+		copy(out.Payload, v.Payload)
+	}
+	out.Properties = copyMessageProperties(v.Properties)
+	return &out
 }
 
 // copyInflightMap deep-copies a whole inflight map, preserving nil.
@@ -238,24 +263,24 @@ func NewRetainedStore() store.RetainedStore {
 	}
 }
 
-func (r *retainedStore) SaveRetained(ctx context.Context, topic string, qos uint8, payload []byte) error {
+func (r *retainedStore) SaveRetained(ctx context.Context, msg *store.RetainedMessage) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if len(payload) == 0 {
-		delete(r.messages, topic)
-		r.removeFromIndex(topic)
+	// [MQTT-3.3.1-7] / [MQTT-3.3.1-8]: a zero-length payload deletes the
+	// retained message for the topic rather than storing an empty one.
+	if len(msg.Payload) == 0 {
+		delete(r.messages, msg.Topic)
+		r.removeFromIndex(msg.Topic)
 		return nil
 	}
-	payloadCopy := make([]byte, len(payload))
-	copy(payloadCopy, payload)
-	msg := &store.RetainedMessage{
-		Topic:     topic,
-		QoS:       qos,
-		Payload:   payloadCopy,
-		Timestamp: time.Now(),
+	stored := copyRetainedMessage(msg)
+	if stored.Timestamp.IsZero() {
+		// Still the store's job when the caller did not stamp it: retained TTLs
+		// are measured from the moment the message was stored.
+		stored.Timestamp = time.Now()
 	}
-	r.messages[topic] = msg
-	r.addToIndex(topic, msg)
+	r.messages[msg.Topic] = stored
+	r.addToIndex(msg.Topic, stored)
 	return nil
 }
 
@@ -299,12 +324,7 @@ func (r *retainedStore) GetRetained(ctx context.Context, topic string) (*store.R
 	if !ok {
 		return nil, store.ErrRetainedNotFound
 	}
-	msgCopy := *msg
-	if msg.Payload != nil {
-		msgCopy.Payload = make([]byte, len(msg.Payload))
-		copy(msgCopy.Payload, msg.Payload)
-	}
-	return &msgCopy, nil
+	return copyRetainedMessage(msg), nil
 }
 
 func (r *retainedStore) DeleteRetained(ctx context.Context, topic string) error {
@@ -335,12 +355,7 @@ func (n *retainedTrie) match(parts []string, depth int, result *[]*store.Retaine
 		if n.msg != nil {
 			if _, ok := visited[n.msg.Topic]; !ok {
 				visited[n.msg.Topic] = struct{}{}
-				msgCopy := *n.msg
-				if n.msg.Payload != nil {
-					msgCopy.Payload = make([]byte, len(n.msg.Payload))
-					copy(msgCopy.Payload, n.msg.Payload)
-				}
-				*result = append(*result, &msgCopy)
+				*result = append(*result, copyRetainedMessage(n.msg))
 			}
 		}
 		return
@@ -369,12 +384,7 @@ func (n *retainedTrie) collectAll(result *[]*store.RetainedMessage, visited map[
 	if n.msg != nil {
 		if _, ok := visited[n.msg.Topic]; !ok {
 			visited[n.msg.Topic] = struct{}{}
-			msgCopy := *n.msg
-			if n.msg.Payload != nil {
-				msgCopy.Payload = make([]byte, len(n.msg.Payload))
-				copy(msgCopy.Payload, n.msg.Payload)
-			}
-			*result = append(*result, &msgCopy)
+			*result = append(*result, copyRetainedMessage(n.msg))
 		}
 	}
 	for _, child := range n.children {

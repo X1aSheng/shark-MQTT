@@ -178,15 +178,15 @@ func (s *MockRetainedStore) SetLatency(d time.Duration) {
 	s.latency = d
 }
 
-func (s *MockRetainedStore) SaveRetained(ctx context.Context, topic string, qos uint8, payload []byte) error {
+func (s *MockRetainedStore) SaveRetained(ctx context.Context, msg *store.RetainedMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	time.Sleep(s.latency)
-	s.data[topic] = &store.RetainedMessage{
-		Topic:   topic,
-		QoS:     qos,
-		Payload: payload,
+	stored := *msg
+	if stored.Timestamp.IsZero() {
+		stored.Timestamp = time.Now()
 	}
+	s.data[msg.Topic] = &stored
 	return nil
 }
 

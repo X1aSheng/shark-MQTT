@@ -127,7 +127,7 @@ func TestRetainedStore(t *testing.T) {
 	r := NewRetainedStore()
 
 	// Test save and get
-	if err := r.SaveRetained(ctx, "sensor/temp", 1, []byte("25.5")); err != nil {
+	if err := r.SaveRetained(ctx, &store.RetainedMessage{Topic: "sensor/temp", QoS: 1, Payload: []byte("25.5")}); err != nil {
 		t.Fatalf("save error: %v", err)
 	}
 
@@ -162,9 +162,9 @@ func TestRetainedStoreMatch(t *testing.T) {
 	ctx := context.Background()
 	r := NewRetainedStore()
 
-	r.SaveRetained(ctx, "sensor/room1/temp", 1, []byte("20"))
-	r.SaveRetained(ctx, "sensor/room2/temp", 1, []byte("22"))
-	r.SaveRetained(ctx, "sensor/room1/humidity", 1, []byte("60"))
+	r.SaveRetained(ctx, &store.RetainedMessage{Topic: "sensor/room1/temp", QoS: 1, Payload: []byte("20")})
+	r.SaveRetained(ctx, &store.RetainedMessage{Topic: "sensor/room2/temp", QoS: 1, Payload: []byte("22")})
+	r.SaveRetained(ctx, &store.RetainedMessage{Topic: "sensor/room1/humidity", QoS: 1, Payload: []byte("60")})
 
 	// Test wildcard +
 	matched, err := r.MatchRetained(ctx, "sensor/+/temp")
@@ -199,8 +199,8 @@ func TestRetainedStoreEmptyPayload(t *testing.T) {
 	r := NewRetainedStore()
 
 	// Save with payload, then save empty to clear
-	r.SaveRetained(ctx, "test/topic", 1, []byte("data"))
-	r.SaveRetained(ctx, "test/topic", 1, []byte{})
+	r.SaveRetained(ctx, &store.RetainedMessage{Topic: "test/topic", QoS: 1, Payload: []byte("data")})
+	r.SaveRetained(ctx, &store.RetainedMessage{Topic: "test/topic", QoS: 1, Payload: []byte{}})
 
 	_, err := r.GetRetained(ctx, "test/topic")
 	if err != store.ErrRetainedNotFound {

@@ -29,7 +29,7 @@ func TestRetainedStore_CRUD(t *testing.T) {
 	payload := []byte("retained message")
 
 	// Test SaveRetained
-	err := rs.SaveRetained(ctx, topic, 1, payload)
+	err := rs.SaveRetained(ctx, &store.RetainedMessage{Topic: topic, QoS: 1, Payload: payload})
 	if err != nil {
 		t.Fatalf("SaveRetained failed: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestRetainedStore_CRUD(t *testing.T) {
 	}
 
 	// Test DeleteRetained (via empty payload)
-	err = rs.SaveRetained(ctx, topic, 0, []byte{})
+	err = rs.SaveRetained(ctx, &store.RetainedMessage{Topic: topic, QoS: 0, Payload: []byte{}})
 	if err != nil {
 		t.Fatalf("SaveRetained (delete) failed: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestRetainedStore_MultipleTopics(t *testing.T) {
 	}
 
 	for _, tt := range topics {
-		err := rs.SaveRetained(ctx, tt.topic, tt.qos, tt.payload)
+		err := rs.SaveRetained(ctx, &store.RetainedMessage{Topic: tt.topic, QoS: tt.qos, Payload: tt.payload})
 		if err != nil {
 			t.Fatalf("SaveRetained failed for %s: %v", tt.topic, err)
 		}
@@ -150,7 +150,7 @@ func TestRetainedStore_MatchRetained(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		err := rs.SaveRetained(ctx, tc.topic, 1, tc.payload)
+		err := rs.SaveRetained(ctx, &store.RetainedMessage{Topic: tc.topic, QoS: 1, Payload: tc.payload})
 		if err != nil {
 			t.Fatalf("SaveRetained failed: %v", err)
 		}
@@ -251,13 +251,13 @@ func TestRetainedStore_UpdateExisting(t *testing.T) {
 	topic := "test/update"
 
 	// Save initial
-	err := rs.SaveRetained(ctx, topic, 1, []byte("v1"))
+	err := rs.SaveRetained(ctx, &store.RetainedMessage{Topic: topic, QoS: 1, Payload: []byte("v1")})
 	if err != nil {
 		t.Fatalf("SaveRetained v1 failed: %v", err)
 	}
 
 	// Update with new value
-	err = rs.SaveRetained(ctx, topic, 2, []byte("v2"))
+	err = rs.SaveRetained(ctx, &store.RetainedMessage{Topic: topic, QoS: 2, Payload: []byte("v2")})
 	if err != nil {
 		t.Fatalf("SaveRetained v2 failed: %v", err)
 	}
@@ -296,7 +296,7 @@ func BenchmarkRetainedStore_Save(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		topic := "bench/topic-" + string(rune(i))
-		rs.SaveRetained(ctx, topic, 1, payload)
+		rs.SaveRetained(ctx, &store.RetainedMessage{Topic: topic, QoS: 1, Payload: payload})
 	}
 }
 
@@ -317,7 +317,7 @@ func BenchmarkRetainedStore_Get(b *testing.B) {
 	const prePop = 50
 	for i := 0; i < prePop; i++ {
 		topic := "bench/topic-" + string(rune(i))
-		rs.SaveRetained(ctx, topic, 1, []byte("data"))
+		rs.SaveRetained(ctx, &store.RetainedMessage{Topic: topic, QoS: 1, Payload: []byte("data")})
 	}
 
 	b.ResetTimer()
@@ -346,7 +346,7 @@ func BenchmarkRetainedStore_Match(b *testing.B) {
 	const prePop = 50
 	for i := 0; i < prePop; i++ {
 		topic := "bench/device-" + string(rune(i%10)) + "/sensor-" + string(rune(i))
-		rs.SaveRetained(ctx, topic, 1, []byte("data"))
+		rs.SaveRetained(ctx, &store.RetainedMessage{Topic: topic, QoS: 1, Payload: []byte("data")})
 	}
 
 	b.ResetTimer()
@@ -376,7 +376,7 @@ func BenchmarkRetainedStore_Delete(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		topic := "bench/topic-" + string(rune(i))
-		rs.SaveRetained(ctx, topic, 1, []byte("data"))
+		rs.SaveRetained(ctx, &store.RetainedMessage{Topic: topic, QoS: 1, Payload: []byte("data")})
 		rs.DeleteRetained(ctx, topic)
 	}
 }

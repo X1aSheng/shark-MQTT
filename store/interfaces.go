@@ -31,7 +31,15 @@ type MessageStore interface {
 
 // RetainedStore handles retained message storage.
 type RetainedStore interface {
-	SaveRetained(ctx context.Context, topic string, qos uint8, payload []byte) error
+	// SaveRetained stores msg as the retained message for msg.Topic. A
+	// zero-length payload deletes the retained message instead
+	// ([MQTT-3.3.1-7] / [MQTT-3.3.1-8]).
+	//
+	// The whole record is passed rather than (topic, qos, payload) so the
+	// backend cannot invent or drop fields: an MQTT 5 retained message has to
+	// remember its relay properties and its expiry deadline, and a backend that
+	// rebuilt the record from three arguments would silently lose them.
+	SaveRetained(ctx context.Context, msg *RetainedMessage) error
 	GetRetained(ctx context.Context, topic string) (*RetainedMessage, error)
 	DeleteRetained(ctx context.Context, topic string) error
 	MatchRetained(ctx context.Context, pattern string) ([]*RetainedMessage, error)

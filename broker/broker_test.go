@@ -169,7 +169,15 @@ func TestBroker_RetainedMetricsCountUpdatesOnOverwriteAndDelete(t *testing.T) {
 	publish(nil)
 	publish(nil)
 
-	want := []int{1, 1, 0, 0}
+	// The leading 0 is the startup seed: with a retained store configured the
+	// broker now rebuilds the retained gauge from the store on Start, so the
+	// published sequence starts there rather than at the first publish. (It used
+	// to be published only when a retained_expiry TTL was configured, which left
+	// the gauge at 0 after a restart even though the store still held retained
+	// messages.) The original assertions are unchanged and still form the tail:
+	// first publish -> 1, overwrite -> 1 (no double count), delete -> 0,
+	// redundant delete -> 0.
+	want := []int{0, 1, 1, 0, 0}
 	if len(m.retained) != len(want) {
 		t.Fatalf("retained metric updates = %v, want %v", m.retained, want)
 	}

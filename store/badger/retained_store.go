@@ -45,23 +45,22 @@ func (s *RetainedStore) topicKey(topic string) []byte {
 	return []byte(s.keyPrefix + topic)
 }
 
-func (s *RetainedStore) SaveRetained(ctx context.Context, topic string, qos uint8, payload []byte) error {
+func (s *RetainedStore) SaveRetained(ctx context.Context, msg *store.RetainedMessage) error {
 	// Per MQTT spec, a retained message with zero-length payload deletes the existing retained message.
-	if len(payload) == 0 {
-		return s.DeleteRetained(ctx, topic)
+	if len(msg.Payload) == 0 {
+		return s.DeleteRetained(ctx, msg.Topic)
 	}
-	retained := &store.RetainedMessage{
-		Topic:     topic,
-		QoS:       qos,
-		Payload:   payload,
-		Timestamp: time.Now(), // persist the store time so retained TTLs survive restarts (audit)
+	retained := *msg
+	if retained.Timestamp.IsZero() {
+		// persist the store time so retained TTLs survive restarts (audit)
+		retained.Timestamp = time.Now()
 	}
-	serialized, err := json.Marshal(retained)
+	serialized, err := json.Marshal(&retained)
 	if err != nil {
 		return fmt.Errorf("serialize retained: %w", err)
 	}
 	return s.db.Update(func(txn *badger.Txn) error {
-		return txn.Set(s.topicKey(topic), serialized)
+		return txn.Set(s.topicKey(msg.Topic), serialized)
 	})
 }
 
