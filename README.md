@@ -153,7 +153,7 @@ Details: [docs/guides/PERFORMANCE.md](docs/guides/PERFORMANCE.md)
 
 | Suite | Count | Status |
 |---|---|---|
-| Unit tests (incl. defect regressions) | 437 | Pass |
+| Unit tests (incl. defect regressions) | 440 | Pass |
 | Integration tests (end-to-end, incl. deploy verification) | 147 | Pass |
 | Benchmarks | 61 | Pass |
 | Race detector | full suite | Clean |

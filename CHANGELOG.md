@@ -7,6 +7,32 @@ This project uses semantic versioning. Pre-release tags use the form
 
 ## Unreleased
 
+### Lifecycle & race fixes (2026-10-13)
+
+- **Health/metrics listener is closed by Stop, not merely shut down.**
+  `api.Broker.Stop` now closes the listener directly. `http.Server.Shutdown`
+  only closes the listeners `Serve` has already registered, so a `Stop` landing
+  between `Start` and the first `Serve` left the metrics port bound forever: the
+  next `Start` could not rebind it and `/healthz`, `/readyz` and `/metrics` were
+  silently lost after a restart.
+- **Health listener handles are mutex-guarded.** The serving goroutine used to
+  read the `Broker.healthSrv` *field*; a re-`Start` reassigned that field while
+  the goroutine left over from the previous `Start` still read it. The race
+  detector reported this as `WARNING: DATA RACE` in
+  `TestGracefulShutdown_StartClearsShutdownFlag` on every Linux/macOS job.
+  `startHealthServer` now captures its own `*http.Server` and `net.Listener` and
+  serves those, so a stale goroutine can no longer serve its listener under the
+  new server object.
+- **`MetricsAddr()` reports a running listener only.** It returns `""` before
+  `Start` and after `Stop` instead of advertising an address nobody listens on.
+- **`Stop()` is idempotent for the health server.** The handles are claimed
+  under the mutex, so a deferred `Stop` following an explicit one is a no-op
+  rather than a second `Shutdown`.
+- New regression tests: `api/api_health_lifecycle_test.go` (3 tests, one running
+  ten `Start`/`Stop` cycles on a fixed port). See
+  [docs/architecture/CONCURRENCY.md](docs/architecture/CONCURRENCY.md) rules 6
+  and 7.
+
 ### Security & protocol audit fixes (2026-09-03)
 
 Full record with per-commit details, regression tests and upgrade notes:

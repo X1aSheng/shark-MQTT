@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/X1aSheng/shark-mqtt/broker"
@@ -20,11 +21,18 @@ import (
 
 // Broker is the main MQTT broker that combines network server with broker core.
 type Broker struct {
-	srv        *broker.MQTTServer
-	broker     *broker.Broker
-	cfg        *config.Config
+	srv    *broker.MQTTServer
+	broker *broker.Broker
+	cfg    *config.Config
+	// healthMu guards the three health/metrics fields below. They are written
+	// by Start -- which may legitimately run again after a Stop -- and read by
+	// the serving goroutine, by Stop and by MetricsAddr. As plain fields they
+	// raced: Start -> Stop -> Start assigned healthSrv while the goroutine left
+	// over from the first Start was still reading it.
+	healthMu   sync.Mutex
 	healthSrv  *http.Server
-	healthAddr string        // actual listener address for health/metrics
+	healthLn   net.Listener // closed by Stop so a pre-Serve stop cannot leak the port
+	healthAddr string       // actual listener address for health/metrics
 	logr       logger.Logger // diagnostic logger for lifecycle events
 	initErr    error         // set if config validation fails during construction
 }
@@ -304,16 +312,39 @@ func (b *Broker) Stop() {
 	// is going away (DISCONNECT 0x8B) while their sockets are still open.
 	b.broker.BeginShutdown()
 
-	if b.healthSrv != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := b.healthSrv.Shutdown(ctx); err != nil {
-			b.logr.Warn("health shutdown error", "error", err)
-		}
-	}
+	b.stopHealthServer()
+
 	b.srv.Stop()
 	b.broker.Stop()
 	b.logr.Info("Shark-MQTT stopped")
+}
+
+// stopHealthServer tears down the health/metrics listener. Stop can run more
+// than once (a caller's deferred Stop plus a test's t.Cleanup), so the handles
+// are claimed under the mutex and the whole body is a no-op on the second call.
+func (b *Broker) stopHealthServer() {
+	b.healthMu.Lock()
+	srv, ln := b.healthSrv, b.healthLn
+	b.healthSrv, b.healthLn, b.healthAddr = nil, nil, ""
+	b.healthMu.Unlock()
+
+	// Close the listener explicitly rather than relying on Shutdown alone.
+	// http.Server.Shutdown only closes the listeners that Serve has already
+	// registered, so a Stop landing before the serving goroutine reached Serve
+	// would leave the port bound -- and the next Start would then fail to
+	// rebind it, silently losing the health and metrics endpoints.
+	if ln != nil {
+		_ = ln.Close()
+	}
+	if srv == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		b.logr.Warn("health shutdown error", "error", err)
+	}
 }
 
 // Addr returns the listening address.
@@ -353,8 +384,11 @@ func (b *Broker) Broker() *broker.Broker {
 	return b.broker
 }
 
-// MetricsAddr returns the health/metrics server's listening address.
+// MetricsAddr returns the health/metrics server's listening address, or "" when
+// that server is not running (never started, or already stopped).
 func (b *Broker) MetricsAddr() string {
+	b.healthMu.Lock()
+	defer b.healthMu.Unlock()
 	return b.healthAddr
 }
 
@@ -404,18 +438,31 @@ func (b *Broker) startHealthServer() {
 		b.logr.Error("health/metrics server failed to start — endpoints unavailable", "addr", b.cfg.MetricsAddr, "error", err)
 		return
 	}
-	b.healthAddr = ln.Addr().String()
-	b.healthSrv = &http.Server{
+	srv := &http.Server{
 		Handler:           mux,
 		ReadTimeout:       5 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      5 * time.Second,
 		IdleTimeout:       30 * time.Second,
 	}
+	addr := ln.Addr().String()
+
+	b.healthMu.Lock()
+	b.healthSrv, b.healthLn, b.healthAddr = srv, ln, addr
+	b.healthMu.Unlock()
+
+	// Serve the captured srv/ln, never the b.healthSrv field: a re-Start
+	// replaces that field, and the goroutine left over from the previous Start
+	// would otherwise end up serving its own stale listener under the new
+	// server object (and be missed by that server's Shutdown).
 	go func() {
-		if err := b.healthSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		err := srv.Serve(ln)
+		// net.ErrClosed is expected too: stopHealthServer closes the listener
+		// directly, so Serve returns the raw accept error rather than
+		// http.ErrServerClosed.
+		if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
 			b.logr.Warn("health server error", "error", err)
 		}
 	}()
-	b.logr.Info("health endpoint", "addr", b.healthAddr)
+	b.logr.Info("health endpoint", "addr", addr)
 }

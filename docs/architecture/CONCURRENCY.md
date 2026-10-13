@@ -19,6 +19,7 @@
 | `q.mu` (RWMutex) | `QoSEngine` | inflight map + retry state |
 | `wh.mu` | `WillHandler` | wills map + delayed-will cancels |
 | `cs.wmu` | `clientState` | synchronous socket writes (no write queue) |
+| `api.healthMu` | `api.Broker` | `healthSrv` / `healthLn` / `healthAddr` (health + metrics listener lifecycle) |
 | client locks | `MQTTClient` | `mu`/`wmu`/`inflightMu`/`pendingMu`/`msgMu` (client package, independent) |
 
 ## Ordering rules
@@ -44,6 +45,19 @@
 5. **Per-connection write queue.** `writePacket` looks up `connections`
    under `b.mu.RLock` and enqueues without holding the lock; producers select
    on `stopWrites` to avoid sending to a torn-down queue.
+
+6. **Goroutines own the state they were started with.** A background goroutine
+   must read only values captured before it was launched, never a mutable field
+   that a later lifecycle call can reassign. `api.startHealthServer` is the
+   reference case: it serves its own captured `*http.Server` and `net.Listener`
+   rather than the `Broker.healthSrv` field, because `Start` -> `Stop` -> `Start`
+   reassigns that field while the previous goroutine may still be running. The
+   same rule is what keeps `broker.MQTTServer` restartable.
+
+7. **A stop must release what it owns, not only what is already registered.**
+   `api.Broker.Stop` closes the health listener directly; `http.Server.Shutdown`
+   alone only closes listeners `Serve` has registered, so relying on it leaks
+   the port when `Stop` wins the race against the first `Serve`.
 
 ## Deadlock audit (2026-08-31)
 

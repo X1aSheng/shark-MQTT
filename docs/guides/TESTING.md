@@ -51,7 +51,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 |  +-- topic_filter_defect_test.go - topic filter 边界       |
 |  +-- windows_benchmark_test.go - Windows benchmark 隔离    |
 +------------------------------------------------------------+
-|  Unit Tests (437 declared)                                 |
+|  Unit Tests (440 declared)                                 |
 |  各包内 *_test.go 文件                                     |
 |  broker/ protocol/ client/ config/ plugin/ store/          |
 |  store/memory/ pkg/ api/ errs/                             |
@@ -64,7 +64,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 
 | 类型 | 数量 | 位置 |
 |------|------|------|
-| 单元测试 | 437 | 各包 `*_test.go`（含 `tests/defects/`） |
+| 单元测试 | 440 | 各包 `*_test.go`（含 `tests/defects/`） |
 | 集成测试 | 147 | `tests/integration/` |
 | 缺陷回归测试 | `tests/defects/` 7 个文件 / 8 个用例 + 包内回归 | `tests/defects/`、`broker/`、`client/`、`protocol/` |
 | 基准测试 | 61（Windows 本地实际执行 58） | `tests/bench/`、`plugin/`、`pkg/metrics/` |
@@ -100,7 +100,7 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 | client/ | 35 | 0 | MQTT 客户端连接、发布、订阅、断开清理 |
 | config/ | 24 | 0 | 配置解析与校验 |
 | store/memory/ | 23 | 0 | 内存存储：会话、消息、保留消息 |
-| api/ | 22 | 0 | 公共 API 与健康端点 |
+| api/ | 25 | 0 | 公共 API、健康端点与健康监听的生命周期（Stop 释放端口/幂等、重启可重绑） |
 | plugin/ | 16 | 3 | 插件系统：注册、分发、超时与 panic 隔离 |
 | pkg/bufferpool/ | 10 | 0 | 缓冲池管理 |
 | pkg/metrics/ | 10 | 1 | Prometheus 指标 |
@@ -108,7 +108,7 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 | pkg/logger/ | 7 | 0 | slog 日志适配 |
 | errs/ | 4 | 0 | 错误定义 |
 | tests/defects/ | 8 | 0 | 审查发现缺陷的最小复现和回归测试 |
-| **单元测试合计** | **437** | **4** | |
+| **单元测试合计** | **440** | **4** | |
 | tests/integration/ | 147 | 0 | 端到端集成测试（含部署验证） |
 | tests/bench/ | 0 | 57 | 全栈 TCP、E2E 数据验证、微基准 |
 | **基准测试合计** | | **61** | |
