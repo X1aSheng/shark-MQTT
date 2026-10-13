@@ -415,7 +415,7 @@ func TestSessionStore_SaveIsolation(t *testing.T) {
 // TestSessionStore_InflightPropertiesRoundTrip covers the MQTT 5 relay data a
 // restored session needs: §3.3.2.3 requires a retransmission after a restart to
 // carry the same Response Topic, Correlation Data, User Properties, Content
-// Type and Payload Format Indicator, and §3.3.2.3.2 requires the Message Expiry
+// Type and Payload Format Indicator, and §3.3.2.3.3 requires the Message Expiry
 // deadline to still be enforceable. It also proves the copies are deep in both
 // directions, so neither the caller's slice nor the returned one can reach into
 // the stored message.

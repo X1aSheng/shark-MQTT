@@ -41,7 +41,7 @@ type Subscription struct {
 // restored from a store must be able to retransmit the same PUBLISH it would
 // have sent before the restart, and §3.3.2.3 requires the forwarded Response
 // Topic, Correlation Data, User Properties, Content Type and Payload Format
-// Indicator to survive that. ExpiresAt keeps §3.3.2.3.2 enforceable across the
+// Indicator to survive that. ExpiresAt keeps §3.3.2.3.3 enforceable across the
 // restart: without it a restored message would be retried even after its
 // Message Expiry Interval had passed.
 type InflightMessage struct {
@@ -108,7 +108,7 @@ type StoredMessage struct {
 	Payload   []byte
 	Retain    bool
 	Timestamp time.Time
-	ExpiresAt time.Time // absolute Message Expiry Interval deadline; zero = none (MQTT 5.0 §3.3.2.3.2)
+	ExpiresAt time.Time // absolute Message Expiry Interval deadline; zero = none (MQTT 5.0 §3.3.2.3.3)
 }
 
 // RetainedMessage represents a retained message.

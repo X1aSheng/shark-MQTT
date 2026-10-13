@@ -104,7 +104,7 @@ type outboundMsg struct {
 	pkt        *protocol.PublishPacket
 	deliverQoS uint8
 	subOpts    SubscriptionOptions
-	expiresAt  time.Time // absolute Message Expiry Interval deadline; zero = none (MQTT 5.0 §3.3.2.3.2)
+	expiresAt  time.Time // absolute Message Expiry Interval deadline; zero = none (MQTT 5.0 §3.3.2.3.3)
 }
 
 // maxBufferedOutbound caps the number of QoS 1/2 deliveries buffered per
@@ -120,7 +120,7 @@ type InflightMsg struct {
 	Payload   []byte
 	Retain    bool
 	SentAt    time.Time
-	ExpiresAt time.Time // absolute Message Expiry Interval deadline; zero = none (MQTT 5.0 §3.3.2.3.2)
+	ExpiresAt time.Time // absolute Message Expiry Interval deadline; zero = none (MQTT 5.0 §3.3.2.3.3)
 	AckType   byte      // PUBACK, PUBREC, PUBREL, PUBCOMP
 
 	// Properties is the MQTT 5.0 property set that was put on the wire, so a
@@ -132,7 +132,7 @@ type InflightMsg struct {
 	// Persisted with the session (as store.MessageProperties, through
 	// storeProperties/protocolProperties) so a retransmission after a broker
 	// restart still carries it; ExpiresAt is persisted alongside it, which keeps
-	// §3.3.2.3.2 enforceable for a restored message.
+	// §3.3.2.3.3 enforceable for a restored message.
 	Properties *protocol.Properties
 
 	// PendingPubRel marks an outbound QoS 2 delivery that already reached the
@@ -615,7 +615,7 @@ func (s *Session) Save(ctx context.Context, sessionStore store.SessionStore) err
 		retain   bool
 		// properties and expiresAt are the MQTT 5 relay data a retransmission
 		// after a restart has to reproduce (§3.3.2.3) and keep enforcing
-		// (§3.3.2.3.2). They are copied by value; storeProperties rebuilds the
+		// (§3.3.2.3.3). They are copied by value; storeProperties rebuilds the
 		// user-property slice below.
 		properties *protocol.Properties
 		expiresAt  time.Time

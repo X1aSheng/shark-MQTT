@@ -61,7 +61,7 @@ func subscribeQoS1(t *testing.T, conn net.Conn, codec *protocol.Codec, topic str
 
 // TestMessageExpiry_DropExpiredOfflineDelivery verifies a QoS 1 message queued
 // for an offline persistent session is not delivered once its Message Expiry
-// Interval has passed (MQTT 5.0 §3.3.2.3.2).
+// Interval has passed (MQTT 5.0 §3.3.2.3.3).
 func TestMessageExpiry_DropExpiredOfflineDelivery(t *testing.T) {
 	broker := testBroker(t)
 
@@ -117,7 +117,7 @@ func TestMessageExpiry_DropExpiredOfflineDelivery(t *testing.T) {
 
 // TestMessageExpiry_LiveDeliveryCarriesRemaining verifies a live QoS 1 delivery
 // carries a decremented (remaining) Message Expiry Interval on the forwarded
-// PUBLISH (§3.3.2.3.2).
+// PUBLISH (§3.3.2.3.3).
 func TestMessageExpiry_LiveDeliveryCarriesRemaining(t *testing.T) {
 	broker := testBroker(t)
 

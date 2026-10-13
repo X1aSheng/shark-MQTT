@@ -57,14 +57,30 @@ func forwardedPublishProperties(in *protocol.Properties, subID *uint32, expiresA
 }
 
 // remainingExpiry converts an absolute Message Expiry deadline into the
-// interval to advertise on the wire. It never returns 0: a zero interval means
-// "already expired", so a message that survives only because the clock has not
-// passed the deadline yet would be discarded by the receiver.
+// interval to advertise on the wire.
+//
+// [MQTT-3.3.2-6] asks for the received value minus the time the message waited
+// in the Server, so the two cases below are told apart rather than clamped
+// together:
+//
+//   - The deadline has passed: the subtraction is not positive, and 0 is the
+//     faithful answer. It is also the useful one -- an interval of 0 tells the
+//     receiving client not to hand a stale payload to its application. This
+//     does not cut the exchange short: [MQTT-4.3.3-7] and §4.4 keep the
+//     obligation to finish the handshake independent of the interval, which
+//     only governs application delivery.
+//   - The deadline is still ahead but less than a second away: never advertise
+//     0, because 0 means "already expired" on the wire and would tell the
+//     receiver to discard a message we are still delivering.
 func remainingExpiry(expiresAt time.Time) *uint32 {
 	d := time.Until(expiresAt)
-	// Clamp before the unsigned conversion: time.Until on a past deadline is a
-	// large negative Duration, and uint32() of it wraps around to a huge
-	// interval that would keep the message alive far beyond its deadline.
+	// Both branches clamp before the unsigned conversion: time.Until on a past
+	// deadline is a large negative Duration, and uint32() of it wraps around to
+	// a huge interval that would keep the message alive far beyond its deadline.
+	if d <= 0 {
+		expired := uint32(0)
+		return &expired
+	}
 	if d < time.Second {
 		d = time.Second
 	}

@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -101,15 +102,33 @@ func TestForwardedPublishProperties(t *testing.T) {
 		}
 	})
 
-	t.Run("an elapsed deadline advertises 1s, never 0", func(t *testing.T) {
-		// 0 means "already expired" on the wire, so a message that only survives
-		// because the clock has not passed the deadline yet must not announce 0.
-		got := forwardedPublishProperties(nil, nil, time.Now().Add(-time.Hour))
+	t.Run("a live sub-second remainder advertises 1s, never 0", func(t *testing.T) {
+		// 0 means "already expired" on the wire, so a message that only
+		// survives because the clock has not passed the deadline yet must not
+		// announce 0 -- the receiver would be told to discard a message we are
+		// still delivering.
+		got := forwardedPublishProperties(nil, nil, time.Now().Add(200*time.Millisecond))
 		if got == nil || got.MessageExpiryInterval == nil {
 			t.Fatal("expected a Message Expiry Interval")
 		}
 		if *got.MessageExpiryInterval != 1 {
 			t.Errorf("MessageExpiryInterval = %d, want 1", *got.MessageExpiryInterval)
+		}
+	})
+
+	t.Run("an elapsed deadline advertises 0", func(t *testing.T) {
+		// [MQTT-3.3.2-6] owes the receiver the received value minus the time
+		// waited; once the wait outlasts the value the honest answer is 0
+		// ("stale on arrival"), which is what tells the receiver not to hand
+		// the payload to its application. The 1s floor above is for a *live*
+		// remainder only -- there is nothing left to keep alive here.
+		got := forwardedPublishProperties(nil, nil, time.Now().Add(-time.Hour))
+		if got == nil || got.MessageExpiryInterval == nil {
+			t.Fatal("expected a Message Expiry Interval")
+		}
+		if *got.MessageExpiryInterval != 0 {
+			t.Errorf("MessageExpiryInterval = %d, want 0 for an elapsed deadline",
+				*got.MessageExpiryInterval)
 		}
 	})
 }
@@ -214,7 +233,7 @@ func TestRepublishKeepsForwardedProperties(t *testing.T) {
 // TestSessionRestoreKeepsForwardedProperties covers the restart path: a session
 // saved with an unacknowledged delivery must come back with the relay data and
 // the Message Expiry deadline intact, so the retransmission after a broker
-// restart is the same PUBLISH (§3.3.2.3) and §3.3.2.3.2 is still enforceable for
+// restart is the same PUBLISH (§3.3.2.3) and §3.3.2.3.3 is still enforceable for
 // it. Before the store carried either, a restart silently downgraded the
 // retransmission to a bare packet, and an expired message could be retried.
 func TestSessionRestoreKeepsForwardedProperties(t *testing.T) {
@@ -336,18 +355,27 @@ func TestSessionRestoreKeepsForwardedProperties(t *testing.T) {
 	}
 }
 
-// TestSessionRestoreDropsExpiredInflight is the other half of persisting the
-// deadline: a delivery whose Message Expiry Interval passed while the broker
-// was down must not be retransmitted at all (§3.3.2.3.2). The deadline used to
-// be lost with the session, which made republish treat the message as
-// never-expiring.
-func TestSessionRestoreDropsExpiredInflight(t *testing.T) {
-	ctx := context.Background()
-	sessStore := memory.NewSessionStore()
+// TestRepublishKeepsExpiredDeliveryThatWasAlreadySent pins the rule that makes
+// Message Expiry a *pre-delivery* filter and not a retry filter.
+//
+// [MQTT-3.3.2-5] only obliges the Server to delete the message when it "has not
+// managed to start onward delivery to a matching subscriber"; [MQTT-4.3.3-7]
+// then forbids applying Application Message expiry once a PUBLISH has been
+// sent, and [MQTT-4.3.3-5] keeps the exchange unfinished until the peer answers.
+// A delivery sitting in the session's Inflight has therefore already been sent,
+// so the retry loop must keep re-sending it and only re-derive the interval it
+// advertises ([MQTT-3.3.2-6]).
+//
+// The drop this replaces also broke the bookkeeping: it removed the session
+// record while the QoS engine kept tracking the packet id, so the next tick
+// missed the outbound branch and fell through to the inbound fallback, putting
+// a PUBREC for an outbound QoS 1 delivery on the wire -- repeatedly, until
+// maxRetries.
+func TestRepublishKeepsExpiredDeliveryThatWasAlreadySent(t *testing.T) {
+	b := New(WithAuth(AllowAllAuth{}))
+	const clientID = "expired-resend"
 
-	const clientID = "expired-restart"
-	first := New(WithAuth(AllowAllAuth{}), WithSessionStore(sessStore))
-	sess := first.sessions.CreateSession(clientID, &protocol.ConnectPacket{
+	sess := b.sessions.CreateSession(clientID, &protocol.ConnectPacket{
 		ProtocolName:    protocol.ProtocolNameMQTT,
 		ProtocolVersion: protocol.Version50,
 		Flags:           protocol.ConnectFlags{CleanSession: false},
@@ -359,43 +387,166 @@ func TestSessionRestoreDropsExpiredInflight(t *testing.T) {
 		QoS:       1,
 		Topic:     "props/expired",
 		Payload:   []byte("stale"),
-		ExpiresAt: time.Now().Add(-time.Minute), // already past
+		ExpiresAt: time.Now().Add(-time.Minute), // sent, then left unanswered past its deadline
 		Properties: &protocol.Properties{
 			ResponseTopic: "reply/too-late",
 		},
 	})
-	if err := sess.Save(ctx, sessStore); err != nil {
-		t.Fatalf("save session: %v", err)
+
+	out := attachCapturingConnection(t, b, clientID)
+
+	// Two ticks on purpose: one proves the retransmission survives the
+	// deadline, the second is what used to surface the stray PUBREC.
+	for i := 1; i <= 2; i++ {
+		if err := b.republish(clientID, 7, "props/expired", []byte("stale"), 1, false); err != nil {
+			t.Fatalf("republish #%d: %v", i, err)
+		}
+	}
+	if got := drainPackets(out); len(got) != 2 {
+		t.Fatalf("wrote %d packets %v, want 2 PUBLISH retransmissions", len(got), packetTypes(got))
+	} else {
+		for _, pkt := range got {
+			if _, ok := pkt.(*protocol.PublishPacket); !ok {
+				t.Errorf("wrote %T, want a PUBLISH retransmission for an already-sent delivery", pkt)
+			}
+		}
+	}
+	if _, still := sess.GetInflight(7); !still {
+		t.Fatal("the delivery was dropped from the session instead of being retransmitted")
+	}
+}
+
+// TestRepublishRetriesExpiredDeliveryWithoutStrayPubRec drives the same rule
+// through the QoS engine, which is where the packet id kept being retried after
+// the session record had gone: every tick must produce a PUBLISH and never a
+// PUBREC, because no inbound publish ever carried that packet id.
+func TestRepublishRetriesExpiredDeliveryWithoutStrayPubRec(t *testing.T) {
+	// Retry interval 0 makes every tracked packet eligible, so the two doRetry
+	// calls below are the whole story.
+	b := New(WithAuth(AllowAllAuth{}), WithQoSOptions(WithRetryInterval(0)))
+	const clientID = "expired-engine"
+
+	sess := b.sessions.CreateSession(clientID, &protocol.ConnectPacket{
+		ProtocolName:    protocol.ProtocolNameMQTT,
+		ProtocolVersion: protocol.Version50,
+		Flags:           protocol.ConnectFlags{CleanSession: false},
+		KeepAlive:       30,
+		ClientID:        clientID,
+	}, false)
+	sess.AddInflight(&InflightMsg{
+		PacketID:  9,
+		QoS:       2,
+		Topic:     "props/expired-engine",
+		Payload:   []byte("stale"),
+		ExpiresAt: time.Now().Add(-time.Minute),
+	})
+	if err := b.qos.TrackOutboundQoS2(clientID, 9, "props/expired-engine", []byte("stale"), false); err != nil {
+		t.Fatalf("track outbound QoS 2: %v", err)
 	}
 
-	second := New(WithAuth(AllowAllAuth{}), WithSessionStore(sessStore))
-	if _, err := second.sessions.Restore(ctx, clientID); err != nil {
-		t.Fatalf("restore: %v", err)
+	out := attachCapturingConnection(t, b, clientID)
+
+	b.qos.doRetry()
+	b.qos.doRetry()
+
+	got := drainPackets(out)
+	if len(got) != 2 {
+		t.Fatalf("wrote %d packets over two ticks %v, want 2 PUBLISH", len(got), packetTypes(got))
 	}
+	for i, pkt := range got {
+		pub, ok := pkt.(*protocol.PublishPacket)
+		if !ok {
+			t.Fatalf("tick %d wrote %T, want a PUBLISH retransmission: a PUBREC for a "+
+				"packet id that no inbound publish ever used is a stray packet", i+1, pkt)
+		}
+		if !pub.FixedHeader.Dup {
+			t.Errorf("tick %d: retransmitted PUBLISH must set DUP", i+1)
+		}
+		if pub.PacketID != 9 {
+			t.Errorf("tick %d: retransmitted PacketID = %d, want the original 9", i+1, pub.PacketID)
+		}
+	}
+}
+
+// TestDoDeliverStillDropsExpiryBeforeTheFirstAttempt is the counterpart guard:
+// taking Message Expiry out of the retry path must not turn it into a no-op.
+// [MQTT-3.3.2-5] obliges the Server to delete the copy of a message whose
+// deadline passed before it "managed to start onward delivery to a matching
+// subscriber" -- that is the first-attempt check in doDeliver, and it is exactly
+// what republish must not do for a delivery it already sent.
+func TestDoDeliverStillDropsExpiryBeforeTheFirstAttempt(t *testing.T) {
+	b := New(WithAuth(AllowAllAuth{}))
+	const clientID = "expiry-first-attempt"
+
+	sess := b.sessions.CreateSession(clientID, &protocol.ConnectPacket{
+		ProtocolName:    protocol.ProtocolNameMQTT,
+		ProtocolVersion: protocol.Version50,
+		Flags:           protocol.ConnectFlags{CleanSession: false},
+		KeepAlive:       30,
+		ClientID:        clientID,
+	}, false)
+
+	out := attachCapturingConnection(t, b, clientID)
+
+	b.doDeliver(clientID, &protocol.PublishPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 1},
+		Topic:       "props/never-sent",
+		Payload:     []byte("too late"),
+	}, 1, time.Now().Add(-time.Minute), SubscriptionOptions{}, false)
+
+	if got := drainPackets(out); len(got) != 0 {
+		t.Errorf("wrote %v, want nothing: onward delivery never started, so the copy "+
+			"must be deleted rather than sent", packetTypes(got))
+	}
+	if n := sess.Stats().InflightCount; n != 0 {
+		t.Errorf("inflight count = %d, want 0: a delivery that was never sent must not "+
+			"be tracked as outstanding", n)
+	}
+}
+
+// attachCapturingConnection registers a connection whose queued output the test
+// reads, so a republish path can be driven without a network round trip.
+func attachCapturingConnection(t *testing.T, b *Broker, clientID string) chan protocol.Packet {
+	t.Helper()
 	serverConn, clientConn := net.Pipe()
-	defer serverConn.Close()
-	defer clientConn.Close()
-	out := make(chan protocol.Packet, 4)
-	second.mu.Lock()
-	second.connections[clientID] = &clientState{
+	t.Cleanup(func() {
+		_ = serverConn.Close()
+		_ = clientConn.Close()
+	})
+	out := make(chan protocol.Packet, 8)
+	b.mu.Lock()
+	b.connections[clientID] = &clientState{
 		conn:       serverConn,
 		codec:      protocol.NewCodecForVersion(0, protocol.Version50),
 		out:        out,
 		stopWrites: make(chan struct{}),
 	}
-	second.mu.Unlock()
+	b.mu.Unlock()
+	return out
+}
 
-	if err := second.republish(clientID, 7, "props/expired", []byte("stale"), 1, false); err != nil {
-		t.Fatalf("republish: %v", err)
+// drainPackets returns everything already queued without waiting: the calls
+// under test are synchronous, so a missing packet is a failure and not a race.
+func drainPackets(out chan protocol.Packet) []protocol.Packet {
+	var got []protocol.Packet
+	for {
+		select {
+		case pkt := <-out:
+			got = append(got, pkt)
+		default:
+			return got
+		}
 	}
-	select {
-	case pkt := <-out:
-		t.Fatalf("an expired message was retransmitted: %T", pkt)
-	case <-time.After(200 * time.Millisecond):
+}
+
+// packetTypes names the packets for a failure message; printing the values
+// themselves would only show pointers.
+func packetTypes(pkts []protocol.Packet) []string {
+	types := make([]string, 0, len(pkts))
+	for _, pkt := range pkts {
+		types = append(types, fmt.Sprintf("%T", pkt))
 	}
-	if _, still := second.sessions.GetSession(clientID); !still {
-		t.Fatal("session disappeared")
-	}
+	return types
 }
 
 var _ = store.ErrSessionNotFound

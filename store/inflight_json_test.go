@@ -78,7 +78,7 @@ func TestInflightMessagePropertiesJSONRoundTrip(t *testing.T) {
 	}
 	if !out.ExpiresAt.Equal(deadline) {
 		// time.Time marshals as RFC3339 with a nanosecond fraction; the
-		// deadline has to survive intact or §3.3.2.3.2 drifts after a restart.
+		// deadline has to survive intact or §3.3.2.3.3 drifts after a restart.
 		t.Errorf("ExpiresAt = %v, want %v", out.ExpiresAt, deadline)
 	}
 	if out.Properties.PayloadFormat == nil || *out.Properties.PayloadFormat != 1 {

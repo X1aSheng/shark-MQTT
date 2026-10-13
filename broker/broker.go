@@ -1402,7 +1402,7 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 		}
 	}
 
-	// Check Message Expiry Interval (MQTT 5.0 §3.3.2.3.2).
+	// Check Message Expiry Interval (MQTT 5.0 §3.3.2.3.3).
 	// Drop messages that have already expired.
 	if pkt.Properties != nil && pkt.Properties.MessageExpiryInterval != nil {
 		if *pkt.Properties.MessageExpiryInterval == 0 {
@@ -1860,7 +1860,7 @@ func (b *Broker) handleUnsubscribe(clientID string, sess *Session, pkt *protocol
 }
 
 // messageExpiresAt returns the absolute Message Expiry Interval deadline for a
-// PUBLISH, or the zero time if it has none (MQTT 5.0 §3.3.2.3.2).
+// PUBLISH, or the zero time if it has none (MQTT 5.0 §3.3.2.3.3).
 func messageExpiresAt(pkt *protocol.PublishPacket) time.Time {
 	if pkt.Properties != nil && pkt.Properties.MessageExpiryInterval != nil && *pkt.Properties.MessageExpiryInterval > 0 {
 		return time.Now().Add(time.Duration(*pkt.Properties.MessageExpiryInterval) * time.Second)
@@ -2012,7 +2012,7 @@ func (b *Broker) deliverQueuedMessages(clientID string, sess *Session) {
 	}
 	for _, msg := range msgs {
 		// Drop a queued message whose Message Expiry Interval has passed while
-		// the client was offline (§3.3.2.3.2).
+		// the client was offline (§3.3.2.3.3).
 		if !msg.ExpiresAt.IsZero() && time.Now().After(msg.ExpiresAt) {
 			b.metrics.IncMessagesDropped("message_expired")
 			if err := b.messageStore.DeleteMessage(b.ctx, clientID, msg.ID); err != nil {
@@ -2082,7 +2082,7 @@ func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliver
 		return
 	}
 
-	// MQTT 5.0 §3.3.2.3.2: never onward-deliver a message whose Message Expiry
+	// MQTT 5.0 §3.3.2.3.3: never onward-deliver a message whose Message Expiry
 	// Interval has passed.
 	if !expiresAt.IsZero() && time.Now().After(expiresAt) {
 		b.metrics.IncMessagesDropped("message_expired")
@@ -2712,11 +2712,14 @@ func (b *Broker) restoreSessionInflight(clientID string, restored *Session) {
 // re-sent, and its PUBREL is still unacknowledged until PUBCOMP arrives
 // ([MQTT-4.3.3-5]).
 //
-// The Message Expiry Interval is deliberately not applied *as a discard rule*
-// here: [MQTT-4.3.3-7] forbids applying Message Expiry to a PUBLISH that has
-// already been sent, so a delivery whose deadline elapsed while the session was
-// offline still goes out, with `buildRetransmitPublish` re-deriving an interval
-// that reflects the time actually left.
+// Message Expiry is deliberately not applied *as a discard rule* on this or the
+// other retransmission path (republish): it filters a message before its first
+// onward delivery ([MQTT-3.3.2-5] only obliges the Server to delete the copy
+// when it "has not managed to start onward delivery to a matching subscriber")
+// and for QoS 2 it may not be applied at all once a PUBLISH has been sent
+// ([MQTT-4.3.3-7]). So a delivery whose deadline elapsed while the session was
+// offline still goes out, with `buildRetransmitPublish` re-deriving the interval
+// it advertises ([MQTT-3.3.2-6]) -- 0 for a deadline that has already passed.
 func (b *Broker) resendSessionInflight(clientID string, sess *Session) {
 	for _, msg := range sess.InflightSnapshot() {
 		if msg.QoS == 2 && msg.PendingPubRel {
@@ -2748,15 +2751,21 @@ func (b *Broker) republish(clientID string, packetID uint16, topic string, paylo
 	// the authority for the packet's content, and topic/payload/qos/retain are
 	// kept in the signature because the QoS engine's callback type carries
 	// them for the inbound case.
+	//
+	// Message Expiry is deliberately NOT applied here. [MQTT-3.3.2-5] only
+	// obliges the Server to delete the copy when it "has not managed to start
+	// onward delivery to a matching subscriber" -- and a record in the
+	// session's Inflight is one that has already been sent. [MQTT-4.3.3-7]
+	// goes further for QoS 2: the sender MUST NOT apply Application Message
+	// expiry once a PUBLISH has been sent. The deadline still reaches the
+	// subscriber as a re-derived interval (buildRetransmitPublish), which is
+	// what [MQTT-3.3.2-6] asks for; dropping the delivery instead would end the
+	// exchange on our side while the peer is still holding the packet id, and
+	// would leave the QoS engine retrying a packet id the session no longer
+	// knows about -- which falls through to the PUBREC branch below and puts a
+	// stray PUBREC for an outbound delivery on the wire.
 	if sess, ok := b.sessions.GetSession(clientID); ok {
 		if msg, found := sess.GetInflight(packetID); found && msg.QoS == qos {
-			// MQTT 5.0 §3.3.2.3.2: stop retrying once the Message Expiry
-			// Interval has passed.
-			if !msg.ExpiresAt.IsZero() && time.Now().After(msg.ExpiresAt) {
-				sess.RemoveInflight(packetID)
-				b.metrics.IncMessagesDropped("message_expired")
-				return nil
-			}
 			b.writePacket(clientID, buildRetransmitPublish(*msg))
 			return nil
 		}
