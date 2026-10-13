@@ -200,3 +200,115 @@ func TestEncodePublishPropertySectionVersionGated(t *testing.T) {
 		t.Errorf("ContentType = %+v, want %q round-tripped", pub.Properties, contentType)
 	}
 }
+
+// TestPropertySectionVersionGatedAcrossPackets extends the PUBLISH-only gate
+// test to every encoder that writes an MQTT 5 property section. CONNACK,
+// SUBSCRIBE and UNSUBSCRIBE wrote the section whenever Properties was non-nil,
+// regardless of the codec's version, so a v3.1.1 peer read the property bytes as
+// payload -- and for CONNACK as trailing bytes its decoder rejects outright. The
+// acknowledgement family was already covered by its own ReasonCodes check, so it
+// is included here only to hold that guard in place.
+//
+// Each case builds the same packet twice under a pre-v5 codec, with and without
+// properties, plus once under a v5 codec. A pre-v5 codec must refuse the first
+// outright and still encode the second, so the gate cannot degrade into a
+// blanket rejection; a v5 codec must encode the first, so it cannot pass by
+// dropping properties everywhere.
+func TestPropertySectionVersionGatedAcrossPackets(t *testing.T) {
+	publish := func(props *Properties) Packet {
+		return &PublishPacket{
+			FixedHeader: FixedHeader{PacketType: PacketTypePublish},
+			Topic:       "gate/topic",
+			Properties:  props,
+		}
+	}
+	connect := func(version uint8, props *Properties) Packet {
+		return &ConnectPacket{
+			FixedHeader:     FixedHeader{PacketType: PacketTypeConnect},
+			ProtocolName:    ProtocolNameMQTT,
+			ProtocolVersion: version,
+			Flags:           ConnectFlags{CleanSession: true},
+			KeepAlive:       30,
+			ClientID:        "gate-client",
+			Properties:      props,
+		}
+	}
+	connectWill := func(version uint8, props *Properties) Packet {
+		return &ConnectPacket{
+			FixedHeader:     FixedHeader{PacketType: PacketTypeConnect},
+			ProtocolName:    ProtocolNameMQTT,
+			ProtocolVersion: version,
+			Flags:           ConnectFlags{CleanSession: true, WillFlag: true},
+			KeepAlive:       30,
+			ClientID:        "gate-will",
+			WillTopic:       "gate/will",
+			WillMessage:     []byte("bye"),
+			WillProperties:  props,
+		}
+	}
+
+	cases := []struct {
+		name string
+		// build receives the version the codec is bound to and the property set
+		// to attach (nil for the "no properties" variant). A CONNECT declares
+		// its own version, so it must be built with the same one.
+		build func(version uint8, props *Properties) Packet
+	}{
+		{"PUBLISH", func(_ uint8, props *Properties) Packet { return publish(props) }},
+		{"CONNECT", func(v uint8, props *Properties) Packet { return connect(v, props) }},
+		{"CONNECT will", func(v uint8, props *Properties) Packet { return connectWill(v, props) }},
+		{"CONNACK", func(_ uint8, props *Properties) Packet {
+			return &ConnAckPacket{
+				FixedHeader: FixedHeader{PacketType: PacketTypeConnAck},
+				Properties:  props,
+			}
+		}},
+		{"PUBACK", func(_ uint8, props *Properties) Packet {
+			return &PubAckPacket{FixedHeader: FixedHeader{PacketType: PacketTypePubAck}, PacketID: 1, Properties: props}
+		}},
+		{"PUBREC", func(_ uint8, props *Properties) Packet {
+			return &PubRecPacket{FixedHeader: FixedHeader{PacketType: PacketTypePubRec}, PacketID: 1, Properties: props}
+		}},
+		{"PUBREL", func(_ uint8, props *Properties) Packet {
+			return &PubRelPacket{FixedHeader: FixedHeader{PacketType: PacketTypePubRel}, PacketID: 1, Properties: props}
+		}},
+		{"PUBCOMP", func(_ uint8, props *Properties) Packet {
+			return &PubCompPacket{FixedHeader: FixedHeader{PacketType: PacketTypePubComp}, PacketID: 1, Properties: props}
+		}},
+	}
+
+	props := func() *Properties { return &Properties{ContentType: "text/plain"} }
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			legacy := NewCodecForVersion(0, Version311)
+
+			err := legacy.Encode(&bytes.Buffer{}, tc.build(Version311, props()))
+			// The acknowledgement family reports its own reason-code violation
+			// as a malformed packet; the property-section sites report the
+			// version mismatch. Both are refusals, and both are the point.
+			if !errors.Is(err, ErrUnsupportedVersion) && !errors.Is(err, ErrMalformedPacket) {
+				t.Errorf("v3.1.1 encode with properties: err = %v, want a refusal "+
+					"(ErrUnsupportedVersion or ErrMalformedPacket)", err)
+			}
+			if err := legacy.Encode(&bytes.Buffer{}, tc.build(Version311, nil)); err != nil {
+				t.Errorf("v3.1.1 encode without properties must still work: %v", err)
+			}
+			if err := NewCodecForVersion(0, Version50).Encode(&bytes.Buffer{}, tc.build(Version50, props())); err != nil {
+				t.Errorf("v5.0 encode with properties: %v", err)
+			}
+		})
+	}
+
+	// A v3.1.1 CONNACK is exactly its fixed header plus two bytes: the decoder
+	// requires Remaining Length 2 there, so a stray property length byte makes
+	// the handshake fail rather than merely corrupting the payload.
+	var legacyAck bytes.Buffer
+	connAck := &ConnAckPacket{FixedHeader: FixedHeader{PacketType: PacketTypeConnAck}}
+	if err := NewCodecForVersion(0, Version311).Encode(&legacyAck, connAck); err != nil {
+		t.Fatalf("v3.1.1 CONNACK: %v", err)
+	}
+	if got := legacyAck.Len(); got != 4 {
+		t.Errorf("v3.1.1 CONNACK length = %d, want 4 (no property section)", got)
+	}
+}

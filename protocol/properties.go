@@ -398,6 +398,42 @@ func skipPropertyValue(r *bytes.Reader, propID byte) error {
 	return nil
 }
 
+// writePropertySection writes the MQTT 5 property section of a packet whose
+// variable header always carries one in v5 -- PUBLISH, CONNECT, CONNACK,
+// SUBSCRIBE, UNSUBSCRIBE and SUBACK: the Property Length followed by the encoded
+// properties, or a zero length when the packet has none.
+//
+// A codec bound to a pre-v5 version cannot represent the section at all. It
+// writes nothing when the caller set no properties, and reports
+// ErrUnsupportedVersion when it did: the property bytes would otherwise be read
+// as payload by the peer (stream corruption), and dropping them silently would
+// hide the mismatch from the caller. The acknowledgement family that carries a
+// reason code (PUBACK/PUBREC/PUBREL/PUBCOMP, UNSUBACK, DISCONNECT) does not use
+// this helper: those encoders already refuse properties on a pre-v5 codec
+// through their ReasonCodes check.
+func (c *Codec) writePropertySection(w io.Writer, props *Properties) error {
+	if !c.spec.Properties {
+		return c.rejectPreV5Properties(props)
+	}
+	if props == nil {
+		return writeVarInt(w, 0)
+	}
+	return c.encodeProperties(w, props)
+}
+
+// rejectPreV5Properties is the guard that both writePropertySection and the
+// acknowledgement encoders' own reason-code check rely on: a pre-v5 codec has no
+// way to put properties on the wire, so a caller that set them is told rather
+// than quietly served a packet without them.
+func (c *Codec) rejectPreV5Properties(props *Properties) error {
+	if props == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: packet properties require MQTT 5, codec is bound to version %d",
+		ErrUnsupportedVersion, c.protocolVersion)
+}
+
+// encodeProperties writes the properties to w, prefixed by their length.
 func (c *Codec) encodeProperties(w io.Writer, props *Properties) error {
 	if err := validateProperties(props); err != nil {
 		return err

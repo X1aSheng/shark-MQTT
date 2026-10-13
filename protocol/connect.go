@@ -255,18 +255,10 @@ func (c *Codec) encodeConnect(w io.Writer, pkt *ConnectPacket) error {
 		return err
 	}
 
-	// MQTT 5.0 properties
-	if c.spec.Properties {
-		if pkt.Properties != nil {
-			if err := c.encodeProperties(&buf, pkt.Properties); err != nil {
-				return err
-			}
-		} else {
-			// MQTT 5.0 requires Property Length field (0 if no properties)
-			if err := writeVarInt(&buf, 0); err != nil {
-				return err
-			}
-		}
+	// MQTT 5.0 properties. The section is always present in a v5 CONNECT, so a
+	// zero length is written when the client sent none.
+	if err := c.writePropertySection(&buf, pkt.Properties); err != nil {
+		return err
 	}
 
 	// Client ID
@@ -276,17 +268,10 @@ func (c *Codec) encodeConnect(w io.Writer, pkt *ConnectPacket) error {
 
 	// Will
 	if pkt.Flags.WillFlag {
-		if c.spec.Properties {
-			if pkt.WillProperties != nil {
-				if err := c.encodeProperties(&buf, pkt.WillProperties); err != nil {
-					return err
-				}
-			} else {
-				// MQTT 5.0 requires Property Length field for will properties (0 if none)
-				if err := writeVarInt(&buf, 0); err != nil {
-					return err
-				}
-			}
+		// The will carries a property section of its own, also always present
+		// in a v5 CONNECT.
+		if err := c.writePropertySection(&buf, pkt.WillProperties); err != nil {
+			return err
 		}
 		if err := writeString(&buf, pkt.WillTopic); err != nil {
 			return err
@@ -402,15 +387,13 @@ func (c *Codec) encodeConnAck(w io.Writer, pkt *ConnAckPacket) error {
 		return err
 	}
 
-	// Properties (MQTT 5.0)
-	if pkt.Properties != nil {
-		if err := c.encodeProperties(&buf, pkt.Properties); err != nil {
-			return err
-		}
-	} else if c.spec.Properties {
-		if err := writeVarInt(&buf, 0); err != nil {
-			return err
-		}
+	// Properties (MQTT 5.0). The section is always present in a v5 CONNACK and
+	// never in a 3.1/3.1.1 one -- the decoder enforces that by requiring
+	// Remaining Length 2 there -- so this must be version-gated like every
+	// other property encoder. It previously wrote whatever the caller set,
+	// which put v5 property bytes into a v3.1.1 CONNACK.
+	if err := c.writePropertySection(&buf, pkt.Properties); err != nil {
+		return err
 	}
 
 	pkt.RemainingLength = buf.Len()
