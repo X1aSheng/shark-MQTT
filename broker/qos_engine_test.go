@@ -495,6 +495,65 @@ func TestQoSEngine_Retry_QoS2_AckedState(t *testing.T) {
 	mu.Unlock()
 }
 
+// TestQoSEngine_Retry_QoS2_RestoredAckedState pins the entry point a resumed
+// session uses: TrackOutboundQoS2AwaitingPubComp has to land the delivery in
+// the same state AckPubRec leaves it in, so the retry loop continues with the
+// PUBREL. A restore that only knew "outbound QoS 2" would restart the handshake
+// with a PUBLISH, which [MQTT-4.3.3-6] forbids once the PUBREL has gone out.
+func TestQoSEngine_Retry_QoS2_RestoredAckedState(t *testing.T) {
+	var sendPubRelCalled bool
+	var republishCalled bool
+
+	interval := 50 * time.Millisecond
+	q := NewQoSEngine(
+		WithRetryInterval(interval),
+		WithMaxRetries(3),
+	)
+
+	var mu sync.Mutex
+	q.SetCallbacks(
+		nil,
+		func(clientID string, packetID uint16) error {
+			mu.Lock()
+			sendPubRelCalled = true
+			mu.Unlock()
+			return nil
+		},
+		nil,
+		func(clientID string, packetID uint16, topic string, payload []byte, qos uint8, retain bool) error {
+			mu.Lock()
+			republishCalled = true
+			mu.Unlock()
+			return nil
+		},
+	)
+
+	q.Start()
+	defer q.Stop()
+
+	// No AckPubRec here: the PUBREC was received before the restart, so the
+	// state has to come from the restored session record.
+	if err := q.TrackOutboundQoS2AwaitingPubComp("client1", 9, "home/temp", []byte("data"), false); err != nil {
+		t.Fatalf("TrackOutboundQoS2AwaitingPubComp: %v", err)
+	}
+	if msg, ok := q.GetInflight("client1", 9); !ok {
+		t.Fatal("restored delivery was not tracked")
+	} else if msg.State != StateAcked {
+		t.Fatalf("restored State = %v, want StateAcked", msg.State)
+	}
+
+	time.Sleep(interval * 2)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !sendPubRelCalled {
+		t.Error("expected the retry to re-send the PUBREL of a restored QoS 2 delivery")
+	}
+	if republishCalled {
+		t.Error("a restored PUBREL-pending delivery must not be re-sent as a PUBLISH")
+	}
+}
+
 // --- Options tests ---
 
 func TestQoSEngine_Options(t *testing.T) {

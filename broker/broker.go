@@ -373,15 +373,7 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 				for topic, qos := range restored.Subscriptions {
 					b.topics.Subscribe(topic, connectPkt.ClientID, qos)
 				}
-				for _, msg := range restored.Inflight {
-					// Restored inflight entries are outbound deliveries that were
-					// never acknowledged; retry them as outbound.
-					if msg.QoS == 2 {
-						_ = b.qos.TrackOutboundQoS2(connectPkt.ClientID, msg.PacketID, msg.Topic, msg.Payload, msg.Retain)
-					} else {
-						_ = b.qos.TrackOutboundQoS1(connectPkt.ClientID, msg.PacketID, msg.Topic, msg.Payload, msg.Retain)
-					}
-				}
+				b.restoreSessionInflight(connectPkt.ClientID, restored)
 			}
 		} else if storeErr != nil {
 			b.logger.Debug("session store check failed, treating as new", "clientID", connectPkt.ClientID, "error", storeErr)
@@ -575,6 +567,15 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 
 	// Send CONNACK
 	b.sendConnAck(clientID, protocol.ConnAckAccepted, isResuming, sess)
+
+	// A resumed session must get its unacknowledged PUBLISH and PUBREL packets
+	// back on the wire with their original Packet Identifiers. §4.4 makes the
+	// reconnect the recovery moment and forbids resending at any other time, so
+	// the debt is settled here, right after the CONNACK and in one pass, instead
+	// of waiting for the retry ticker to notice.
+	if isResuming {
+		b.resendSessionInflight(clientID, sess)
+	}
 
 	// Deliver messages queued while this persistent session was offline (P1-5).
 	b.deliverQueuedMessages(clientID, sess)
@@ -2496,6 +2497,14 @@ func (b *Broker) handlePubAck(clientID string, packetID uint16) {
 }
 
 func (b *Broker) handlePubRec(clientID string, packetID uint16) {
+	// Record the handshake stage before the PUBREL leaves. A QoS 2 delivery
+	// answered with a PUBREC owes its peer a PUBREL, and that -- not the
+	// PUBLISH -- is what a reconnect has to resend (MQTT 5.0 §4.4,
+	// [MQTT-4.3.3-6]). Marking first is the conservative order: re-sending a
+	// PUBREL is always safe, re-sending the PUBLISH after one is not.
+	if sess, ok := b.sessions.GetSession(clientID); ok {
+		sess.MarkInflightPubRel(packetID)
+	}
 	b.qos.AckPubRec(clientID, packetID)
 }
 
@@ -2561,15 +2570,105 @@ func (b *Broker) sendPubAck(clientID string, packetID uint16) error {
 }
 
 func (b *Broker) sendPubRel(clientID string, packetID uint16) error {
-	pkt := &protocol.PubRelPacket{
+	b.writePacket(clientID, pubRelPacket(packetID))
+	return nil
+}
+
+// pubRelPacket builds a PUBREL for a packet id.
+//
+// Its fixed-header bits 3,2,1,0 are pinned to 0,0,1,0 by [MQTT-3.6.1-1], so
+// there is no DUP flag to set: a resent PUBREL is byte-identical to the first
+// one, and the receiver recognises the retransmission by the Packet Identifier
+// alone.
+func pubRelPacket(packetID uint16) *protocol.PubRelPacket {
+	return &protocol.PubRelPacket{
 		FixedHeader: protocol.FixedHeader{
 			PacketType: protocol.PacketTypePubRel,
 			QoS:        1,
 		},
 		PacketID: packetID,
 	}
-	b.writePacket(clientID, pkt)
-	return nil
+}
+
+// buildRetransmitPublish rebuilds the PUBLISH for an unacknowledged outbound
+// QoS 1/2 delivery: same Packet Identifier, DUP set, and the same property
+// section as the first attempt.
+//
+// The properties matter because MQTT 5.0 §3.3.2.3 requires the forwarded
+// Response Topic / Correlation Data / User Properties / Content Type / Payload
+// Format Indicator to reach the subscriber even when the first attempt needs a
+// retry, and §3.3.2.3.3 requires the Message Expiry Interval to advertise the
+// time actually left rather than the value captured when the packet was first
+// sent. Properties stays nil for a MQTT 3.1/3.1.1 subscriber, which has no
+// property section at all.
+func buildRetransmitPublish(msg InflightMsg) *protocol.PublishPacket {
+	props := msg.Properties
+	if props != nil && !msg.ExpiresAt.IsZero() {
+		refreshed := *props
+		refreshed.MessageExpiryInterval = remainingExpiry(msg.ExpiresAt)
+		props = &refreshed
+	}
+	return &protocol.PublishPacket{
+		FixedHeader: protocol.FixedHeader{
+			PacketType: protocol.PacketTypePublish,
+			QoS:        msg.QoS,
+			Dup:        true,
+			Retain:     msg.Retain,
+		},
+		PacketID:   msg.PacketID,
+		Topic:      msg.Topic,
+		Payload:    msg.Payload,
+		Properties: props,
+	}
+}
+
+// restoreSessionInflight re-registers the outbound deliveries a session
+// restored from the store still has in flight, so the retry loop keeps them
+// alive across the restart.
+//
+// The handshake stage decides the state each entry is registered in. A QoS 2
+// delivery that already passed PUBREC is registered as already acked, which is
+// the state AckPubRec would have left it in, so the retransmission continues
+// with the PUBREL instead of restarting at the PUBLISH that [MQTT-4.3.3-6]
+// forbids (MQTT 5.0 §4.4).
+func (b *Broker) restoreSessionInflight(clientID string, restored *Session) {
+	for _, msg := range restored.InflightSnapshot() {
+		if msg.QoS == 2 {
+			if msg.PendingPubRel {
+				_ = b.qos.TrackOutboundQoS2AwaitingPubComp(clientID, msg.PacketID, msg.Topic, msg.Payload, msg.Retain)
+			} else {
+				_ = b.qos.TrackOutboundQoS2(clientID, msg.PacketID, msg.Topic, msg.Payload, msg.Retain)
+			}
+			continue
+		}
+		_ = b.qos.TrackOutboundQoS1(clientID, msg.PacketID, msg.Topic, msg.Payload, msg.Retain)
+	}
+}
+
+// resendSessionInflight retransmits the outbound QoS 1/2 deliveries a resumed
+// session still has in flight.
+//
+// MQTT 5.0 §4.4 / 3.1.1 §4.4: on reconnect with Clean Start 0 and a session
+// present, the Server MUST resend its unacknowledged PUBLISH packets and its
+// outstanding PUBREL packets using their original Packet Identifiers. Which of
+// the two a delivery owes is decided by its handshake stage -- a QoS 2 delivery
+// past PUBREC is past the point where [MQTT-4.3.3-6] allows the PUBLISH to be
+// re-sent, and its PUBREL is still unacknowledged until PUBCOMP arrives
+// ([MQTT-4.3.3-5]).
+//
+// The Message Expiry Interval is deliberately not applied *as a discard rule*
+// here: [MQTT-4.3.3-7] forbids applying Message Expiry to a PUBLISH that has
+// already been sent, so a delivery whose deadline elapsed while the session was
+// offline still goes out, with `buildRetransmitPublish` re-deriving an interval
+// that reflects the time actually left.
+func (b *Broker) resendSessionInflight(clientID string, sess *Session) {
+	for _, msg := range sess.InflightSnapshot() {
+		if msg.QoS == 2 && msg.PendingPubRel {
+			b.writePacket(clientID, pubRelPacket(msg.PacketID))
+			continue
+		}
+		b.writePacket(clientID, buildRetransmitPublish(msg))
+	}
 }
 
 func (b *Broker) sendPubComp(clientID string, packetID uint16) error {
@@ -2588,6 +2687,11 @@ func (b *Broker) republish(clientID string, packetID uint16, topic string, paylo
 	// delivery (broker->subscriber, tracked in the session's Inflight) is
 	// re-sent as a PUBLISH with the DUP flag. An inbound QoS 2 publish has the
 	// client waiting on our PUBREC, so re-send the PUBREC.
+	//
+	// Only packetID is needed for the outbound branch: the session record is
+	// the authority for the packet's content, and topic/payload/qos/retain are
+	// kept in the signature because the QoS engine's callback type carries
+	// them for the inbound case.
 	if sess, ok := b.sessions.GetSession(clientID); ok {
 		if msg, found := sess.GetInflight(packetID); found && msg.QoS == qos {
 			// MQTT 5.0 §3.3.2.3.2: stop retrying once the Message Expiry
@@ -2597,33 +2701,7 @@ func (b *Broker) republish(clientID string, packetID uint16, topic string, paylo
 				b.metrics.IncMessagesDropped("message_expired")
 				return nil
 			}
-			// Reproduce the original PUBLISH, properties included: MQTT 5.0
-			// §3.3.2.3 requires the forwarded Response Topic / Correlation Data /
-			// User Properties / Content Type / Payload Format Indicator to reach
-			// the subscriber even when the first attempt needs a retry. The
-			// Message Expiry Interval is re-derived so the retry advertises the
-			// time actually left (§3.3.2.3.3) instead of the value captured when
-			// the packet was first sent. props stays nil for MQTT 3.1.1
-			// subscribers, which have no property section at all.
-			props := msg.Properties
-			if props != nil && !msg.ExpiresAt.IsZero() {
-				refreshed := *props
-				refreshed.MessageExpiryInterval = remainingExpiry(msg.ExpiresAt)
-				props = &refreshed
-			}
-			pub := &protocol.PublishPacket{
-				FixedHeader: protocol.FixedHeader{
-					PacketType: protocol.PacketTypePublish,
-					QoS:        qos,
-					Dup:        true,
-					Retain:     retain,
-				},
-				PacketID:   packetID,
-				Topic:      topic,
-				Payload:    payload,
-				Properties: props,
-			}
-			b.writePacket(clientID, pub)
+			b.writePacket(clientID, buildRetransmitPublish(*msg))
 			return nil
 		}
 	}

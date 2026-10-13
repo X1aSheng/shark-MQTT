@@ -56,6 +56,24 @@ type InflightMessage struct {
 	Properties MessageProperties
 	// ExpiresAt is the absolute Message Expiry deadline; zero means none.
 	ExpiresAt time.Time
+
+	// PendingPubRel records how far an outbound QoS 2 delivery got before the
+	// session was torn down: true means the peer answered the PUBLISH with a
+	// PUBREC and we are still waiting for its PUBCOMP.
+	//
+	// It decides what a resume has to resend, which MQTT 5.0 §4.4 / 3.1.1
+	// §4.4 make a MUST: "both the Client and Server MUST resend any
+	// unacknowledged PUBLISH packets (where QoS > 0) and PUBREL packets using
+	// their original Packet Identifiers". A delivery past PUBREC is in the
+	// second group -- its PUBLISH may no longer be sent ([MQTT-4.3.3-6]) and
+	// its PUBREL stays unacknowledged until PUBCOMP ([MQTT-4.3.3-5]) -- so
+	// without this bit a resumed session would restart the handshake from the
+	// PUBLISH instead of finishing it.
+	//
+	// Always false for a QoS 1 entry, and unused for the inbound QoS 2 staging
+	// entries in SessionData.InboundQoS2, which await their PUBREL by
+	// definition.
+	PendingPubRel bool
 }
 
 // MessageProperties is the store-neutral form of the MQTT 5 per-message

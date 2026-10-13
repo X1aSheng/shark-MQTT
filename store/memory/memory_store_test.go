@@ -439,6 +439,9 @@ func TestSessionStore_InflightPropertiesRoundTrip(t *testing.T) {
 			7: {
 				PacketID: 7, QoS: 1, Topic: "props/round-trip", Payload: payload, Retain: true,
 				ExpiresAt: deadline,
+				// The QoS 2 handshake stage has to survive too: it is what
+				// tells a resumed session to continue with the PUBREL.
+				PendingPubRel: true,
 				Properties: store.MessageProperties{
 					PayloadFormat:          &pfi,
 					ContentType:            "application/json",
@@ -494,6 +497,9 @@ func TestSessionStore_InflightPropertiesRoundTrip(t *testing.T) {
 	}
 	if msg.Properties.SubscriptionIdentifier == nil || *msg.Properties.SubscriptionIdentifier != 9 {
 		t.Errorf("SubscriptionIdentifier = %v, want 9", msg.Properties.SubscriptionIdentifier)
+	}
+	if !msg.PendingPubRel {
+		t.Error("PendingPubRel lost in the round trip")
 	}
 	want := []store.UserProperty{{Key: "trace", Value: "1"}, {Key: "tenant", Value: "acme"}, {Key: "trace", Value: "2"}}
 	if len(msg.Properties.UserProperties) != len(want) {

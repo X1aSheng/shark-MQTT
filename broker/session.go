@@ -134,6 +134,17 @@ type InflightMsg struct {
 	// restart still carries it; ExpiresAt is persisted alongside it, which keeps
 	// §3.3.2.3.2 enforceable for a restored message.
 	Properties *protocol.Properties
+
+	// PendingPubRel marks an outbound QoS 2 delivery that already reached the
+	// PUBREC phase: the PUBREL has been sent (or is owed) and we are waiting
+	// for the peer's PUBCOMP. Set by MarkInflightPubRel when the PUBREC is
+	// accepted.
+	//
+	// It is persisted so a resumed session resends the right packet: MQTT 5.0
+	// §4.4 / 3.1.1 §4.4 require the unacknowledged PUBLISH *and* PUBREL packets
+	// to be resent on reconnect, and [MQTT-4.3.3-6] forbids re-sending a
+	// PUBLISH once its PUBREL has gone out.
+	PendingPubRel bool
 }
 
 // InboundQoS2 is a QoS 2 message accepted from the client (PUBLISH received,
@@ -529,6 +540,38 @@ func (s *Session) GetInflight(packetID uint16) (*InflightMsg, bool) {
 	return msg, ok
 }
 
+// MarkInflightPubRel records that an outbound QoS 2 delivery has reached the
+// PUBREL-sent stage, i.e. the peer answered the PUBLISH with a PUBREC.
+//
+// The stage has to be remembered because it selects the packet a later
+// retransmission owes: the PUBREL, not the PUBLISH ([MQTT-4.3.3-6], MQTT 5.0
+// §4.4). Returns whether an outbound QoS 2 entry for that packet id was found;
+// a QoS 1 delivery and an unknown packet id are left untouched, so a spurious
+// PUBREC cannot turn an unrelated entry into a PUBREL-pending one.
+func (s *Session) MarkInflightPubRel(packetID uint16) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	msg, ok := s.Inflight[packetID]
+	if !ok || msg.QoS != 2 {
+		return false
+	}
+	msg.PendingPubRel = true
+	return true
+}
+
+// InflightSnapshot returns copies of the session's outbound in-flight entries,
+// so a caller can walk them without holding the session lock. The Payload and
+// Properties of each copy are the live ones and must be treated as read-only.
+func (s *Session) InflightSnapshot() []InflightMsg {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]InflightMsg, 0, len(s.Inflight))
+	for _, msg := range s.Inflight {
+		out = append(out, *msg)
+	}
+	return out
+}
+
 // Save persists the session to the store.
 // Snapshot under the read lock, then deep-copy payloads outside the lock
 // so that concurrent readers (e.g. deliverToClient) are not blocked by
@@ -576,17 +619,21 @@ func (s *Session) Save(ctx context.Context, sessionStore store.SessionStore) err
 		// user-property slice below.
 		properties *protocol.Properties
 		expiresAt  time.Time
+		// pendingPubRel is the QoS 2 handshake stage a resume has to continue
+		// from, see InflightMsg.PendingPubRel.
+		pendingPubRel bool
 	}
 	snapshots := make([]snapEntry, 0, len(s.Inflight))
 	for _, msg := range s.Inflight {
 		snapshots = append(snapshots, snapEntry{
-			packetID:   msg.PacketID,
-			qos:        msg.QoS,
-			topic:      msg.Topic,
-			payload:    msg.Payload,
-			retain:     msg.Retain,
-			properties: msg.Properties,
-			expiresAt:  msg.ExpiresAt,
+			packetID:      msg.PacketID,
+			qos:           msg.QoS,
+			topic:         msg.Topic,
+			payload:       msg.Payload,
+			retain:        msg.Retain,
+			properties:    msg.Properties,
+			expiresAt:     msg.ExpiresAt,
+			pendingPubRel: msg.PendingPubRel,
 		})
 	}
 
@@ -612,13 +659,14 @@ func (s *Session) Save(ctx context.Context, sessionStore store.SessionStore) err
 		payloadCopy := make([]byte, len(snap.payload))
 		copy(payloadCopy, snap.payload)
 		inflight[snap.packetID] = &store.InflightMessage{
-			PacketID:   snap.packetID,
-			QoS:        snap.qos,
-			Topic:      snap.topic,
-			Payload:    payloadCopy,
-			Retain:     snap.retain,
-			Properties: storeProperties(snap.properties),
-			ExpiresAt:  snap.expiresAt,
+			PacketID:      snap.packetID,
+			QoS:           snap.qos,
+			Topic:         snap.topic,
+			Payload:       payloadCopy,
+			Retain:        snap.retain,
+			Properties:    storeProperties(snap.properties),
+			ExpiresAt:     snap.expiresAt,
+			PendingPubRel: snap.pendingPubRel,
 		}
 	}
 	data.Inflight = inflight
@@ -683,13 +731,14 @@ func (m *Manager) Restore(ctx context.Context, clientID string) (*Session, error
 		payloadCopy := make([]byte, len(msg.Payload))
 		copy(payloadCopy, msg.Payload)
 		sess.Inflight[id] = &InflightMsg{
-			PacketID:   msg.PacketID,
-			QoS:        msg.QoS,
-			Topic:      msg.Topic,
-			Payload:    payloadCopy,
-			Retain:     msg.Retain,
-			ExpiresAt:  msg.ExpiresAt,
-			Properties: protocolProperties(msg.Properties),
+			PacketID:      msg.PacketID,
+			QoS:           msg.QoS,
+			Topic:         msg.Topic,
+			Payload:       payloadCopy,
+			Retain:        msg.Retain,
+			ExpiresAt:     msg.ExpiresAt,
+			Properties:    protocolProperties(msg.Properties),
+			PendingPubRel: msg.PendingPubRel,
 		}
 	}
 

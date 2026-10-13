@@ -39,7 +39,8 @@ func TestInflightMessagePropertiesJSONRoundTrip(t *testing.T) {
 					},
 					SubscriptionIdentifier: &subscriptionID,
 				},
-				ExpiresAt: deadline,
+				ExpiresAt:     deadline,
+				PendingPubRel: true,
 			},
 		},
 		InboundQoS2: map[uint16]*InflightMessage{
@@ -109,6 +110,12 @@ func TestInflightMessagePropertiesJSONRoundTrip(t *testing.T) {
 	if out.Properties.SubscriptionIdentifier == nil || *out.Properties.SubscriptionIdentifier != 7 {
 		t.Errorf("SubscriptionIdentifier = %v, want pointer to 7", out.Properties.SubscriptionIdentifier)
 	}
+	if !out.PendingPubRel {
+		// The handshake stage decides what a resume resends -- a PUBREL, not
+		// the PUBLISH [MQTT-4.3.3-6] forbids re-sending -- so losing it across
+		// a restart restarts the QoS 2 handshake from the wrong end.
+		t.Error("PendingPubRel did not survive the round trip")
+	}
 
 	in := got.InboundQoS2[7]
 	if in == nil {
@@ -119,6 +126,9 @@ func TestInflightMessagePropertiesJSONRoundTrip(t *testing.T) {
 	}
 	if in.ExpiresAt.IsZero() != true {
 		t.Errorf("inbound ExpiresAt = %v, want the zero time", in.ExpiresAt)
+	}
+	if in.PendingPubRel {
+		t.Error("inbound QoS 2 staging entries are PUBREL-pending by definition, not by this flag")
 	}
 }
 
@@ -145,6 +155,13 @@ func TestInflightMessageLegacyJSONStillLoads(t *testing.T) {
 	}
 	if !got.ExpiresAt.IsZero() {
 		t.Errorf("ExpiresAt = %v, want the zero time", got.ExpiresAt)
+	}
+	if got.PendingPubRel {
+		// An older snapshot has no stage recorded; the zero value means "no
+		// PUBREL owed", which is what a QoS 1 entry and a delivery still
+		// awaiting its PUBREC both mean. Defaulting the other way would make
+		// every restored delivery claim a PUBREL the peer never asked for.
+		t.Error("a legacy snapshot must decode to PendingPubRel=false")
 	}
 }
 
@@ -226,14 +243,15 @@ func TestInflightMessageLegacySnapshotIgnoresUnknownPropertyKeys(t *testing.T) {
 // orphaning every persisted session.
 func TestSessionDataPropertyFieldsAreAdditive(t *testing.T) {
 	encoded, err := json.Marshal(&InflightMessage{
-		Properties: MessageProperties{ContentType: "x"},
-		ExpiresAt:  time.Unix(0, 0).UTC(),
+		Properties:    MessageProperties{ContentType: "x"},
+		ExpiresAt:     time.Unix(0, 0).UTC(),
+		PendingPubRel: true,
 	})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
 	blob := string(encoded)
-	for _, key := range []string{`"Properties"`, `"ExpiresAt"`, `"ContentType"`} {
+	for _, key := range []string{`"Properties"`, `"ExpiresAt"`, `"ContentType"`, `"PendingPubRel"`} {
 		if !strings.Contains(blob, key) {
 			t.Errorf("JSON %s is missing %s", blob, key)
 		}

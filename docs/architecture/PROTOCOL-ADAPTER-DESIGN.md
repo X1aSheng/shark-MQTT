@@ -466,6 +466,11 @@ func (r *Registry) Select(conn PeekConn, bound string) (Adapter, error)
 - **保留消息（RETAIN）同样要保存中继数据与过期截止时间**：retained 消息是「现在存储、以后投递」，而 §3.3.1.3 要求 Server「store the Application Message」——那个 Application Message 包含它的属性。因此 `store.RetainedMessage` 也必须携带 `MessageProperties` 与绝对截止时间：重放时按 §3.3.2.3 原样转发五类属性，按 §3.3.2.3.3 把 Message Expiry 递减为「收到的值减去在 Server 中等待的时间」，已过期的 retained 消息则不再投递（§3.3.1.3）。
   - `RetainedStore.SaveRetained` 接收完整的 `*RetainedMessage`，而不是 `(topic, qos, payload)`：三个参数表达不了属性与截止时间，任何后端都只能把它们丢掉，而且三个后端会各自重建记录、各自漂移。
   - **操作员的 `retained_expiry` TTL 与发布者的 Message Expiry 是两个独立上限**，取先到者；TTL 是运维策略，不作为 Message Expiry Interval 通告给订阅者（否则订阅者会看到一条它其实无权解释的过期值）。
+- **重连重传必须落在正确的握手阶段上**：MQTT 5.0 §4.4 [MQTT-4.4.0-1] / 3.1.1 §4.4 规定，Clean Start = 0 且会话存在时双方 MUST 用**原始 Packet Identifier** 重发未确认的 PUBLISH **与未确认的 PUBREL**，§4.4 同时写明「MUST NOT resend messages at any other time」。于是会话记录必须保留「PUBREL 已发、待 PUBCOMP」这一阶段（`store.InflightMessage.PendingPubRel`，同样只允许追加），由它决定恢复时重新登记的入口：
+  - 阶段为「待 PUBCOMP」-> 按 `StateAcked` 登记（`TrackOutboundQoS2AwaitingPubComp`）并即刻发 PUBREL。此时重发 PUBLISH 是 [MQTT-4.3.3-6] 明令禁止的，而 PUBREL 依 [MQTT-4.3.3-5] 一直算「未确认」直到 PUBCOMP 到达。
+  - 尚未到 PUBREC -> 仍是未确认 PUBLISH，带 DUP 重发（`TrackOutboundQoS2` / `TrackOutboundQoS1`）。
+  - 重传必须在 **CONNACK 之后立即**发出，不能只靠重试 tick：§4.4 把重连本身当作恢复时机，把恢复推迟到一个与重连无关的定时器上，等于把「重连即恢复」变成「重连后 10 秒才恢复」。
+  - 阶段位零值为 `false`，对旧快照、QoS 1 条目与 inbound 暂存条目都成立；时间语义上仍是「绝对截止时间落盘、重传时重推剩余量」，与上一条一致，重连路径不重复施加 Message Expiry（[MQTT-4.3.3-7]）。
 
 ### 4.2 主要回归风险与规避
 
@@ -481,6 +486,7 @@ func (r *Registry) Select(conn PeekConn, bound string) (Adapter, error)
 | R8 属性段门控遗漏 | 编码器只判 `Properties != nil`、不判 `Spec.Properties`，把 v5 属性字节写进 3.1.1 报文（对端读成 payload / topic 列表 / 返回码，CONNACK 直接被拒）。历史上 `encodePublish`、`encodeConnAck`、`encodeSubscribe`、`encodeUnsubscribe`、`encodeSubAck` 都漏过，且因为 codec 已被 v5 CONNECT 绑定而不可达，只能靠人工审查发现 | 必选属性段统一走 `Codec.writePropertySection`；`protocol/audit_fixes_test.go` 的 `TestPropertySectionVersionGatedAcrossPackets` 对每种报文断言三条：pre-v5 带属性必拒、pre-v5 无属性仍可编码、v5 带属性能编码 |
 | R9 会话记录格式即持久化 schema | `store.InflightMessage` 被 `store/badger` 与 `store/redis` 直接 `json.Marshal`，字段重命名或语义变更会让已落盘的会话静默丢数据；中继属性若只加在在线投递路径，QoS 2 中转与重启重传都会丢属性 | 只追加字段、不改名；`store/inflight_json_test.go` 用旧快照字面量固定向后兼容并断言 nil / 空 slice 不被 JSON 互转；`broker/publish_properties_test.go` 的 `TestSessionRestoreKeepsForwardedProperties`、`TestSessionRestoreDropsExpiredInflight` 覆盖 保存 -> 恢复 -> 重传 全链路 |
 | R10 保留消息丢失中继数据 | retained 记录原先只存 topic / QoS / payload，于是订阅时重放会丢掉全部 MQTT 5 中继属性并忽略发布者的 Message Expiry（§3.3.1.3 + §3.3.2.3），经 retained 引导的请求 / 响应永远无法完成；`store/memory` 的浅拷贝还会让调用方缓冲区与库内记录互相别名 | `store.RetainedMessage` 携带 `MessageProperties` + `ExpiresAt`，`SaveRetained` 改为接收完整记录使后端无法丢字段；`store/memory` 的 `GetRetained` / trie `match` / `collectAll` 统一走 `copyRetainedMessage` 深拷贝；`TestRetainedMessageRelaysPublisherProperties`、`TestRetainedMessageReplayDecrementsExpiry`、`TestRetainedMessageExpiredIsNotDelivered` 覆盖重放、递减与过期丢弃 |
+| R11 重连重传停在错误的握手阶段 | 会话恢复路径原先无条件按 `StateSent` 重新登记 inflight：已过 PUBREC 的 QoS 2 投递被当成未确认 PUBLISH 重发，既违反 §4.4 与 [MQTT-4.3.3-6]，又让重连后的握手从 PUBLISH 重新开始而非以 PUBREL 收尾；且恢复只能等 10s 重试 tick，重连当下并不重发，重连不再是恢复时机 | 会话记录新增 `PendingPubRel` 阶段并随快照 / 恢复往返（JSON 仅追加，`store/inflight_json_test.go` + `store/memory` 往返用例固定）；`restoreSessionInflight` 按阶段选择登记入口，`resendSessionInflight` 在 CONNACK 之后立即发 PUBLISH(DUP=1) 或 PUBREL，两条重传路径共用 `buildRetransmitPublish` / `pubRelPacket` 以免漂移；`TestBroker_QoS2OutboundResendsPubRelOnReconnect`、`TestBroker_QoS2OutboundResendsPublishBeforePubRec`、`TestRestoreSessionInflightUsesTheSavedStage`、`TestSessionInflightPubRelStageSurvivesRestart` 分别钉住重连收尾、对偶守护、接线与持久化 |
 
 ### 4.3 护栏建议
 - 新增 `tests/integration/mqtt31_test.go`：3.1 CONNECT 全流程（ClientID 边界 23/24、空 ID、CONNACK SP=0、SUBACK 无 `0x80`）。

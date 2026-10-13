@@ -198,6 +198,28 @@ func (q *QoSEngine) TrackOutboundQoS2(clientID string, packetID uint16, topic st
 	return q.track(clientID, packetID, topic, payload, retain, 2, true)
 }
 
+// TrackOutboundQoS2AwaitingPubComp re-registers an outbound QoS 2 delivery
+// whose PUBREC has already been received, so it is tracked in the same state
+// AckPubRec would have left it in: the retransmission it owes is the PUBREL,
+// never the PUBLISH ([MQTT-4.3.3-6]).
+//
+// A session restored from the store starts with an empty engine table, so this
+// is what keeps a resumed PUBREL-pending delivery on the PUBREL branch of
+// doRetry instead of restarting the handshake with a PUBLISH (MQTT 5.0 §4.4).
+func (q *QoSEngine) TrackOutboundQoS2AwaitingPubComp(clientID string, packetID uint16, topic string, payload []byte, retain bool) error {
+	if err := q.TrackOutboundQoS2(clientID, packetID, topic, payload, retain); err != nil {
+		return err
+	}
+	q.mu.Lock()
+	if clientInflight, ok := q.inflight[clientID]; ok {
+		if msg, exists := clientInflight[packetID]; exists {
+			msg.State = StateAcked
+		}
+	}
+	q.mu.Unlock()
+	return nil
+}
+
 func (q *QoSEngine) track(clientID string, packetID uint16, topic string, payload []byte, retain bool, qos uint8, outbound bool) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()

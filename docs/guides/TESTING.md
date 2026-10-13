@@ -1,6 +1,6 @@
 # Testing Guide
 
-Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。当前基线为 **425 个单元测试**、**146 个集成测试**、**61 个基准测试**（口径：源码中声明的顶层 `Test*` / `Benchmark*` 函数数，复现方式见 [测试统计](#测试统计)）。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
+Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。当前基线为 **430 个单元测试**、**146 个集成测试**、**61 个基准测试**（口径：源码中声明的顶层 `Test*` / `Benchmark*` 函数数，复现方式见 [测试统计](#测试统计)）。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
 
 ---
 
@@ -64,7 +64,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 
 | 类型 | 数量 | 位置 |
 |------|------|------|
-| 单元测试 | 425 | 各包 `*_test.go`（含 `tests/defects/`） |
+| 单元测试 | 430 | 各包 `*_test.go`（含 `tests/defects/`） |
 | 集成测试 | 146 | `tests/integration/` |
 | 缺陷回归测试 | `tests/defects/` 7 个文件 / 8 个用例 + 包内回归 | `tests/defects/`、`broker/`、`client/`、`protocol/` |
 | 基准测试 | 61（Windows 本地实际执行 58） | `tests/bench/`、`plugin/`、`pkg/metrics/` |
@@ -95,7 +95,7 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 
 | 包 | 测试数 | 基准测试数 | 说明 |
 |----|--------|-----------|------|
-| broker/ | 182 | 0 | 核心逻辑：TopicTree、QoS 引擎、会话、遗嘱、认证、服务器、retained metrics、MQTT 5.0 属性中继 |
+| broker/ | 187 | 0 | 核心逻辑：TopicTree、QoS 引擎、会话、遗嘱、认证、服务器、retained metrics、MQTT 5.0 属性中继、重连重传 |
 | protocol/ | 76 | 0 | MQTT 3.1 / 3.1.1 / 5.0 编解码、属性、报文 flags 校验、协议适配层（15 种报文） |
 | client/ | 35 | 0 | MQTT 客户端连接、发布、订阅、断开清理 |
 | config/ | 24 | 0 | 配置解析与校验 |
@@ -108,7 +108,7 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 | pkg/logger/ | 7 | 0 | slog 日志适配 |
 | errs/ | 4 | 0 | 错误定义 |
 | tests/defects/ | 8 | 0 | 审查发现缺陷的最小复现和回归测试 |
-| **单元测试合计** | **425** | **4** | |
+| **单元测试合计** | **430** | **4** | |
 | tests/integration/ | 146 | 0 | 端到端集成测试（含部署验证） |
 | tests/bench/ | 0 | 57 | 全栈 TCP、E2E 数据验证、微基准 |
 | **基准测试合计** | | **61** | |
@@ -435,7 +435,7 @@ make ci                # CI 完整流水线
 
 ## 缺陷回归测试
 
-审查过程中确认的缺陷必须先在 `tests/defects/` 中添加最小复现，再修复代码。当前回归项（8 个在 `tests/defects/`，另 8 个在所属包内）：
+审查过程中确认的缺陷必须先在 `tests/defects/` 中添加最小复现，再修复代码。当前回归项（8 个在 `tests/defects/`，另 9 个在所属包内）：
 
 | 位置 | 测试函数 | 覆盖缺陷 |
 |------|----------|----------|
@@ -451,6 +451,7 @@ make ci                # CI 完整流水线
 | `tests/integration/` | `integration.TestPublishPropertiesRelayedForQoS2` | QoS 2 发布在 PUBREL 之前暂存于 `InboundQoS2`，但暂存记录不携带属性，中转时属性被丢弃：在线可达的 §3.3.2.3 违规，直接破坏 QoS 2 的请求 / 响应流 |
 | `broker/` | `broker.TestForwardedPublishProperties` | 已过期的 Message Expiry 截止时间换算剩余秒数时发生无符号回绕，会把 4294963696 秒写进 Message Expiry Interval，令消息在过期后长期存活 |
 | `broker/` | `broker.TestSessionRestoreKeepsForwardedProperties` | 会话快照 / 恢复路径既不持久化中继属性也不持久化过期截止时间，重启后重传的 PUBLISH 丢失属性，且 §3.3.2.3.2 无法执行 |
+| `broker/` | `broker.TestBroker_QoS2OutboundResendsPubRelOnReconnect` | 会话恢复路径无条件按 `StateSent` 重新登记 inflight，已过 PUBREC 的 QoS 2 投递被当作未确认 PUBLISH 重发：违反 §4.4 与 [MQTT-4.3.3-6]，握手从 PUBLISH 重新开始而非以 PUBREL 收尾（同族：`TestSessionInflightPubRelStageSurvivesRestart`、`TestRestoreSessionInflightUsesTheSavedStage`、`TestBroker_QoS2OutboundResendsPublishBeforePubRec`） |
 | `client/` | `client.TestDisconnectClosesConnectionBeforeWaitingForReadLoop` | 客户端主动断开时必须先唤醒阻塞读循环，避免 `Disconnect` 卡住 |
 | `broker/` | `broker.TestQoSEngine_Retry_MaxRetriesExceededReportsError` | QoS inflight 消息达到最大重试次数被丢弃时必须发出错误回调 |
 | `protocol/` | `protocol.TestEncodePublishPropertySectionVersionGated` | `encodePublish` 只判 `Properties != nil`、不判 codec 版本，把 v5 属性字节写进 3.1.1 PUBLISH（对端读成 payload） |
