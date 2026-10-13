@@ -36,12 +36,50 @@ type Subscription struct {
 }
 
 // InflightMessage represents a message awaiting acknowledgment.
+//
+// It carries the MQTT 5 relay data as well as the message itself: a session
+// restored from a store must be able to retransmit the same PUBLISH it would
+// have sent before the restart, and §3.3.2.3 requires the forwarded Response
+// Topic, Correlation Data, User Properties, Content Type and Payload Format
+// Indicator to survive that. ExpiresAt keeps §3.3.2.3.2 enforceable across the
+// restart: without it a restored message would be retried even after its
+// Message Expiry Interval had passed.
 type InflightMessage struct {
 	PacketID uint16
 	QoS      uint8
 	Topic    string
 	Payload  []byte
 	Retain   bool
+
+	// Properties is the MQTT 5 per-message relay data. Zero value for a
+	// 3.1/3.1.1 session.
+	Properties MessageProperties
+	// ExpiresAt is the absolute Message Expiry deadline; zero means none.
+	ExpiresAt time.Time
+}
+
+// MessageProperties is the store-neutral form of the MQTT 5 per-message
+// properties that must survive a restart.
+//
+// The store layer deliberately does not persist protocol.Properties: the
+// protocol struct holds some thirty fields, most of which are per-packet or
+// server-scoped and have no meaning for a stored message, and persisting the
+// struct would make every future protocol field part of the store schema by
+// accident. Subscription.SubscriptionIdentifier set the same precedent.
+type MessageProperties struct {
+	PayloadFormat          *byte
+	ContentType            string
+	ResponseTopic          string
+	CorrelationData        []byte
+	UserProperties         []UserProperty
+	SubscriptionIdentifier *uint32
+}
+
+// UserProperty is a store-neutral MQTT 5 user-defined property pair. The order
+// of the pairs is significant and must be preserved (§3.3.2.3.7).
+type UserProperty struct {
+	Key   string
+	Value string
 }
 
 // StoredMessage represents a message stored for QoS delivery.

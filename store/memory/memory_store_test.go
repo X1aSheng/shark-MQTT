@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/X1aSheng/shark-mqtt/store"
 )
@@ -408,5 +409,129 @@ func TestSessionStore_SaveIsolation(t *testing.T) {
 	}
 	if string(got.Inflight[1].Payload) != "original-payload" {
 		t.Errorf("inflight payload leaked after save: got %q", string(got.Inflight[1].Payload))
+	}
+}
+
+// TestSessionStore_InflightPropertiesRoundTrip covers the MQTT 5 relay data a
+// restored session needs: §3.3.2.3 requires a retransmission after a restart to
+// carry the same Response Topic, Correlation Data, User Properties, Content
+// Type and Payload Format Indicator, and §3.3.2.3.2 requires the Message Expiry
+// deadline to still be enforceable. It also proves the copies are deep in both
+// directions, so neither the caller's slice nor the returned one can reach into
+// the stored message.
+func TestSessionStore_InflightPropertiesRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s := NewSessionStore()
+
+	pfi := byte(1)
+	subID := uint32(9)
+	deadline := time.Now().Add(5 * time.Minute).Truncate(time.Millisecond)
+	payload := []byte("body")
+	correlation := []byte{0xDE, 0xAD}
+	userProps := []store.UserProperty{
+		{Key: "trace", Value: "1"},
+		{Key: "tenant", Value: "acme"},
+		{Key: "trace", Value: "2"}, // same key twice: order must survive
+	}
+	data := &store.SessionData{
+		ClientID: "props-client",
+		Inflight: map[uint16]*store.InflightMessage{
+			7: {
+				PacketID: 7, QoS: 1, Topic: "props/round-trip", Payload: payload, Retain: true,
+				ExpiresAt: deadline,
+				Properties: store.MessageProperties{
+					PayloadFormat:          &pfi,
+					ContentType:            "application/json",
+					ResponseTopic:          "props/reply",
+					CorrelationData:        correlation,
+					UserProperties:         userProps,
+					SubscriptionIdentifier: &subID,
+				},
+			},
+		},
+		InboundQoS2: map[uint16]*store.InflightMessage{
+			9: {
+				PacketID: 9, QoS: 2, Topic: "props/inbound", Payload: []byte("staged"),
+				Properties: store.MessageProperties{ContentType: "text/plain"},
+			},
+		},
+	}
+	if err := s.SaveSession(ctx, data.ClientID, data); err != nil {
+		t.Fatalf("SaveSession failed: %v", err)
+	}
+
+	// Mutating what was handed in must not reach the store, including the new
+	// reference-typed fields.
+	payload[0] = 'X'
+	correlation[0] = 'Y'
+	userProps[0].Key = "mutated"
+	pfi = 0
+	subID = 0
+
+	got, err := s.GetSession(ctx, data.ClientID)
+	if err != nil {
+		t.Fatalf("GetSession failed: %v", err)
+	}
+	msg, ok := got.Inflight[7]
+	if !ok {
+		t.Fatal("inflight message 7 missing after round trip")
+	}
+	if !msg.ExpiresAt.Equal(deadline) {
+		t.Errorf("ExpiresAt = %v, want %v (retransmission must still see the deadline)",
+			msg.ExpiresAt, deadline)
+	}
+	if msg.Properties.PayloadFormat == nil || *msg.Properties.PayloadFormat != 1 {
+		t.Errorf("PayloadFormat = %v, want 1", msg.Properties.PayloadFormat)
+	}
+	if msg.Properties.ContentType != "application/json" {
+		t.Errorf("ContentType = %q, want application/json", msg.Properties.ContentType)
+	}
+	if msg.Properties.ResponseTopic != "props/reply" {
+		t.Errorf("ResponseTopic = %q, want props/reply", msg.Properties.ResponseTopic)
+	}
+	if string(msg.Properties.CorrelationData) != string([]byte{0xDE, 0xAD}) {
+		t.Errorf("CorrelationData = %x, want dead", msg.Properties.CorrelationData)
+	}
+	if msg.Properties.SubscriptionIdentifier == nil || *msg.Properties.SubscriptionIdentifier != 9 {
+		t.Errorf("SubscriptionIdentifier = %v, want 9", msg.Properties.SubscriptionIdentifier)
+	}
+	want := []store.UserProperty{{Key: "trace", Value: "1"}, {Key: "tenant", Value: "acme"}, {Key: "trace", Value: "2"}}
+	if len(msg.Properties.UserProperties) != len(want) {
+		t.Fatalf("UserProperties = %+v, want %+v", msg.Properties.UserProperties, want)
+	}
+	for i := range want {
+		if msg.Properties.UserProperties[i] != want[i] {
+			t.Errorf("UserProperties[%d] = %+v, want %+v (order must survive the round trip)",
+				i, msg.Properties.UserProperties[i], want[i])
+		}
+	}
+	if string(msg.Payload) != "body" {
+		t.Errorf("Payload = %q, want body", string(msg.Payload))
+	}
+
+	if inbound := got.InboundQoS2[9]; inbound == nil || inbound.Properties.ContentType != "text/plain" {
+		t.Errorf("inbound QoS 2 properties lost: %+v", inbound)
+	}
+
+	// The copy handed out by GetSession must not be the store's own, either.
+	msg.Properties.ContentType = "mutated"
+	msg.Properties.UserProperties[0].Value = "mutated"
+	msg.Properties.CorrelationData[0] = 'Z'
+
+	again, err := s.GetSession(ctx, data.ClientID)
+	if err != nil {
+		t.Fatalf("second GetSession failed: %v", err)
+	}
+	if again.Inflight[7].Properties.ContentType != "application/json" {
+		t.Errorf("store mutated through the returned copy: ContentType = %q",
+			again.Inflight[7].Properties.ContentType)
+	}
+	if again.Inflight[7].Properties.UserProperties[0].Value != "1" {
+		t.Errorf("store mutated through the returned user properties: %+v",
+			again.Inflight[7].Properties.UserProperties)
+	}
+	if again.Inflight[7].Properties.CorrelationData[0] != 0xDE {
+		t.Errorf("store mutated through the returned correlation data: %x",
+			again.Inflight[7].Properties.CorrelationData)
 	}
 }

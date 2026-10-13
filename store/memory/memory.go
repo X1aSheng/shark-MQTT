@@ -23,6 +23,51 @@ func NewSessionStore() store.SessionStore {
 	}
 }
 
+// copyInflightMessage deep-copies one stored message. Every reference-typed
+// field has to be cloned here, not just the struct: the caller keeps using the
+// value it handed in, so sharing a payload, a correlation blob or the
+// user-property backing array would let a later mutation reach into the store,
+// and the store's contents leak back out through GetSession. Keeping the field
+// list in one place is also what stops the next added field from being copied
+// by SaveSession and forgotten by GetSession.
+func copyInflightMessage(v *store.InflightMessage) *store.InflightMessage {
+	msgCopy := *v
+	if v.Payload != nil {
+		msgCopy.Payload = make([]byte, len(v.Payload))
+		copy(msgCopy.Payload, v.Payload)
+	}
+	if v.Properties.PayloadFormat != nil {
+		pf := *v.Properties.PayloadFormat
+		msgCopy.Properties.PayloadFormat = &pf
+	}
+	if v.Properties.CorrelationData != nil {
+		msgCopy.Properties.CorrelationData = make([]byte, len(v.Properties.CorrelationData))
+		copy(msgCopy.Properties.CorrelationData, v.Properties.CorrelationData)
+	}
+	if v.Properties.UserProperties != nil {
+		up := make([]store.UserProperty, len(v.Properties.UserProperties))
+		copy(up, v.Properties.UserProperties)
+		msgCopy.Properties.UserProperties = up
+	}
+	if v.Properties.SubscriptionIdentifier != nil {
+		sid := *v.Properties.SubscriptionIdentifier
+		msgCopy.Properties.SubscriptionIdentifier = &sid
+	}
+	return &msgCopy
+}
+
+// copyInflightMap deep-copies a whole inflight map, preserving nil.
+func copyInflightMap(m map[uint16]*store.InflightMessage) map[uint16]*store.InflightMessage {
+	if m == nil {
+		return nil
+	}
+	out := make(map[uint16]*store.InflightMessage, len(m))
+	for k, v := range m {
+		out[k] = copyInflightMessage(v)
+	}
+	return out
+}
+
 func (s *sessionStore) SaveSession(ctx context.Context, clientID string, data *store.SessionData) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -34,28 +79,8 @@ func (s *sessionStore) SaveSession(ctx context.Context, clientID string, data *s
 	// (mirrors GetSession's defensive copying; previously only the Inflight
 	// message structs were copied, sharing their payload backing arrays).
 	copied := *data
-	if data.Inflight != nil {
-		copied.Inflight = make(map[uint16]*store.InflightMessage, len(data.Inflight))
-		for k, v := range data.Inflight {
-			msgCopy := *v
-			if v.Payload != nil {
-				msgCopy.Payload = make([]byte, len(v.Payload))
-				copy(msgCopy.Payload, v.Payload)
-			}
-			copied.Inflight[k] = &msgCopy
-		}
-	}
-	if data.InboundQoS2 != nil {
-		copied.InboundQoS2 = make(map[uint16]*store.InflightMessage, len(data.InboundQoS2))
-		for k, v := range data.InboundQoS2 {
-			msgCopy := *v
-			if v.Payload != nil {
-				msgCopy.Payload = make([]byte, len(v.Payload))
-				copy(msgCopy.Payload, v.Payload)
-			}
-			copied.InboundQoS2[k] = &msgCopy
-		}
-	}
+	copied.Inflight = copyInflightMap(data.Inflight)
+	copied.InboundQoS2 = copyInflightMap(data.InboundQoS2)
 	if data.Subscriptions != nil {
 		copied.Subscriptions = make([]store.Subscription, len(data.Subscriptions))
 		copy(copied.Subscriptions, data.Subscriptions)
@@ -73,24 +98,8 @@ func (s *sessionStore) GetSession(ctx context.Context, clientID string) (*store.
 	}
 	// Return a deep copy to prevent callers from modifying internal state
 	copied := *data
-	if data.Inflight != nil {
-		copied.Inflight = make(map[uint16]*store.InflightMessage, len(data.Inflight))
-		for k, v := range data.Inflight {
-			msgCopy := *v
-			msgCopy.Payload = make([]byte, len(v.Payload))
-			copy(msgCopy.Payload, v.Payload)
-			copied.Inflight[k] = &msgCopy
-		}
-	}
-	if data.InboundQoS2 != nil {
-		copied.InboundQoS2 = make(map[uint16]*store.InflightMessage, len(data.InboundQoS2))
-		for k, v := range data.InboundQoS2 {
-			msgCopy := *v
-			msgCopy.Payload = make([]byte, len(v.Payload))
-			copy(msgCopy.Payload, v.Payload)
-			copied.InboundQoS2[k] = &msgCopy
-		}
-	}
+	copied.Inflight = copyInflightMap(data.Inflight)
+	copied.InboundQoS2 = copyInflightMap(data.InboundQoS2)
 	if data.Subscriptions != nil {
 		copied.Subscriptions = make([]store.Subscription, len(data.Subscriptions))
 		copy(copied.Subscriptions, data.Subscriptions)
