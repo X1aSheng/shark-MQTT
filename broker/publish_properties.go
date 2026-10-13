@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/X1aSheng/shark-mqtt/protocol"
+	"github.com/X1aSheng/shark-mqtt/store"
 )
 
 // forwardedPublishProperties builds the property set of one outbound PUBLISH.
@@ -69,4 +70,62 @@ func remainingExpiry(expiresAt time.Time) *uint32 {
 	}
 	remaining := uint32(d / time.Second)
 	return &remaining
+}
+
+// storeProperties converts a publisher's property set into the store-neutral
+// form kept alongside an unacknowledged message.
+//
+// Only the relay data is carried over: it is what §3.3.2.3 requires a
+// retransmission to send, and what a QoS 2 staging record has to hold until
+// PUBREL arrives. The Message Expiry Interval is deliberately left out -- the
+// store keeps the absolute deadline (store.InflightMessage.ExpiresAt) instead,
+// and the interval is re-derived from it so a retransmission advertises the time
+// actually left rather than the value captured when the packet was first sent.
+func storeProperties(p *protocol.Properties) store.MessageProperties {
+	if p == nil {
+		return store.MessageProperties{}
+	}
+	sp := store.MessageProperties{
+		PayloadFormat:          p.PayloadFormat,
+		ContentType:            p.ContentType,
+		ResponseTopic:          p.ResponseTopic,
+		CorrelationData:        p.CorrelationData,
+		SubscriptionIdentifier: p.SubscriptionIdentifier,
+	}
+	if len(p.UserProperties) > 0 {
+		// Rebuilt rather than aliased: the protocol slice belongs to the
+		// decoded packet, while the store record outlives it.
+		sp.UserProperties = make([]store.UserProperty, len(p.UserProperties))
+		for i, up := range p.UserProperties {
+			sp.UserProperties[i] = store.UserProperty{Key: up.Key, Value: up.Value}
+		}
+	}
+	return sp
+}
+
+// protocolProperties is the inverse of storeProperties: it rebuilds the property
+// set a retransmission puts back on the wire. It returns nil when the record
+// holds nothing to relay, so a session restored from an older snapshot produces
+// exactly the packet it produced before -- the pre-existing, property-free
+// behaviour, rather than an empty property section.
+func protocolProperties(sp store.MessageProperties) *protocol.Properties {
+	if sp.PayloadFormat == nil && sp.ContentType == "" && sp.ResponseTopic == "" &&
+		sp.CorrelationData == nil && len(sp.UserProperties) == 0 &&
+		sp.SubscriptionIdentifier == nil {
+		return nil
+	}
+	p := &protocol.Properties{
+		PayloadFormat:          sp.PayloadFormat,
+		ContentType:            sp.ContentType,
+		ResponseTopic:          sp.ResponseTopic,
+		CorrelationData:        sp.CorrelationData,
+		SubscriptionIdentifier: sp.SubscriptionIdentifier,
+	}
+	if len(sp.UserProperties) > 0 {
+		p.UserProperties = make([]protocol.UserProperty, len(sp.UserProperties))
+		for i, up := range sp.UserProperties {
+			p.UserProperties[i] = protocol.UserProperty{Key: up.Key, Value: up.Value}
+		}
+	}
+	return p
 }

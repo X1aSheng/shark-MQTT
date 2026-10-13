@@ -1,6 +1,6 @@
 # Testing Guide
 
-Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。当前基线为 **413 个单元测试**、**142 个集成测试**、**61 个基准测试**（口径：源码中声明的顶层 `Test*` / `Benchmark*` 函数数，复现方式见 [测试统计](#测试统计)）。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
+Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。当前基线为 **421 个单元测试**、**143 个集成测试**、**61 个基准测试**（口径：源码中声明的顶层 `Test*` / `Benchmark*` 函数数，复现方式见 [测试统计](#测试统计)）。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
 
 ---
 
@@ -30,7 +30,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 |  +-- data_delivery_bench_test.go - E2E 数据验证基准 (12)   |
 |  +-- micro_bench_test.go         - 组件级微基准 (27)       |
 +------------------------------------------------------------+
-|  Integration Tests (142 declared)                          |
+|  Integration Tests (143 declared)                          |
 |  tests/integration/  (27 files)                            |
 |  +-- connect / pubsub / qos / persistent_session           |
 |  +-- delivery / retained / will / topic_wildcard           |
@@ -51,10 +51,10 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 |  +-- topic_filter_defect_test.go - topic filter 边界       |
 |  +-- windows_benchmark_test.go - Windows benchmark 隔离    |
 +------------------------------------------------------------+
-|  Unit Tests (413 declared)                                 |
+|  Unit Tests (421 declared)                                 |
 |  各包内 *_test.go 文件                                     |
-|  broker/ protocol/ client/ config/ plugin/ store/memory/   |
-|  pkg/ api/ errs/                                           |
+|  broker/ protocol/ client/ config/ plugin/ store/          |
+|  store/memory/ pkg/ api/ errs/                             |
 +------------------------------------------------------------+
 ```
 
@@ -64,8 +64,8 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 
 | 类型 | 数量 | 位置 |
 |------|------|------|
-| 单元测试 | 413 | 各包 `*_test.go`（含 `tests/defects/`） |
-| 集成测试 | 142 | `tests/integration/` |
+| 单元测试 | 421 | 各包 `*_test.go`（含 `tests/defects/`） |
+| 集成测试 | 143 | `tests/integration/` |
 | 缺陷回归测试 | `tests/defects/` 7 个文件 / 8 个用例 + 包内回归 | `tests/defects/`、`broker/`、`client/`、`protocol/` |
 | 基准测试 | 61（Windows 本地实际执行 58） | `tests/bench/`、`plugin/`、`pkg/metrics/` |
 
@@ -74,7 +74,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 ```bash
 # 单元测试（默认构建，不含 store/redis 与 store/badger）
 go test -list '.*' ./api/... ./broker/... ./client/... ./config/... ./errs/... \
-  ./pkg/... ./plugin/... ./protocol/... ./store/memory/... ./tests/defects/... \
+  ./pkg/... ./plugin/... ./protocol/... ./store/... ./tests/defects/... \
   | grep -c '^Test'
 
 # 集成测试
@@ -87,6 +87,7 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 三点注意事项：
 
 - **构建标签**：`store/redis/`（18 个测试 + 9 个基准）仅在 `-tags store_redis` 下编译，`store/badger/`（10 个测试）仅在 `-tags store_badger` 下编译，因此**不计入**默认口径。
+- **存储层格式测试**：`store/` 根包（5 个测试）不带构建标签，直接验证 `encoding/json` 的会话记录布局 —— 这是 `store/badger` 与 `store/redis` 共用的持久化格式，因此无需任一后端即可回归。
 - **Windows 跳过**：`tests/bench/` 中 3 个连接 churn 基准在 Windows 下主动 `b.Skip`（见 [基准测试](#基准测试)），故本地执行数为 `61 - 3 = 58`。
 - **历史日志**：`tests/logs/` 下的历史运行日志（如 `20260806_*`）记录的是当时的运行条数口径，与上表不可直接比较。
 
@@ -94,20 +95,21 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 
 | 包 | 测试数 | 基准测试数 | 说明 |
 |----|--------|-----------|------|
-| broker/ | 180 | 0 | 核心逻辑：TopicTree、QoS 引擎、会话、遗嘱、认证、服务器、retained metrics |
+| broker/ | 182 | 0 | 核心逻辑：TopicTree、QoS 引擎、会话、遗嘱、认证、服务器、retained metrics、MQTT 5.0 属性中继 |
 | protocol/ | 76 | 0 | MQTT 3.1 / 3.1.1 / 5.0 编解码、属性、报文 flags 校验、协议适配层（15 种报文） |
 | client/ | 35 | 0 | MQTT 客户端连接、发布、订阅、断开清理 |
 | config/ | 24 | 0 | 配置解析与校验 |
 | api/ | 22 | 0 | 公共 API 与健康端点 |
-| store/memory/ | 21 | 0 | 内存存储：会话、消息、保留消息 |
+| store/memory/ | 22 | 0 | 内存存储：会话、消息、保留消息 |
 | plugin/ | 16 | 3 | 插件系统：注册、分发、超时与 panic 隔离 |
 | pkg/bufferpool/ | 10 | 0 | 缓冲池管理 |
 | pkg/metrics/ | 10 | 1 | Prometheus 指标 |
 | pkg/logger/ | 7 | 0 | slog 日志适配 |
+| store/ | 5 | 0 | 存储层 JSON 格式：会话中继属性的编解码与向后兼容 |
 | errs/ | 4 | 0 | 错误定义 |
 | tests/defects/ | 8 | 0 | 审查发现缺陷的最小复现和回归测试 |
-| **单元测试合计** | **413** | **4** | |
-| tests/integration/ | 142 | 0 | 端到端集成测试（含部署验证） |
+| **单元测试合计** | **421** | **4** | |
+| tests/integration/ | 143 | 0 | 端到端集成测试（含部署验证） |
 | tests/bench/ | 0 | 57 | 全栈 TCP、E2E 数据验证、微基准 |
 | **基准测试合计** | | **61** | |
 | store/redis/（`store_redis`） | 18 | 9 | Redis 存储：消息、保留、会话（默认不编译） |
@@ -171,7 +173,7 @@ func TestTopicTree_Subscribe(t *testing.T) {
 ### 测试清单
 
 集成测试按文件组织，每个文件覆盖一个语义域。下表由源码直接统计
-（`grep -c '^func Test' tests/integration/*_test.go`），合计 **142 个**：
+（`grep -c '^func Test' tests/integration/*_test.go`），合计 **143 个**：
 
 | 文件 | 测试数 | 覆盖重点 |
 |------|--------|----------|
@@ -193,7 +195,7 @@ func TestTopicTree_Subscribe(t *testing.T) {
 | `session_expiry_test.go` | 3 | 会话过期与清理 |
 | `lifecycle_regression_test.go` | 2 | 服务生命周期回归 |
 | `message_expiry_test.go` | 2 | 消息过期（Message Expiry Interval） |
-| `publish_properties_test.go` | 2 | MQTT 5.0 PUBLISH 属性中继与版本门控（本轮新增） |
+| `publish_properties_test.go` | 3 | MQTT 5.0 PUBLISH 属性中继：在线投递、QoS 2 中转与版本门控（本轮新增） |
 | `qos1_regression_test.go` | 2 | QoS 1 回归 |
 | `websocket_test.go` | 2 | WebSocket 传输 |
 | `wss_test.go` | 2 | WSS（WebSocket over TLS） |
@@ -202,7 +204,7 @@ func TestTopicTree_Subscribe(t *testing.T) {
 | `request_response_test.go` | 1 | 请求 / 响应模式（Response Topic） |
 | `subscription_id_test.go` | 1 | MQTT 5.0 Subscription Identifier |
 | `write_queue_test.go` | 1 | 写队列与背压 |
-| **合计** | **142** | |
+| **合计** | **143** | |
 
 具体测试函数名可用 `go test -list '.*' ./tests/integration/...` 列出。本表**不逐条维护函数名**，
 以免每次新增用例都要同步文档、产生漂移；只维护"文件 -> 数量 -> 语义域"这一层。
@@ -433,7 +435,7 @@ make ci                # CI 完整流水线
 
 ## 缺陷回归测试
 
-审查过程中确认的缺陷必须先在 `tests/defects/` 中添加最小复现，再修复代码。当前回归项（8 个在 `tests/defects/`，另 4 个在所属包内）：
+审查过程中确认的缺陷必须先在 `tests/defects/` 中添加最小复现，再修复代码。当前回归项（8 个在 `tests/defects/`，另 7 个在所属包内）：
 
 | 位置 | 测试函数 | 覆盖缺陷 |
 |------|----------|----------|
@@ -445,6 +447,9 @@ make ci                # CI 完整流水线
 | `tests/defects/topic_filter_defect_test.go` | `TestDefectTopicFiltersMayContainEmptyLevels` | MQTT topic filter 中合法的零长度 topic level |
 | `tests/defects/windows_benchmark_test.go` | `TestDefectWindowsConnectionChurnBenchmarksDoNotPoisonSuite` | Windows 连接 churn 基准不得污染同进程后续基准 |
 | `tests/defects/windows_benchmark_test.go` | `TestDefectWindowsWillMessageBenchmarkDoesNotPoisonSuite` | Windows 遗嘱基准不得污染同进程后续基准 |
+| `tests/integration/` | `integration.TestPublishPropertiesRelayedForQoS2` | QoS 2 发布在 PUBREL 之前暂存于 `InboundQoS2`，但暂存记录不携带属性，中转时属性被丢弃：在线可达的 §3.3.2.3 违规，直接破坏 QoS 2 的请求 / 响应流 |
+| `broker/` | `broker.TestForwardedPublishProperties` | 已过期的 Message Expiry 截止时间换算剩余秒数时发生无符号回绕，会把 4294963696 秒写进 Message Expiry Interval，令消息在过期后长期存活 |
+| `broker/` | `broker.TestSessionRestoreKeepsForwardedProperties` | 会话快照 / 恢复路径既不持久化中继属性也不持久化过期截止时间，重启后重传的 PUBLISH 丢失属性，且 §3.3.2.3.2 无法执行 |
 | `client/` | `client.TestDisconnectClosesConnectionBeforeWaitingForReadLoop` | 客户端主动断开时必须先唤醒阻塞读循环，避免 `Disconnect` 卡住 |
 | `broker/` | `broker.TestQoSEngine_Retry_MaxRetriesExceededReportsError` | QoS inflight 消息达到最大重试次数被丢弃时必须发出错误回调 |
 | `protocol/` | `protocol.TestEncodePublishPropertySectionVersionGated` | `encodePublish` 只判 `Properties != nil`、不判 codec 版本，把 v5 属性字节写进 3.1.1 PUBLISH（对端读成 payload） |

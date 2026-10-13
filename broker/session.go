@@ -129,9 +129,10 @@ type InflightMsg struct {
 	// Type / Payload Format Indicator to reach the subscriber even when the
 	// first attempt needs a retry. nil for MQTT 3.1.1 subscribers.
 	//
-	// Not persisted across a broker restart: the session snapshot handed to the
-	// store uses store.InflightMessage, which has no property representation.
-	// A retransmission after a restart therefore re-sends without properties.
+	// Persisted with the session (as store.MessageProperties, through
+	// storeProperties/protocolProperties) so a retransmission after a broker
+	// restart still carries it; ExpiresAt is persisted alongside it, which keeps
+	// §3.3.2.3.2 enforceable for a restored message.
 	Properties *protocol.Properties
 }
 
@@ -569,15 +570,23 @@ func (s *Session) Save(ctx context.Context, sessionStore store.SessionStore) err
 		topic    string
 		payload  []byte
 		retain   bool
+		// properties and expiresAt are the MQTT 5 relay data a retransmission
+		// after a restart has to reproduce (§3.3.2.3) and keep enforcing
+		// (§3.3.2.3.2). They are copied by value; storeProperties rebuilds the
+		// user-property slice below.
+		properties *protocol.Properties
+		expiresAt  time.Time
 	}
 	snapshots := make([]snapEntry, 0, len(s.Inflight))
 	for _, msg := range s.Inflight {
 		snapshots = append(snapshots, snapEntry{
-			packetID: msg.PacketID,
-			qos:      msg.QoS,
-			topic:    msg.Topic,
-			payload:  msg.Payload,
-			retain:   msg.Retain,
+			packetID:   msg.PacketID,
+			qos:        msg.QoS,
+			topic:      msg.Topic,
+			payload:    msg.Payload,
+			retain:     msg.Retain,
+			properties: msg.Properties,
+			expiresAt:  msg.ExpiresAt,
 		})
 	}
 
@@ -586,11 +595,12 @@ func (s *Session) Save(ctx context.Context, sessionStore store.SessionStore) err
 	inboundSnapshots := make([]snapEntry, 0, len(s.inboundQoS2))
 	for _, msg := range s.inboundQoS2 {
 		inboundSnapshots = append(inboundSnapshots, snapEntry{
-			packetID: msg.PacketID,
-			qos:      msg.QoS,
-			topic:    msg.Topic,
-			payload:  msg.Payload,
-			retain:   msg.Retain,
+			packetID:   msg.PacketID,
+			qos:        msg.QoS,
+			topic:      msg.Topic,
+			payload:    msg.Payload,
+			retain:     msg.Retain,
+			properties: msg.Properties,
 		})
 	}
 
@@ -602,11 +612,13 @@ func (s *Session) Save(ctx context.Context, sessionStore store.SessionStore) err
 		payloadCopy := make([]byte, len(snap.payload))
 		copy(payloadCopy, snap.payload)
 		inflight[snap.packetID] = &store.InflightMessage{
-			PacketID: snap.packetID,
-			QoS:      snap.qos,
-			Topic:    snap.topic,
-			Payload:  payloadCopy,
-			Retain:   snap.retain,
+			PacketID:   snap.packetID,
+			QoS:        snap.qos,
+			Topic:      snap.topic,
+			Payload:    payloadCopy,
+			Retain:     snap.retain,
+			Properties: storeProperties(snap.properties),
+			ExpiresAt:  snap.expiresAt,
 		}
 	}
 	data.Inflight = inflight
@@ -616,11 +628,12 @@ func (s *Session) Save(ctx context.Context, sessionStore store.SessionStore) err
 		payloadCopy := make([]byte, len(snap.payload))
 		copy(payloadCopy, snap.payload)
 		inbound[snap.packetID] = &store.InflightMessage{
-			PacketID: snap.packetID,
-			QoS:      snap.qos,
-			Topic:    snap.topic,
-			Payload:  payloadCopy,
-			Retain:   snap.retain,
+			PacketID:   snap.packetID,
+			QoS:        snap.qos,
+			Topic:      snap.topic,
+			Payload:    payloadCopy,
+			Retain:     snap.retain,
+			Properties: storeProperties(snap.properties),
 		}
 	}
 	data.InboundQoS2 = inbound
@@ -670,11 +683,13 @@ func (m *Manager) Restore(ctx context.Context, clientID string) (*Session, error
 		payloadCopy := make([]byte, len(msg.Payload))
 		copy(payloadCopy, msg.Payload)
 		sess.Inflight[id] = &InflightMsg{
-			PacketID: msg.PacketID,
-			QoS:      msg.QoS,
-			Topic:    msg.Topic,
-			Payload:  payloadCopy,
-			Retain:   msg.Retain,
+			PacketID:   msg.PacketID,
+			QoS:        msg.QoS,
+			Topic:      msg.Topic,
+			Payload:    payloadCopy,
+			Retain:     msg.Retain,
+			ExpiresAt:  msg.ExpiresAt,
+			Properties: protocolProperties(msg.Properties),
 		}
 	}
 
@@ -691,6 +706,7 @@ func (m *Manager) Restore(ctx context.Context, clientID string) (*Session, error
 			Payload:    payloadCopy,
 			Retain:     msg.Retain,
 			ReceivedAt: time.Now(),
+			Properties: protocolProperties(msg.Properties),
 		}
 	}
 

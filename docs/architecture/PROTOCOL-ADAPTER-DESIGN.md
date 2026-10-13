@@ -459,6 +459,10 @@ func (r *Registry) Select(conn PeekConn, bound string) (Adapter, error)
   - 必选属性段（PUBLISH / CONNECT / 遗嘱 / CONNACK / SUBSCRIBE / UNSUBSCRIBE / SUBACK / UNSUBACK）统一走 `Codec.writePropertySection`；可选属性段（PUBACK / PUBREC / PUBREL / PUBCOMP / DISCONNECT / AUTH）由各编码器自带的 reason-code（或 `Spec.AuthPacket`）检查兜底，编码器在 `ErrMalformedPacket` 与 `ErrUnsupportedVersion` 之间选择即可。
   - pre-v5 codec 收到带属性的包**一律报错，不静默丢弃**：与 `encodeConnect` 拒绝超长 will 的策略一致，静默丢弃等于隐藏调用方的版本错配。
   - 需要显式绑定版本时用 `Codec.NewCodecForVersion`。`NewCodec` 默认 3.1.1，只在解码 CONNECT（`protocol/connect.go`）或编码 CONNECT（按 `pkt.ProtocolVersion` 重绑）时升级；因此「先发过 v5 CONNECT」的 codec 已是 v5，这一点会掩盖门控遗漏，不能作为正确性依据。
+- **§3.3.2.3 中继数据必须穿过「QoS 2 暂存」与「会话重启」两条路径**：需要中继的 PUBLISH 属性（Payload Format Indicator / Content Type / Response Topic / Correlation Data / User Properties）与 Message Expiry 的绝对截止时间，不能只存在于在线投递路径。QoS 2 发布在 PUBREL 之前暂存于 `InboundQoS2`，重启后的重传则要经过「会话快照 -> store -> 恢复」，任何一环不带属性，属性都会静默丢失，§3.3.2.3.2 也随之失效。
+  - store 层用独立的 `store.MessageProperties` 承载，**不持久化 `protocol.Properties`**：后者有三十余个字段，多数是 per-packet 或 server-scoped，直接落盘等于让每个未来的协议字段自动成为存储 schema。与 `Subscription.SubscriptionIdentifier` 同一先例。
+  - Message Expiry **落盘绝对截止时间而非 interval**（`store.InflightMessage.ExpiresAt`），重传时按剩余时间重新推导 interval，否则重启会把首次发送时的值原样再宣告一次。
+  - `store.InflightMessage` / `store.MessageProperties` 的 JSON 布局**是持久化格式**（`store/badger` 与 `store/redis` 直接 `json.Marshal(SessionData)`），只允许**追加字段**，不得重命名或改语义；跨版本兼容由 `store/inflight_json_test.go` 固定。
 
 ### 4.2 主要回归风险与规避
 
@@ -472,6 +476,7 @@ func (r *Registry) Select(conn PeekConn, bound string) (Adapter, error)
 | R6 配置结构新增 | `Listeners []ListenerConfig` 若与旧字段冲突 | `EffectiveListeners()` 归一化：`Listeners` 非空优先；否则由旧字段合成，**旧配置零修改可跑**（见 §5） |
 | R7 SUBACK `0x80` 语义 | 3.1 分支改为回 QoS0，可能影响既有 ACL 拒绝测试 | 仅对 `Spec.SubAckFailureSupported == false`（即 3.1）生效；3.1.1/5.0 仍回 `0x80`，现有测试不受影响 |
 | R8 属性段门控遗漏 | 编码器只判 `Properties != nil`、不判 `Spec.Properties`，把 v5 属性字节写进 3.1.1 报文（对端读成 payload / topic 列表 / 返回码，CONNACK 直接被拒）。历史上 `encodePublish`、`encodeConnAck`、`encodeSubscribe`、`encodeUnsubscribe`、`encodeSubAck` 都漏过，且因为 codec 已被 v5 CONNECT 绑定而不可达，只能靠人工审查发现 | 必选属性段统一走 `Codec.writePropertySection`；`protocol/audit_fixes_test.go` 的 `TestPropertySectionVersionGatedAcrossPackets` 对每种报文断言三条：pre-v5 带属性必拒、pre-v5 无属性仍可编码、v5 带属性能编码 |
+| R9 会话记录格式即持久化 schema | `store.InflightMessage` 被 `store/badger` 与 `store/redis` 直接 `json.Marshal`，字段重命名或语义变更会让已落盘的会话静默丢数据；中继属性若只加在在线投递路径，QoS 2 中转与重启重传都会丢属性 | 只追加字段、不改名；`store/inflight_json_test.go` 用旧快照字面量固定向后兼容并断言 nil / 空 slice 不被 JSON 互转；`broker/publish_properties_test.go` 的 `TestSessionRestoreKeepsForwardedProperties`、`TestSessionRestoreDropsExpiredInflight` 覆盖 保存 -> 恢复 -> 重传 全链路 |
 
 ### 4.3 护栏建议
 - 新增 `tests/integration/mqtt31_test.go`：3.1 CONNECT 全流程（ClientID 边界 23/24、空 ID、CONNACK SP=0、SUBACK 无 `0x80`）。
