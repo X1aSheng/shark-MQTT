@@ -31,8 +31,8 @@ type Broker struct {
 	// over from the first Start was still reading it.
 	healthMu   sync.Mutex
 	healthSrv  *http.Server
-	healthLn   net.Listener // closed by Stop so a pre-Serve stop cannot leak the port
-	healthAddr string       // actual listener address for health/metrics
+	healthLn   net.Listener  // closed by Stop so a pre-Serve stop cannot leak the port
+	healthAddr string        // actual listener address for health/metrics
 	logr       logger.Logger // diagnostic logger for lifecycle events
 	initErr    error         // set if config validation fails during construction
 }
