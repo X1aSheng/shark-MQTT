@@ -1,6 +1,6 @@
 # Testing Guide
 
-Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。当前基线为 **431 个单元测试**、**146 个集成测试**、**61 个基准测试**（口径：源码中声明的顶层 `Test*` / `Benchmark*` 函数数，复现方式见 [测试统计](#测试统计)）。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
+Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。当前基线为 **435 个单元测试**、**147 个集成测试**、**61 个基准测试**（口径：源码中声明的顶层 `Test*` / `Benchmark*` 函数数，复现方式见 [测试统计](#测试统计)）。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
 
 ---
 
@@ -30,7 +30,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 |  +-- data_delivery_bench_test.go - E2E 数据验证基准 (12)   |
 |  +-- micro_bench_test.go         - 组件级微基准 (27)       |
 +------------------------------------------------------------+
-|  Integration Tests (146 declared)                          |
+|  Integration Tests (147 declared)                          |
 |  tests/integration/  (27 files)                            |
 |  +-- connect / pubsub / qos / persistent_session           |
 |  +-- delivery / retained / will / topic_wildcard           |
@@ -51,7 +51,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 |  +-- topic_filter_defect_test.go - topic filter 边界       |
 |  +-- windows_benchmark_test.go - Windows benchmark 隔离    |
 +------------------------------------------------------------+
-|  Unit Tests (425 declared)                                 |
+|  Unit Tests (435 declared)                                 |
 |  各包内 *_test.go 文件                                     |
 |  broker/ protocol/ client/ config/ plugin/ store/          |
 |  store/memory/ pkg/ api/ errs/                             |
@@ -64,8 +64,8 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 
 | 类型 | 数量 | 位置 |
 |------|------|------|
-| 单元测试 | 431 | 各包 `*_test.go`（含 `tests/defects/`） |
-| 集成测试 | 146 | `tests/integration/` |
+| 单元测试 | 435 | 各包 `*_test.go`（含 `tests/defects/`） |
+| 集成测试 | 147 | `tests/integration/` |
 | 缺陷回归测试 | `tests/defects/` 7 个文件 / 8 个用例 + 包内回归 | `tests/defects/`、`broker/`、`client/`、`protocol/` |
 | 基准测试 | 61（Windows 本地实际执行 58） | `tests/bench/`、`plugin/`、`pkg/metrics/` |
 
@@ -95,7 +95,7 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 
 | 包 | 测试数 | 基准测试数 | 说明 |
 |----|--------|-----------|------|
-| broker/ | 188 | 0 | 核心逻辑：TopicTree、QoS 引擎、会话、遗嘱、认证、服务器、retained metrics、MQTT 5.0 属性中继、重连重传 |
+| broker/ | 192 | 0 | 核心逻辑：TopicTree、QoS 引擎、会话、遗嘱、认证、服务器、retained metrics、MQTT 5.0 属性中继、重连重传与按协议版本门控的连接内重传 |
 | protocol/ | 76 | 0 | MQTT 3.1 / 3.1.1 / 5.0 编解码、属性、报文 flags 校验、协议适配层（15 种报文） |
 | client/ | 35 | 0 | MQTT 客户端连接、发布、订阅、断开清理 |
 | config/ | 24 | 0 | 配置解析与校验 |
@@ -108,8 +108,8 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 | pkg/logger/ | 7 | 0 | slog 日志适配 |
 | errs/ | 4 | 0 | 错误定义 |
 | tests/defects/ | 8 | 0 | 审查发现缺陷的最小复现和回归测试 |
-| **单元测试合计** | **431** | **4** | |
-| tests/integration/ | 146 | 0 | 端到端集成测试（含部署验证） |
+| **单元测试合计** | **435** | **4** | |
+| tests/integration/ | 147 | 0 | 端到端集成测试（含部署验证） |
 | tests/bench/ | 0 | 57 | 全栈 TCP、E2E 数据验证、微基准 |
 | **基准测试合计** | | **61** | |
 | store/redis/（`store_redis`） | 18 | 9 | Redis 存储：消息、保留、会话（默认不编译） |
@@ -173,7 +173,7 @@ func TestTopicTree_Subscribe(t *testing.T) {
 ### 测试清单
 
 集成测试按文件组织，每个文件覆盖一个语义域。下表由源码直接统计
-（`grep -c '^func Test' tests/integration/*_test.go`），合计 **146 个**：
+（`grep -c '^func Test' tests/integration/*_test.go`），合计 **147 个**：
 
 | 文件 | 测试数 | 覆盖重点 |
 |------|--------|----------|
@@ -200,11 +200,11 @@ func TestTopicTree_Subscribe(t *testing.T) {
 | `websocket_test.go` | 2 | WebSocket 传输 |
 | `wss_test.go` | 2 | WSS（WebSocket over TLS） |
 | `connect_test.go` | 1 | CONNECT / CONNACK 握手完整流程 |
-| `outbound_retry_test.go` | 1 | 出站消息重试 |
+| `outbound_retry_test.go` | 2 | 出站消息重试：3.1.1 订户被重传，5.0 订户不重传（[MQTT-4.4.0-1]，本轮新增） |
 | `request_response_test.go` | 1 | 请求 / 响应模式（Response Topic） |
 | `subscription_id_test.go` | 1 | MQTT 5.0 Subscription Identifier |
 | `write_queue_test.go` | 1 | 写队列与背压 |
-| **合计** | **146** | |
+| **合计** | **147** | |
 
 具体测试函数名可用 `go test -list '.*' ./tests/integration/...` 列出。本表**不逐条维护函数名**，
 以免每次新增用例都要同步文档、产生漂移；只维护"文件 -> 数量 -> 语义域"这一层。
@@ -435,7 +435,7 @@ make ci                # CI 完整流水线
 
 ## 缺陷回归测试
 
-审查过程中确认的缺陷必须先在 `tests/defects/` 中添加最小复现，再修复代码。当前回归项（8 个在 `tests/defects/`，另 10 个在所属包内）：
+审查过程中确认的缺陷必须先在 `tests/defects/` 中添加最小复现，再修复代码。当前回归项（8 个在 `tests/defects/`，另 11 个在所属包内）：
 
 | 位置 | 测试函数 | 覆盖缺陷 |
 |------|----------|----------|
@@ -453,6 +453,7 @@ make ci                # CI 完整流水线
 | `broker/` | `broker.TestSessionRestoreKeepsForwardedProperties` | 会话快照 / 恢复路径既不持久化中继属性也不持久化过期截止时间，重启后重传的 PUBLISH 丢失属性，且 §3.3.2.3.2 无法执行 |
 | `broker/` | `broker.TestBroker_QoS2OutboundResendsPubRelOnReconnect` | 会话恢复路径无条件按 `StateSent` 重新登记 inflight，已过 PUBREC 的 QoS 2 投递被当作未确认 PUBLISH 重发：违反 §4.4 与 [MQTT-4.3.3-6]，握手从 PUBLISH 重新开始而非以 PUBREL 收尾（同族：`TestSessionInflightPubRelStageSurvivesRestart`、`TestRestoreSessionInflightUsesTheSavedStage`、`TestBroker_QoS2OutboundResendsPublishBeforePubRec`） |
 | `broker/` | `broker.TestBroker_QoS2PubRecReasonCodeSelectsTheHandshakeEnding` | 订户 PUBREC 的 Reason Code 被整条丢弃（`handlePubRec(clientID, p.PacketID)` 根本没传），于是每个 PUBREC 都被当成「接受」：`>= 0x80` 时仍然回 PUBREL 并继续重传，违反 [MQTT-4.3.3-4] / [MQTT-4.4.0-2]，且 Packet Identifier 与接收窗口槽位都不释放（§4.3.3） |
+| `broker/` | `broker.TestBroker_RetransmissionFollowsTheSessionVersion` | 重传循环完全不区分协议版本：MQTT 5.0 §4.4 在同一 MUST-resend 条款之外追加了禁止性规定「Clients and Servers MUST NOT resend messages at any other time」[MQTT-4.4.0-1]，而 3.1.1 §4.4 只把重投递限定为「REQUIRED」、并不禁止，于是 5.0 订户在连接内被反复重发（同族：`TestQoSEngine_Retry_FollowsProtocolVersionPolicy`、`TestQoSEngine_Retry_GateIsPerSessionAndSkipsTheGiveUp`、`TestQoSEngine_Retry_VersionClearedWithClient`、`integration.TestQoS1OutboundRetrySuppressedForMQTT5`、`integration.TestQoS1OutboundRetryResends`） |
 | `client/` | `client.TestDisconnectClosesConnectionBeforeWaitingForReadLoop` | 客户端主动断开时必须先唤醒阻塞读循环，避免 `Disconnect` 卡住 |
 | `broker/` | `broker.TestQoSEngine_Retry_MaxRetriesExceededReportsError` | QoS inflight 消息达到最大重试次数被丢弃时必须发出错误回调 |
 | `protocol/` | `protocol.TestEncodePublishPropertySectionVersionGated` | `encodePublish` 只判 `Properties != nil`、不判 codec 版本，把 v5 属性字节写进 3.1.1 PUBLISH（对端读成 payload） |

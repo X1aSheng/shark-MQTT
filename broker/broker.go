@@ -361,6 +361,14 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 		connectPkt.ClientID = assignedClientID
 	}
 
+	// Tell the QoS engine which retransmission policy this connection is under
+	// before anything is tracked for it. This has to happen before the resume
+	// block below, because restoreSessionInflight re-registers the resumed
+	// session's deliveries and a 5.0 session must never be retried in
+	// connection (MQTT 5.0 §4.4 [MQTT-4.4.0-1]); a version recorded afterwards
+	// would leave those entries under the 3.1.1 default.
+	b.qos.SetClientVersion(connectPkt.ClientID, connectPkt.ProtocolVersion)
+
 	// Create or resume session. Check in-memory first, then persistent store.
 	// A clean session must never report SessionPresent=1 (MQTT 5.0 §3.2.2.2
 	// / 3.1.1 §3.2.2.1).

@@ -196,18 +196,23 @@ type Spec struct {
     ServerDisconnect bool // 仅 5.0：服务端可主动下发 DISCONNECT
     TopicAlias       bool // 仅 5.0
     AuthPacket       bool // 仅 5.0（增强认证 §4.12）
+
+    // —— 重传策略 ——
+    // 3.1.1 §4.4 只限定「REQUIRED」并不禁止重传（非规范性说明还承认弱网下的历史重传），
+    // 5.0 §4.4 则追加「MUST NOT resend messages at any other time」[MQTT-4.4.0-1]。
+    RetransmitUnacked bool // 3.1/3.1.1:true；5.0:false
 }
 
 func specV31() Spec {
-    return Spec{Version: Version31, Name: ProtocolNameMQIsdp, MaxClientIDLen: 23}
+    return Spec{Version: Version31, Name: ProtocolNameMQIsdp, MaxClientIDLen: 23, RetransmitUnacked: true}
 }
 func specV311() Spec {
-    return Spec{Version: Version311, Name: ProtocolNameMQTT, AllowEmptyID: true, ConnAckSessionPresent: true, SubAckFailureSupported: true}
+    return Spec{Version: Version311, Name: ProtocolNameMQTT, AllowEmptyID: true, ConnAckSessionPresent: true, SubAckFailureSupported: true, RetransmitUnacked: true}
 }
 func specV50() Spec {
     return Spec{Version: Version50, Name: ProtocolNameMQTT, AllowEmptyID: true,
         ConnAckSessionPresent: true, ConnAckHasReasonCode: true, SubAckFailureSupported: true,
-        Properties: true, ReasonCodes: true, ServerDisconnect: true, TopicAlias: true, AuthPacket: true}
+        Properties: true, ReasonCodes: true, ServerDisconnect: true, TopicAlias: true, AuthPacket: true} // RetransmitUnacked 保持零值 false
 }
 
 // SpecOf 返回给定版本的语义描述；未知版本 ok=false。
@@ -466,11 +471,16 @@ func (r *Registry) Select(conn PeekConn, bound string) (Adapter, error)
 - **保留消息（RETAIN）同样要保存中继数据与过期截止时间**：retained 消息是「现在存储、以后投递」，而 §3.3.1.3 要求 Server「store the Application Message」——那个 Application Message 包含它的属性。因此 `store.RetainedMessage` 也必须携带 `MessageProperties` 与绝对截止时间：重放时按 §3.3.2.3 原样转发五类属性，按 §3.3.2.3.3 把 Message Expiry 递减为「收到的值减去在 Server 中等待的时间」，已过期的 retained 消息则不再投递（§3.3.1.3）。
   - `RetainedStore.SaveRetained` 接收完整的 `*RetainedMessage`，而不是 `(topic, qos, payload)`：三个参数表达不了属性与截止时间，任何后端都只能把它们丢掉，而且三个后端会各自重建记录、各自漂移。
   - **操作员的 `retained_expiry` TTL 与发布者的 Message Expiry 是两个独立上限**，取先到者；TTL 是运维策略，不作为 Message Expiry Interval 通告给订阅者（否则订阅者会看到一条它其实无权解释的过期值）。
-- **重连重传必须落在正确的握手阶段上**：MQTT 5.0 §4.4 [MQTT-4.4.0-1] / 3.1.1 §4.4 规定，Clean Start = 0 且会话存在时双方 MUST 用**原始 Packet Identifier** 重发未确认的 PUBLISH **与未确认的 PUBREL**，§4.4 同时写明「MUST NOT resend messages at any other time」。于是会话记录必须保留「PUBREL 已发、待 PUBCOMP」这一阶段（`store.InflightMessage.PendingPubRel`，同样只允许追加），由它决定恢复时重新登记的入口：
+- **重连重传必须落在正确的握手阶段上**：MQTT 5.0 §4.4 [MQTT-4.4.0-1] / 3.1.1 §4.4 规定，Clean Start = 0 且会话存在时双方 MUST 用**原始 Packet Identifier** 重发未确认的 PUBLISH **与未确认的 PUBREL**；其中只有 5.0 另追加「MUST NOT resend messages at any other time」，3.1.1 并无此禁止（见下一条约束，别把 5.0 的禁止读成两版共有）。于是会话记录必须保留「PUBREL 已发、待 PUBCOMP」这一阶段（`store.InflightMessage.PendingPubRel`，同样只允许追加），由它决定恢复时重新登记的入口：
   - 阶段为「待 PUBCOMP」-> 按 `StateAcked` 登记（`TrackOutboundQoS2AwaitingPubComp`）并即刻发 PUBREL。此时重发 PUBLISH 是 [MQTT-4.3.3-6] 明令禁止的，而 PUBREL 依 [MQTT-4.3.3-5] 一直算「未确认」直到 PUBCOMP 到达。
   - 尚未到 PUBREC -> 仍是未确认 PUBLISH，带 DUP 重发（`TrackOutboundQoS2` / `TrackOutboundQoS1`）。
   - 重传必须在 **CONNACK 之后立即**发出，不能只靠重试 tick：§4.4 把重连本身当作恢复时机，把恢复推迟到一个与重连无关的定时器上，等于把「重连即恢复」变成「重连后 10 秒才恢复」。
   - 阶段位零值为 `false`，对旧快照、QoS 1 条目与 inbound 暂存条目都成立；时间语义上仍是「绝对截止时间落盘、重传时重推剩余量」，与上一条一致，重连路径不重复施加 Message Expiry（[MQTT-4.3.3-7]）。
+- **连接内重传必须按协商的协议版本门控，5.0 会话一律不重传**：3.1.1 §4.4 与 5.0 §4.4 共享同一条 MUST-resend 条款，收尾却不同——3.1.1 只把它限定为「This is the only circumstance where a Client or Server is **REQUIRED** to redeliver messages」，非规范性说明还承认历史重传（「Historically retransmission of Control Packets was required to overcome data loss on some older TCP networks」）仍然正当；5.0 则在同一条款后追加禁止性规定「Clients and Servers MUST NOT resend messages at any other time」[MQTT-4.4.0-1]。故 3.1 / 3.1.1 保留连接内重试，5.0 会话的重试循环不做事。据此：
+  - 门控粒度是**会话**而不是单条报文：`Spec.RetransmitUnacked` 在 3.1 / 3.1.1 为 true、5.0 为 false，`doRetry` 对该会话整体跳过。最大重试次数与重试间隔对 5.0 **不适用**（是语义上的不适用，不是删除配置项）。
+  - 5.0 会话**连「放弃」也不做**：达到 maxRetries 就删掉 inflight 条目，等于在连接仍然存活时丢弃一条会话仍持有、且 §4.4 唯一允许它回到线上的时机（会话恢复）尚未来到的投递。整会话跳过后窗口由 `maxInflight` 兜住，消息也不会丢——恢复时重放的是会话记录（`Session.Inflight`），不是 QoS 引擎的表。
+  - 版本在 CONNECT 时由 broker **推入**引擎（`QoSEngine.SetClientVersion`），必须早于任何投递登记、且早于 `restoreSessionInflight`（否则恢复路径登记的条目会落在 3.1.1 默认策略下）。不要在 `doRetry` 里回调查询会话版本：`doRetry` 持 `q.mu`，而 broker 侧锁序是会话锁 -> `q.mu`，反向查询会构成 ABBA 环。未记录版本的 client（测试直接驱动引擎）保持 3.1.1 历史行为，与 `Session.Spec()` 对未设置版本的兜底一致。
+  - 版本记录与 inflight 表**同生命周期**：`RemoveClient` 一并清理，避免同一 clientID 复用时继承上一条连接的策略。
 - **`0x80` 是「接受 / 拒绝」的分界，收到 PUBACK / PUBREC 必须判它**：§3.4.2.1 与 §3.5.2.1 把 sub-0x80 的取值定义为接受（0x00 Success；PUBREC 另有 0x10 No matching subscribers，其描述正是「The message is accepted but there are no subscribers」），而 `0x80` 及以上表示 PUBLISH 未被接受。据此：
   - [MQTT-4.3.3-4]：只有 Reason Code **小于 0x80** 的 PUBREC 才要求发送 PUBREL；因此 `>= 0x80` 时**一个字节都不回**。
   - [MQTT-4.4.0-2]：「If PUBACK or PUBREC is received containing a Reason Code of 0x80 or greater the corresponding PUBLISH packet is treated as acknowledged, and MUST NOT be retransmitted」——被拒绝的投递既不能再发 PUBLISH，也不能再发 PUBREL。
@@ -494,6 +504,7 @@ func (r *Registry) Select(conn PeekConn, bound string) (Adapter, error)
 | R10 保留消息丢失中继数据 | retained 记录原先只存 topic / QoS / payload，于是订阅时重放会丢掉全部 MQTT 5 中继属性并忽略发布者的 Message Expiry（§3.3.1.3 + §3.3.2.3），经 retained 引导的请求 / 响应永远无法完成；`store/memory` 的浅拷贝还会让调用方缓冲区与库内记录互相别名 | `store.RetainedMessage` 携带 `MessageProperties` + `ExpiresAt`，`SaveRetained` 改为接收完整记录使后端无法丢字段；`store/memory` 的 `GetRetained` / trie `match` / `collectAll` 统一走 `copyRetainedMessage` 深拷贝；`TestRetainedMessageRelaysPublisherProperties`、`TestRetainedMessageReplayDecrementsExpiry`、`TestRetainedMessageExpiredIsNotDelivered` 覆盖重放、递减与过期丢弃 |
 | R11 重连重传停在错误的握手阶段 | 会话恢复路径原先无条件按 `StateSent` 重新登记 inflight：已过 PUBREC 的 QoS 2 投递被当成未确认 PUBLISH 重发，既违反 §4.4 与 [MQTT-4.3.3-6]，又让重连后的握手从 PUBLISH 重新开始而非以 PUBREL 收尾；且恢复只能等 10s 重试 tick，重连当下并不重发，重连不再是恢复时机 | 会话记录新增 `PendingPubRel` 阶段并随快照 / 恢复往返（JSON 仅追加，`store/inflight_json_test.go` + `store/memory` 往返用例固定）；`restoreSessionInflight` 按阶段选择登记入口，`resendSessionInflight` 在 CONNACK 之后立即发 PUBLISH(DUP=1) 或 PUBREL，两条重传路径共用 `buildRetransmitPublish` / `pubRelPacket` 以免漂移；`TestBroker_QoS2OutboundResendsPubRelOnReconnect`、`TestBroker_QoS2OutboundResendsPublishBeforePubRec`、`TestRestoreSessionInflightUsesTheSavedStage`、`TestSessionInflightPubRelStageSurvivesRestart` 分别钉住重连收尾、对偶守护、接线与持久化 |
 | R12 PUBREC 的 Reason Code 被丢弃 | `handlePubRec(clientID, p.PacketID)` 从不接收 Reason Code，`AckPubRec` 也无条件置 `StateAcked` 并回 PUBREL：于是一个「已声明不接受该消息」的 PUBREC 仍会被回 PUBREL、仍会被重传，Packet Identifier 与接收窗口槽位都不释放（订户持续拒绝时窗口被永久压小）。同一疏漏在 `client/` 侧也存在，但 client 当前硬编码 3.1.1（`client/client.go:152`），broker 对非 v5 会话强制回 `ReasonCodeSuccess`，故该路径**当前不可达**，未一并改动 | `handlePubRec` 接收 Reason Code，`>= protocol.ReasonCodeFailureBase` 走 `dropRejectedDelivery`：不发送任何报文、`QoSEngine.ReleaseInflight` 释放 packet id、`sess.RemoveInflight` + `DecOutboundUnacked` + `flushBufferedOutbound` 还回窗口，并按 `pubrec_rejected` 计入 `shark_mqtt_messages_dropped_total`（新标签已加入 `broker/metrics_cardinality_test.go` 白名单）。`TestBroker_QoS2PubRecReasonCodeSelectsTheHandshakeEnding` 用 5 个子用例覆盖 0x00 / 0x10（必须回 PUBREL）与 0x87 / 0x97 / 0x80（必须静默且释放），其中 0x80 专门守住 `>=` 的边界 |
+| R13 连接内重传不区分协议版本 | 重试循环对**任何**会话都按 tick 重发未确认投递，但「MUST NOT resend messages at any other time」[MQTT-4.4.0-1] 只是 5.0 §4.4 追加的禁止，3.1.1 §4.4 只限定「REQUIRED」；于是 5.0 订户在连接内被反复重发，且达到 maxRetries 后条目被删——等于在连接仍存活时丢掉一条会话仍持有、且 §4.4 唯一允许其回到线上的时机（会话恢复）尚未到来的投递。反向风险同样存在：若把 5.0 的禁止施加到 3.1.1，就会静默移除 3.1.1 在弱网下的既有重试能力 | 新增能力位 `protocol.Spec.RetransmitUnacked`（3.1 / 3.1.1 = true，5.0 = false，`protocol/spec_test.go` 快照钉住），`doRetry` 按**会话**整体跳过不可重传者（既不重发也不放弃，窗口由 `maxInflight` 兜住）；版本由 broker 在 CONNECT 时经 `QoSEngine.SetClientVersion` 推入（早于 `restoreSessionInflight`），未知版本保持 3.1.1 历史行为，`RemoveClient` 同生命周期清理以免 clientID 复用继承旧策略。`broker.TestBroker_RetransmissionFollowsTheSessionVersion` 用同一对 3.1.1 / 5.0 订户对照（3.1.1 必须重传、5.0 必须恰好一次），`TestQoSEngine_Retry_FollowsProtocolVersionPolicy` 逐版本断言，`TestQoSEngine_Retry_GateIsPerSessionAndSkipsTheGiveUp` 钉住 per-session 门控与「不放弃」，`integration.TestQoS1OutboundRetryResends` / `TestQoS1OutboundRetrySuppressedForMQTT5` 覆盖两端 |
 
 ### 4.3 护栏建议
 - 新增 `tests/integration/mqtt31_test.go`：3.1 CONNECT 全流程（ClientID 边界 23/24、空 ID、CONNACK SP=0、SUBACK 无 `0x80`）。
@@ -659,6 +670,7 @@ classDiagram
         +ServerDisconnect bool
         +TopicAlias bool
         +AuthPacket bool
+        +RetransmitUnacked bool
     }
     class ConnectInfo {
         +Protocol string

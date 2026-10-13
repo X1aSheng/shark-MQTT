@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/X1aSheng/shark-mqtt/errs"
+	"github.com/X1aSheng/shark-mqtt/protocol"
 )
 
 // InflightState represents the state of an inflight QoS message.
@@ -24,7 +25,7 @@ type InflightMessage struct {
 	State      InflightState
 	SentAt     time.Time
 	Retries    int
-	MaxRetries int
+	MaxRetries int // inapplicable to a 5.0 session: see QoSEngine.SetClientVersion
 
 	// Payload stored for retry
 	Topic   string
@@ -58,6 +59,12 @@ type QoSEngine struct {
 	retryInterval time.Duration
 	maxRetries    int
 
+	// sessionVersions records the negotiated protocol version of each connected
+	// session so the retry loop can consult its retransmission policy. It is
+	// written by SetClientVersion and has the same lifecycle as the inflight
+	// table (RemoveClient drops both), never a longer one.
+	sessionVersions map[string]protocol.Version
+
 	// Callback to deliver PUBACK/PUBREC/PUBREL/PUBCOMP to clients
 	sendPubAck  func(clientID string, packetID uint16) error
 	sendPubRel  func(clientID string, packetID uint16) error
@@ -82,12 +89,13 @@ func NewQoSEngine(opts ...QoSOption) *QoSEngine {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	return &QoSEngine{
-		inflight:      make(map[string]map[uint16]*InflightMessage),
-		maxInflight:   o.maxInflight,
-		retryInterval: o.retryInterval,
-		maxRetries:    o.maxRetries,
-		ctx:           ctx,
-		cancel:        cancel,
+		inflight:        make(map[string]map[uint16]*InflightMessage),
+		sessionVersions: make(map[string]protocol.Version),
+		maxInflight:     o.maxInflight,
+		retryInterval:   o.retryInterval,
+		maxRetries:      o.maxRetries,
+		ctx:             ctx,
+		cancel:          cancel,
 	}
 }
 
@@ -127,6 +135,45 @@ func WithMaxRetries(n int) QoSOption {
 	return func(o *qosOptions) {
 		o.maxRetries = n
 	}
+}
+
+// SetClientVersion records the protocol version negotiated for clientID's
+// session, which decides whether the retry loop may drive that session's
+// handshakes forward at all.
+//
+// The broker calls this once per CONNECT, before any delivery for the session
+// is tracked. MQTT 5.0 §4.4 forbids resending outside session resumption
+// ([MQTT-4.4.0-1]) while 3.1/3.1.1 §4.4 does not, so for a 5.0 client the retry
+// loop performs no work: maxRetries and retryInterval are inapplicable to it,
+// its outstanding packets are re-sent by broker.resendSessionInflight when the
+// session resumes, and the inflight entry is released by the peer's
+// acknowledgment or by RemoveClient on disconnect.
+//
+// A client with no recorded version (a caller that drives the engine directly)
+// keeps the historical 3.1.1 behavior.
+func (q *QoSEngine) SetClientVersion(clientID string, ver protocol.Version) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.sessionVersions == nil {
+		q.sessionVersions = make(map[string]protocol.Version)
+	}
+	q.sessionVersions[clientID] = ver
+}
+
+// retransmitPermitted reports whether an unacknowledged delivery for clientID
+// may be re-sent on the live connection.
+//
+// q.mu must be held: the version table is read under the same lock that guards
+// the inflight table it belongs to. Reading it here rather than asking the
+// session manager is deliberate -- doRetry already holds q.mu, and the broker
+// takes its session locks before q.mu, so calling back out would close an
+// ABBA cycle (the same hazard the lock discipline in doRetry exists to avoid).
+func (q *QoSEngine) retransmitPermitted(clientID string) bool {
+	spec, ok := protocol.SpecOf(q.sessionVersions[clientID])
+	if !ok {
+		return true
+	}
+	return spec.RetransmitUnacked
 }
 
 // SetCallbacks sets the delivery callbacks.
@@ -325,11 +372,14 @@ func (q *QoSEngine) AckPubComp(clientID string, packetID uint16) {
 	}
 }
 
-// RemoveClient removes all inflight messages for a client.
+// RemoveClient removes all inflight messages for a client, along with the
+// protocol version recorded for it. The two are dropped together because the
+// recorded version only has meaning for a session that can still be retried.
 func (q *QoSEngine) RemoveClient(clientID string) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	delete(q.inflight, clientID)
+	delete(q.sessionVersions, clientID)
 }
 
 // InflightCount returns the number of inflight messages for a client.
@@ -391,6 +441,17 @@ func (q *QoSEngine) doRetry() {
 
 	q.mu.Lock()
 	for clientID, clientInflight := range q.inflight {
+		// MQTT 5.0 §4.4 [MQTT-4.4.0-1]: "Clients and Servers MUST NOT resend
+		// messages at any other time." A 5.0 session therefore has no retry at
+		// all -- not the re-send, and not the give-up either: dropping the
+		// entry after maxRetries would discard a delivery the session still
+		// owns, when the only moment §4.4 does allow it back on the wire is the
+		// resumption. Skipping the session wholesale keeps its window bounded
+		// by maxInflight instead, and nothing is lost because the session
+		// record, not this table, is what resendSessionInflight replays.
+		if !q.retransmitPermitted(clientID) {
+			continue
+		}
 		for packetID, msg := range clientInflight {
 			if time.Since(msg.SentAt) < q.retryInterval {
 				continue

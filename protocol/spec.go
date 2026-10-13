@@ -34,15 +34,37 @@ type Spec struct {
 	ServerDisconnect bool // only 5.0: the server may actively send a DISCONNECT
 	TopicAlias       bool // only 5.0
 	AuthPacket       bool // only 5.0 (enhanced authentication §4.12)
+
+	// —— retransmission policy ——
+	//
+	// RetransmitUnacked reports whether the version permits re-sending an
+	// unacknowledged QoS 1/2 delivery on a live connection, i.e. whether a
+	// retry timer may drive the handshake forward.
+	//
+	// MQTT 3.1.1 §4.4 caps what is *required* without forbidding anything:
+	// "This is the only circumstance where a Client or Server is REQUIRED to
+	// redeliver messages [MQTT-4.4.0-1]." Its non-normative note then keeps the
+	// historic behavior legitimate -- "Historically retransmission of Control
+	// Packets was required to overcome data loss on some older TCP networks.
+	// This might remain a concern where MQTT 3.1.1 implementations are to be
+	// deployed in such environments." -- so 3.1 and 3.1.1 may retransmit.
+	//
+	// MQTT 5.0 §4.4 keeps the same MUST-resend clause and adds an explicit
+	// prohibition to it: "Clients and Servers MUST NOT resend messages at any
+	// other time [MQTT-4.4.0-1]." A 5.0 session therefore has no in-connection
+	// retry at all: its outstanding packets are only ever put back on the wire
+	// by session resumption, which is what broker.resendSessionInflight does.
+	RetransmitUnacked bool
 }
 
 // specV31 returns the MQTT 3.1 capability set.
 func specV31() Spec {
 	return Spec{
-		Version:        Version31,
-		Name:           ProtocolNameMQIsdp,
-		AllowEmptyID:   false,
-		MaxClientIDLen: 23,
+		Version:           Version31,
+		Name:              ProtocolNameMQIsdp,
+		AllowEmptyID:      false,
+		MaxClientIDLen:    23,
+		RetransmitUnacked: true,
 	}
 }
 
@@ -55,6 +77,7 @@ func specV311() Spec {
 		MaxClientIDLen:         0,
 		ConnAckSessionPresent:  true,
 		SubAckFailureSupported: true,
+		RetransmitUnacked:      true,
 	}
 }
 
@@ -73,6 +96,10 @@ func specV50() Spec {
 		ServerDisconnect:       true,
 		TopicAlias:             true,
 		AuthPacket:             true,
+		// Spelled out rather than left to the zero value: this is the one
+		// capability 5.0 *removes* relative to 3.1/3.1.1, and §4.4 makes the
+		// absence mandatory rather than a policy choice.
+		RetransmitUnacked: false,
 	}
 }
 

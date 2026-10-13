@@ -30,6 +30,7 @@ func TestSpecOfSnapshots(t *testing.T) {
 				ServerDisconnect:       false,
 				TopicAlias:             false,
 				AuthPacket:             false,
+				RetransmitUnacked:      true,
 			},
 		},
 		{
@@ -48,6 +49,7 @@ func TestSpecOfSnapshots(t *testing.T) {
 				ServerDisconnect:       false,
 				TopicAlias:             false,
 				AuthPacket:             false,
+				RetransmitUnacked:      true,
 			},
 		},
 		{
@@ -66,6 +68,7 @@ func TestSpecOfSnapshots(t *testing.T) {
 				ServerDisconnect:       true,
 				TopicAlias:             true,
 				AuthPacket:             true,
+				RetransmitUnacked:      false,
 			},
 		},
 	}

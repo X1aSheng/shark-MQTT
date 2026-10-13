@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/X1aSheng/shark-mqtt/errs"
+	"github.com/X1aSheng/shark-mqtt/protocol"
 )
 
 // --- TrackQoS1 tests ---
@@ -551,6 +552,179 @@ func TestQoSEngine_Retry_QoS2_RestoredAckedState(t *testing.T) {
 	}
 	if republishCalled {
 		t.Error("a restored PUBREL-pending delivery must not be re-sent as a PUBLISH")
+	}
+}
+
+// TestQoSEngine_Retry_FollowsProtocolVersionPolicy pins the gate Defect B adds:
+// whether the retry loop may put an unacknowledged delivery back on the wire is
+// a property of the negotiated protocol version, not of the engine.
+//
+// MQTT 3.1.1 §4.4 caps the *required* redelivery -- "This is the only
+// circumstance where a Client or Server is REQUIRED to redeliver messages
+// [MQTT-4.4.0-1]" -- without forbidding it, and its non-normative note keeps
+// the historic retransmission legitimate, so 3.1 and 3.1.1 keep retrying. MQTT
+// 5.0 §4.4 keeps that clause and adds "Clients and Servers MUST NOT resend
+// messages at any other time", so a 5.0 session must not be retried at all.
+func TestQoSEngine_Retry_FollowsProtocolVersionPolicy(t *testing.T) {
+	tests := []struct {
+		name      string
+		version   protocol.Version
+		wantRetry bool
+		why       string
+	}{
+		{
+			name:      "mqtt 3.1",
+			version:   protocol.Version31,
+			wantRetry: true,
+			why:       "3.1 has no MUST NOT and keeps the historic retransmission",
+		},
+		{
+			name:      "mqtt 3.1.1",
+			version:   protocol.Version311,
+			wantRetry: true,
+			why:       "3.1.1 4.4 permits retransmission outside the reconnect case",
+		},
+		{
+			name:      "mqtt 5.0",
+			version:   protocol.Version50,
+			wantRetry: false,
+			why:       "[MQTT-4.4.0-1] forbids resending at any other time",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := NewQoSEngine(WithRetryInterval(0), WithMaxRetries(3))
+
+			var republished []uint16
+			q.SetCallbacks(
+				nil,
+				nil,
+				nil,
+				func(clientID string, packetID uint16, topic string, payload []byte, qos uint8, retain bool) error {
+					republished = append(republished, packetID)
+					return nil
+				},
+			)
+			q.SetClientVersion("client1", tt.version)
+
+			if err := q.TrackOutboundQoS1("client1", 7, "policy/topic", []byte("data"), false); err != nil {
+				t.Fatalf("TrackOutboundQoS1: %v", err)
+			}
+
+			q.doRetry()
+
+			if tt.wantRetry {
+				if len(republished) != 1 || republished[0] != 7 {
+					t.Errorf("retransmitted packets = %v, want [7]: %s", republished, tt.why)
+				}
+				return
+			}
+			if len(republished) != 0 {
+				t.Errorf("retransmitted packets = %v, want none: %s", republished, tt.why)
+			}
+			// The delivery must still be tracked: for a 5.0 session the only
+			// moment §4.4 lets it back on the wire is the session resumption,
+			// and that replays the session record -- forgetting it here would
+			// break the recovery rather than protect it.
+			if count := q.InflightCount("client1"); count != 1 {
+				t.Errorf("inflight count = %d, want the delivery still tracked", count)
+			}
+		})
+	}
+}
+
+// TestQoSEngine_Retry_GateIsPerSessionAndSkipsTheGiveUp is the companion guard:
+// the policy is keyed by client, so two sessions on the same engine must be
+// treated differently in a single tick, and a 5.0 session must not be given up
+// on either. Dropping it after maxRetries would release the delivery while the
+// connection is still up, which is the one outcome the client can no longer
+// recover from in connection.
+func TestQoSEngine_Retry_GateIsPerSessionAndSkipsTheGiveUp(t *testing.T) {
+	// maxRetries 0 makes the give-up branch decide on the very first tick, so a
+	// version that does retry drops the delivery immediately and a version that
+	// must not is visible as the entry that survives.
+	q := NewQoSEngine(WithRetryInterval(0), WithMaxRetries(0))
+
+	var republished []string
+	q.SetCallbacks(
+		nil,
+		nil,
+		nil,
+		func(clientID string, packetID uint16, topic string, payload []byte, qos uint8, retain bool) error {
+			republished = append(republished, clientID)
+			return nil
+		},
+	)
+	var reported []error
+	q.SetErrorCallback(func(clientID string, packetID uint16, err error) {
+		reported = append(reported, err)
+	})
+
+	q.SetClientVersion("legacy-311", protocol.Version311)
+	q.SetClientVersion("modern-50", protocol.Version50)
+	if err := q.TrackOutboundQoS1("legacy-311", 1, "policy/topic", []byte("data"), false); err != nil {
+		t.Fatalf("track legacy-311: %v", err)
+	}
+	if err := q.TrackOutboundQoS1("modern-50", 2, "policy/topic", []byte("data"), false); err != nil {
+		t.Fatalf("track modern-50: %v", err)
+	}
+
+	q.doRetry()
+
+	// Nothing may be re-sent: maxRetries is already exhausted for both, so the
+	// give-up branch wins before any republish for the session that gets one.
+	if len(republished) != 0 {
+		t.Errorf("retransmitted for %v, want none with maxRetries exhausted", republished)
+	}
+
+	if count := q.InflightCount("legacy-311"); count != 0 {
+		t.Errorf("3.1.1 inflight count = %d, want 0 after the give-up", count)
+	}
+	if count := q.InflightCount("modern-50"); count != 1 {
+		t.Errorf("5.0 inflight count = %d, want 1: maxRetries must not apply to a "+
+			"session that may never be retransmitted in connection", count)
+	}
+
+	if len(reported) != 1 || !errors.Is(reported[0], errs.ErrMaxRetriesExceeded) {
+		t.Errorf("reported errors = %v, want exactly one ErrMaxRetriesExceeded "+
+			"for the 3.1.1 session only", reported)
+	}
+}
+
+// TestQoSEngine_Retry_VersionClearedWithClient pins the lifecycle: the recorded
+// version is dropped together with the inflight table, so a later client that
+// reuses the same client ID cannot inherit a stale policy (and the table cannot
+// grow past the set of sessions the engine has tracked).
+func TestQoSEngine_Retry_VersionClearedWithClient(t *testing.T) {
+	q := NewQoSEngine(WithRetryInterval(0), WithMaxRetries(3))
+	q.SetClientVersion("reused", protocol.Version50)
+	q.RemoveClient("reused")
+
+	if _, ok := q.sessionVersions["reused"]; ok {
+		t.Error("RemoveClient left the recorded protocol version behind")
+	}
+
+	// With no recorded version the engine keeps the historical 3.1.1 behavior,
+	// which is what a direct caller of the engine still relies on.
+	var republished []uint16
+	q.SetCallbacks(
+		nil,
+		nil,
+		nil,
+		func(clientID string, packetID uint16, topic string, payload []byte, qos uint8, retain bool) error {
+			republished = append(republished, packetID)
+			return nil
+		},
+	)
+	if err := q.TrackOutboundQoS1("reused", 3, "policy/topic", []byte("data"), false); err != nil {
+		t.Fatalf("TrackOutboundQoS1: %v", err)
+	}
+	q.doRetry()
+
+	if len(republished) != 1 {
+		t.Errorf("retransmitted packets = %v, want [3]: an unrecorded version must "+
+			"keep the 3.1.1 default", republished)
 	}
 }
 
