@@ -455,6 +455,10 @@ func (r *Registry) Select(conn PeekConn, bound string) (Adapter, error)
 ### 4.1 硬约束
 - **全量单元测试、集成测试与基准测试必须全绿**（当前计数与复现口径见 [测试指南](../guides/TESTING.md)；文档不写死数字，避免与源码漂移）。
 - **3.1.1 / 5.0 行为零回归**：线上字节、状态机、错误码、日志语义不变。
+- **属性段（property section）必须按 codec 版本门控**：属性段是 MQTT 5 独有的线格式，编码与解码两侧都以 `Spec.Properties` 为准。只判 `Properties != nil` 而不判版本，就会把 v5 属性字节写进 3.1/3.1.1 报文，对端会把它读成 payload、UNSUBSCRIBE 的 topic 列表或 SUBACK 的返回码，CONNACK 更会被解码器直接以 `ErrMalformedPacket` 拒绝。
+  - 必选属性段（PUBLISH / CONNECT / 遗嘱 / CONNACK / SUBSCRIBE / UNSUBSCRIBE / SUBACK / UNSUBACK）统一走 `Codec.writePropertySection`；可选属性段（PUBACK / PUBREC / PUBREL / PUBCOMP / DISCONNECT / AUTH）由各编码器自带的 reason-code（或 `Spec.AuthPacket`）检查兜底，编码器在 `ErrMalformedPacket` 与 `ErrUnsupportedVersion` 之间选择即可。
+  - pre-v5 codec 收到带属性的包**一律报错，不静默丢弃**：与 `encodeConnect` 拒绝超长 will 的策略一致，静默丢弃等于隐藏调用方的版本错配。
+  - 需要显式绑定版本时用 `Codec.NewCodecForVersion`。`NewCodec` 默认 3.1.1，只在解码 CONNECT（`protocol/connect.go`）或编码 CONNECT（按 `pkt.ProtocolVersion` 重绑）时升级；因此「先发过 v5 CONNECT」的 codec 已是 v5，这一点会掩盖门控遗漏，不能作为正确性依据。
 
 ### 4.2 主要回归风险与规避
 
@@ -467,6 +471,7 @@ func (r *Registry) Select(conn PeekConn, bound string) (Adapter, error)
 | R5 3.1 严格化"误伤" | 若某遗留部署用 3.1 + 长 ClientID，严格化后会被拒（`0x02`） | 提供 `mqtt31_enabled` 开关（默认 true）；关闭时回退为「3.1 按 3.1.1 宽松处理」的旧行为（见 §5.3） |
 | R6 配置结构新增 | `Listeners []ListenerConfig` 若与旧字段冲突 | `EffectiveListeners()` 归一化：`Listeners` 非空优先；否则由旧字段合成，**旧配置零修改可跑**（见 §5） |
 | R7 SUBACK `0x80` 语义 | 3.1 分支改为回 QoS0，可能影响既有 ACL 拒绝测试 | 仅对 `Spec.SubAckFailureSupported == false`（即 3.1）生效；3.1.1/5.0 仍回 `0x80`，现有测试不受影响 |
+| R8 属性段门控遗漏 | 编码器只判 `Properties != nil`、不判 `Spec.Properties`，把 v5 属性字节写进 3.1.1 报文（对端读成 payload / topic 列表 / 返回码，CONNACK 直接被拒）。历史上 `encodePublish`、`encodeConnAck`、`encodeSubscribe`、`encodeUnsubscribe`、`encodeSubAck` 都漏过，且因为 codec 已被 v5 CONNECT 绑定而不可达，只能靠人工审查发现 | 必选属性段统一走 `Codec.writePropertySection`；`protocol/audit_fixes_test.go` 的 `TestPropertySectionVersionGatedAcrossPackets` 对每种报文断言三条：pre-v5 带属性必拒、pre-v5 无属性仍可编码、v5 带属性能编码 |
 
 ### 4.3 护栏建议
 - 新增 `tests/integration/mqtt31_test.go`：3.1 CONNECT 全流程（ClientID 边界 23/24、空 ID、CONNACK SP=0、SUBACK 无 `0x80`）。

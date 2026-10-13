@@ -1,6 +1,6 @@
 # Testing Guide
 
-Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。当前基线为 **412 个单元测试**、**142 个集成测试**、**61 个基准测试**（口径：源码中声明的顶层 `Test*` / `Benchmark*` 函数数，复现方式见 [测试统计](#测试统计)）。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
+Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。当前基线为 **413 个单元测试**、**142 个集成测试**、**61 个基准测试**（口径：源码中声明的顶层 `Test*` / `Benchmark*` 函数数，复现方式见 [测试统计](#测试统计)）。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
 
 ---
 
@@ -51,7 +51,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 |  +-- topic_filter_defect_test.go - topic filter 边界       |
 |  +-- windows_benchmark_test.go - Windows benchmark 隔离    |
 +------------------------------------------------------------+
-|  Unit Tests (412 declared)                                 |
+|  Unit Tests (413 declared)                                 |
 |  各包内 *_test.go 文件                                     |
 |  broker/ protocol/ client/ config/ plugin/ store/memory/   |
 |  pkg/ api/ errs/                                           |
@@ -64,9 +64,9 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 
 | 类型 | 数量 | 位置 |
 |------|------|------|
-| 单元测试 | 412 | 各包 `*_test.go`（含 `tests/defects/`） |
+| 单元测试 | 413 | 各包 `*_test.go`（含 `tests/defects/`） |
 | 集成测试 | 142 | `tests/integration/` |
-| 缺陷回归测试 | `tests/defects/` 7 个文件 / 8 个用例 + 包内回归 | `tests/defects/`、`broker/`、`client/` |
+| 缺陷回归测试 | `tests/defects/` 7 个文件 / 8 个用例 + 包内回归 | `tests/defects/`、`broker/`、`client/`、`protocol/` |
 | 基准测试 | 61（Windows 本地实际执行 58） | `tests/bench/`、`plugin/`、`pkg/metrics/` |
 
 **统计口径**：以上均为源码中**声明的顶层 `Test*` / `Benchmark*` 函数数**，不是 `go test -json` 的"运行条数"（后者会把每个子测试 `t.Run` 计一条）。复现命令：
@@ -95,7 +95,7 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 | 包 | 测试数 | 基准测试数 | 说明 |
 |----|--------|-----------|------|
 | broker/ | 180 | 0 | 核心逻辑：TopicTree、QoS 引擎、会话、遗嘱、认证、服务器、retained metrics |
-| protocol/ | 75 | 0 | MQTT 3.1 / 3.1.1 / 5.0 编解码、属性、报文 flags 校验、协议适配层（15 种报文） |
+| protocol/ | 76 | 0 | MQTT 3.1 / 3.1.1 / 5.0 编解码、属性、报文 flags 校验、协议适配层（15 种报文） |
 | client/ | 35 | 0 | MQTT 客户端连接、发布、订阅、断开清理 |
 | config/ | 24 | 0 | 配置解析与校验 |
 | api/ | 22 | 0 | 公共 API 与健康端点 |
@@ -106,7 +106,7 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 | pkg/logger/ | 7 | 0 | slog 日志适配 |
 | errs/ | 4 | 0 | 错误定义 |
 | tests/defects/ | 8 | 0 | 审查发现缺陷的最小复现和回归测试 |
-| **单元测试合计** | **412** | **4** | |
+| **单元测试合计** | **413** | **4** | |
 | tests/integration/ | 142 | 0 | 端到端集成测试（含部署验证） |
 | tests/bench/ | 0 | 57 | 全栈 TCP、E2E 数据验证、微基准 |
 | **基准测试合计** | | **61** | |
@@ -433,7 +433,7 @@ make ci                # CI 完整流水线
 
 ## 缺陷回归测试
 
-审查过程中确认的缺陷必须先在 `tests/defects/` 中添加最小复现，再修复代码。当前回归项（8 个在 `tests/defects/`，另 2 个在所属包内）：
+审查过程中确认的缺陷必须先在 `tests/defects/` 中添加最小复现，再修复代码。当前回归项（8 个在 `tests/defects/`，另 4 个在所属包内）：
 
 | 位置 | 测试函数 | 覆盖缺陷 |
 |------|----------|----------|
@@ -441,12 +441,14 @@ make ci                # CI 完整流水线
 | `tests/defects/broker_lifecycle_test.go` | `TestDefectMQTTServerRestartAfterStopAcceptsConnections` | `Stop()` 后重启必须能重新接受连接 |
 | `tests/defects/broker_stop_start_race_test.go` | `TestDefectBrokerStopStartLeavesNoRacingLoop` | `Stop()` 必须等后台循环退出，否则 `-race` 在 Stop -> Start 周期上报 `b.ctx` / `b.startedAt` 数据竞争 |
 | `tests/defects/invalid_will_topic_leak_test.go` | `TestDefectInvalidWillTopicDoesNotConsumeBrokerConnectionSlot` | 非法 Will Topic CONNECT 被拒绝后不能残留 session/connection 槽 |
-| `tests/defects/properties_defect_test.go` | `TestDefectLongMQTT5PropertyStringReturnsEncodeError` | MQTT 5.0 UTF-8 属性字符串长度上限 |
+| `tests/defects/properties_defect_test.go` | `TestDefectLongMQTT5PropertyStringReturnsEncodeError` | MQTT 5.0 UTF-8 属性字符串长度上限（codec 必须绑定 5.0，否则触发的是版本门控而不是长度检查） |
 | `tests/defects/topic_filter_defect_test.go` | `TestDefectTopicFiltersMayContainEmptyLevels` | MQTT topic filter 中合法的零长度 topic level |
 | `tests/defects/windows_benchmark_test.go` | `TestDefectWindowsConnectionChurnBenchmarksDoNotPoisonSuite` | Windows 连接 churn 基准不得污染同进程后续基准 |
 | `tests/defects/windows_benchmark_test.go` | `TestDefectWindowsWillMessageBenchmarkDoesNotPoisonSuite` | Windows 遗嘱基准不得污染同进程后续基准 |
 | `client/` | `client.TestDisconnectClosesConnectionBeforeWaitingForReadLoop` | 客户端主动断开时必须先唤醒阻塞读循环，避免 `Disconnect` 卡住 |
 | `broker/` | `broker.TestQoSEngine_Retry_MaxRetriesExceededReportsError` | QoS inflight 消息达到最大重试次数被丢弃时必须发出错误回调 |
+| `protocol/` | `protocol.TestEncodePublishPropertySectionVersionGated` | `encodePublish` 只判 `Properties != nil`、不判 codec 版本，把 v5 属性字节写进 3.1.1 PUBLISH（对端读成 payload） |
+| `protocol/` | `protocol.TestPropertySectionVersionGatedAcrossPackets` | 同一门控遗漏扩散到 CONNACK / SUBSCRIBE / UNSUBSCRIBE / SUBACK；对每种报文断言「pre-v5 带属性必拒、pre-v5 无属性仍可编码、v5 带属性能编码」 |
 
 运行方式：
 
