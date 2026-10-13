@@ -122,6 +122,17 @@ type InflightMsg struct {
 	SentAt    time.Time
 	ExpiresAt time.Time // absolute Message Expiry Interval deadline; zero = none (MQTT 5.0 §3.3.2.3.2)
 	AckType   byte      // PUBACK, PUBREC, PUBREL, PUBCOMP
+
+	// Properties is the MQTT 5.0 property set that was put on the wire, so a
+	// retransmission reproduces the same PUBLISH: §3.3.2.3 requires the
+	// forwarded Response Topic / Correlation Data / User Properties / Content
+	// Type / Payload Format Indicator to reach the subscriber even when the
+	// first attempt needs a retry. nil for MQTT 3.1.1 subscribers.
+	//
+	// Not persisted across a broker restart: the session snapshot handed to the
+	// store uses store.InflightMessage, which has no property representation.
+	// A retransmission after a restart therefore re-sends without properties.
+	Properties *protocol.Properties
 }
 
 // InboundQoS2 is a QoS 2 message accepted from the client (PUBLISH received,

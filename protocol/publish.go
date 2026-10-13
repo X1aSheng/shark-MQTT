@@ -141,15 +141,30 @@ func (c *Codec) encodePublish(w io.Writer, pkt *PublishPacket) error {
 		}
 	}
 
-	// Properties (MQTT 5.0)
-	if pkt.Properties != nil {
-		if err := c.encodeProperties(buf, pkt.Properties); err != nil {
+	// Properties (MQTT 5.0). The property section only exists in the v5 wire
+	// format, so it is gated on the codec's negotiated version exactly like the
+	// decoder. Without this guard a caller that left Properties set for a
+	// v3.1.1 peer would emit v5 property bytes into a v3.1.1 PUBLISH and the
+	// receiver would read them as payload -- the stream corruption recorded in
+	// the audit.
+	//
+	// A pre-v5 codec refuses the packet rather than dropping the properties:
+	// discarding data the caller asked to send without saying so is the same
+	// defect class as silently truncating an over-long will, which encodeConnect
+	// already rejects. The broker never trips this (it gates on the
+	// subscriber's negotiated version before touching Properties), so a caller
+	// that does is encoding for a peer that cannot represent the fields.
+	if c.spec.Properties {
+		if pkt.Properties != nil {
+			if err := c.encodeProperties(buf, pkt.Properties); err != nil {
+				return err
+			}
+		} else if err := writeVarInt(buf, 0); err != nil {
 			return err
 		}
-	} else if c.spec.Properties {
-		if err := writeVarInt(buf, 0); err != nil {
-			return err
-		}
+	} else if pkt.Properties != nil {
+		return fmt.Errorf("%w: PUBLISH properties require MQTT 5, codec is bound to version %d",
+			ErrUnsupportedVersion, c.protocolVersion)
 	}
 
 	if len(pkt.Payload) > 0 {

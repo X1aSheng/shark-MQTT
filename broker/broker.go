@@ -1992,11 +1992,7 @@ func (b *Broker) deliverQueuedMessages(clientID string, sess *Session) {
 		// 3.1.1 subscriber must not receive the property bytes (audit), even
 		// though the deadline itself is still enforced by doDeliver.
 		if sess.Spec().Properties && !msg.ExpiresAt.IsZero() {
-			remaining := uint32(time.Until(msg.ExpiresAt).Seconds())
-			if remaining < 1 {
-				remaining = 1 // never advertise 0 (0 means "already expired")
-			}
-			pubPkt.Properties = &protocol.Properties{MessageExpiryInterval: &remaining}
+			pubPkt.Properties = &protocol.Properties{MessageExpiryInterval: remainingExpiry(msg.ExpiresAt)}
 		}
 		b.doDeliver(clientID, pubPkt, deliverQoS, msg.ExpiresAt, subOpts, false)
 		if err := b.messageStore.DeleteMessage(b.ctx, clientID, msg.ID); err != nil {
@@ -2061,27 +2057,19 @@ func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliver
 		Payload: pkt.Payload,
 	}
 
-	// Include SubscriptionIdentifier from the matching subscription (MQTT 5.0),
-	// and the remaining Message Expiry Interval (§3.3.2.3.2). These properties
-	// only exist in the MQTT 5 wire format: forwarding them to an MQTT 3.1.1
-	// subscriber used to embed v5 property bytes into a v3.1.1 PUBLISH and
-	// corrupt the stream (audit). The expiry deadline is still enforced for
-	// bookkeeping; only its advertisement is version-gated.
-	if sess.Spec().Properties &&
-		(subOpts.SubscriptionIdentifier != nil || !expiresAt.IsZero()) {
-		if pubPkt.Properties == nil {
-			pubPkt.Properties = &protocol.Properties{}
-		}
-		if subOpts.SubscriptionIdentifier != nil {
-			pubPkt.Properties.SubscriptionIdentifier = subOpts.SubscriptionIdentifier
-		}
-		if !expiresAt.IsZero() {
-			remaining := uint32(time.Until(expiresAt).Seconds())
-			if remaining < 1 {
-				remaining = 1 // never advertise 0 (0 means "already expired")
-			}
-			pubPkt.Properties.MessageExpiryInterval = &remaining
-		}
+	// MQTT 5.0 §3.3.2.3: the Server MUST relay the publisher's per-message
+	// properties unaltered (Payload Format Indicator, Content Type, Response
+	// Topic, Correlation Data and every User Property, order preserved) and adds
+	// the matching subscription's Subscription Identifier plus the decremented
+	// Message Expiry Interval. See forwardedPublishProperties.
+	//
+	// This is gated on the *subscriber's* negotiated version: properties exist
+	// only in the MQTT 5 wire format, and emitting them to a v3.1.1 subscriber
+	// embeds v5 property bytes into a v3.1.1 PUBLISH and corrupts the stream
+	// (audit). The expiry deadline is enforced for bookkeeping regardless; only
+	// its advertisement is version-gated.
+	if sess.Spec().Properties {
+		pubPkt.Properties = forwardedPublishProperties(pkt.Properties, subOpts.SubscriptionIdentifier, expiresAt)
 	}
 
 	if deliverQoS > 0 {
@@ -2089,15 +2077,18 @@ func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliver
 		// Track the outbound delivery so it can be retried until the client
 		// acknowledges it (NEW-1) and persisted across a disconnect (P2-3).
 		// Record the *effective* retain flag so a retransmission reproduces the
-		// original packet instead of the publisher's raw flag.
+		// original packet instead of the publisher's raw flag, and the property
+		// set so the retransmission also keeps the forwarded properties
+		// (MQTT 5.0 §3.3.2.3 requires them to survive).
 		sess.AddInflight(&InflightMsg{
-			PacketID:  pubPkt.PacketID,
-			QoS:       deliverQoS,
-			Topic:     pkt.Topic,
-			Payload:   pkt.Payload,
-			Retain:    outRetain,
-			SentAt:    time.Now(),
-			ExpiresAt: expiresAt,
+			PacketID:   pubPkt.PacketID,
+			QoS:        deliverQoS,
+			Topic:      pkt.Topic,
+			Payload:    pkt.Payload,
+			Retain:     outRetain,
+			SentAt:     time.Now(),
+			ExpiresAt:  expiresAt,
+			Properties: pubPkt.Properties,
 		})
 		if deliverQoS == 1 {
 			_ = b.qos.TrackOutboundQoS1(clientID, pubPkt.PacketID, pkt.Topic, pkt.Payload, outRetain)
@@ -2548,6 +2539,20 @@ func (b *Broker) republish(clientID string, packetID uint16, topic string, paylo
 				b.metrics.IncMessagesDropped("message_expired")
 				return nil
 			}
+			// Reproduce the original PUBLISH, properties included: MQTT 5.0
+			// §3.3.2.3 requires the forwarded Response Topic / Correlation Data /
+			// User Properties / Content Type / Payload Format Indicator to reach
+			// the subscriber even when the first attempt needs a retry. The
+			// Message Expiry Interval is re-derived so the retry advertises the
+			// time actually left (§3.3.2.3.3) instead of the value captured when
+			// the packet was first sent. props stays nil for MQTT 3.1.1
+			// subscribers, which have no property section at all.
+			props := msg.Properties
+			if props != nil && !msg.ExpiresAt.IsZero() {
+				refreshed := *props
+				refreshed.MessageExpiryInterval = remainingExpiry(msg.ExpiresAt)
+				props = &refreshed
+			}
 			pub := &protocol.PublishPacket{
 				FixedHeader: protocol.FixedHeader{
 					PacketType: protocol.PacketTypePublish,
@@ -2555,9 +2560,10 @@ func (b *Broker) republish(clientID string, packetID uint16, topic string, paylo
 					Dup:        true,
 					Retain:     retain,
 				},
-				PacketID: packetID,
-				Topic:    topic,
-				Payload:  payload,
+				PacketID:   packetID,
+				Topic:      topic,
+				Payload:    payload,
+				Properties: props,
 			}
 			b.writePacket(clientID, pub)
 			return nil

@@ -153,8 +153,8 @@ Details: [docs/guides/PERFORMANCE.md](docs/guides/PERFORMANCE.md)
 
 | Suite | Count | Status |
 |---|---|---|
-| Unit tests (incl. defect regressions) | 409 | Pass |
-| Integration tests (end-to-end, incl. deploy verification) | 140 | Pass |
+| Unit tests (incl. defect regressions) | 412 | Pass |
+| Integration tests (end-to-end, incl. deploy verification) | 142 | Pass |
 | Benchmarks | 61 | Pass |
 | Race detector | full suite | Clean |
 | Protocol fuzz (2 fuzzers) | 8.4M+ executions | No crashes |

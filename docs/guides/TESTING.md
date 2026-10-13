@@ -1,6 +1,6 @@
 # Testing Guide
 
-Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。当前基线为 **409 个单元测试**、**140 个集成测试**、**61 个基准测试**（口径：源码中声明的顶层 `Test*` / `Benchmark*` 函数数，复现方式见 [测试统计](#测试统计)）。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
+Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。当前基线为 **412 个单元测试**、**142 个集成测试**、**61 个基准测试**（口径：源码中声明的顶层 `Test*` / `Benchmark*` 函数数，复现方式见 [测试统计](#测试统计)）。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
 
 ---
 
@@ -30,8 +30,8 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 |  +-- data_delivery_bench_test.go - E2E 数据验证基准 (12)   |
 |  +-- micro_bench_test.go         - 组件级微基准 (27)       |
 +------------------------------------------------------------+
-|  Integration Tests (140 declared)                          |
-|  tests/integration/  (26 files)                            |
+|  Integration Tests (142 declared)                          |
+|  tests/integration/  (27 files)                            |
 |  +-- connect / pubsub / qos / persistent_session           |
 |  +-- delivery / retained / will / topic_wildcard           |
 |  +-- session_expiry / message_expiry / outbound_retry      |
@@ -39,17 +39,19 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 |  +-- websocket / wss / request_response                    |
 |  +-- deploy / observability / graceful_shutdown            |
 |  +-- retain_as_published / lifecycle_regression            |
-|  (完整文件清单见「集成测试」章)                              |
+|  (完整文件清单见「集成测试」章)                            |
 +------------------------------------------------------------+
 |  Defect Regression Tests (tests/defects + package tests)   |
 |  tests/defects/                                            |
 |  +-- api_default_auth_test.go - 默认认证拒绝回归           |
-|  +-- broker_lifecycle_test.go - 服务生命周期回归          |
+|  +-- broker_lifecycle_test.go - 服务生命周期回归           |
+|  +-- broker_stop_start_race_test.go - Stop/Start 竞态回归  |
+|  +-- invalid_will_topic_leak_test.go - 非法遗嘱主题泄漏回归|
 |  +-- properties_defect_test.go - MQTT 5.0 属性边界         |
 |  +-- topic_filter_defect_test.go - topic filter 边界       |
 |  +-- windows_benchmark_test.go - Windows benchmark 隔离    |
 +------------------------------------------------------------+
-|  Unit Tests (409 declared)                                 |
+|  Unit Tests (412 declared)                                 |
 |  各包内 *_test.go 文件                                     |
 |  broker/ protocol/ client/ config/ plugin/ store/memory/   |
 |  pkg/ api/ errs/                                           |
@@ -62,9 +64,9 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 
 | 类型 | 数量 | 位置 |
 |------|------|------|
-| 单元测试 | 409 | 各包 `*_test.go`（含 `tests/defects/`） |
-| 集成测试 | 140 | `tests/integration/` |
-| 缺陷回归测试 | `tests/defects/` 7 个 + 包内回归 | `tests/defects/`、`broker/`、`client/` |
+| 单元测试 | 412 | 各包 `*_test.go`（含 `tests/defects/`） |
+| 集成测试 | 142 | `tests/integration/` |
+| 缺陷回归测试 | `tests/defects/` 7 个文件 / 8 个用例 + 包内回归 | `tests/defects/`、`broker/`、`client/` |
 | 基准测试 | 61（Windows 本地实际执行 58） | `tests/bench/`、`plugin/`、`pkg/metrics/` |
 
 **统计口径**：以上均为源码中**声明的顶层 `Test*` / `Benchmark*` 函数数**，不是 `go test -json` 的"运行条数"（后者会把每个子测试 `t.Run` 计一条）。复现命令：
@@ -92,8 +94,8 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 
 | 包 | 测试数 | 基准测试数 | 说明 |
 |----|--------|-----------|------|
-| broker/ | 178 | 0 | 核心逻辑：TopicTree、QoS 引擎、会话、遗嘱、认证、服务器、retained metrics |
-| protocol/ | 74 | 0 | MQTT 3.1 / 3.1.1 / 5.0 编解码、属性、报文 flags 校验、协议适配层（15 种报文） |
+| broker/ | 180 | 0 | 核心逻辑：TopicTree、QoS 引擎、会话、遗嘱、认证、服务器、retained metrics |
+| protocol/ | 75 | 0 | MQTT 3.1 / 3.1.1 / 5.0 编解码、属性、报文 flags 校验、协议适配层（15 种报文） |
 | client/ | 35 | 0 | MQTT 客户端连接、发布、订阅、断开清理 |
 | config/ | 24 | 0 | 配置解析与校验 |
 | api/ | 22 | 0 | 公共 API 与健康端点 |
@@ -104,8 +106,8 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 | pkg/logger/ | 7 | 0 | slog 日志适配 |
 | errs/ | 4 | 0 | 错误定义 |
 | tests/defects/ | 8 | 0 | 审查发现缺陷的最小复现和回归测试 |
-| **单元测试合计** | **409** | **4** | |
-| tests/integration/ | 140 | 0 | 端到端集成测试（含部署验证） |
+| **单元测试合计** | **412** | **4** | |
+| tests/integration/ | 142 | 0 | 端到端集成测试（含部署验证） |
 | tests/bench/ | 0 | 57 | 全栈 TCP、E2E 数据验证、微基准 |
 | **基准测试合计** | | **61** | |
 | store/redis/（`store_redis`） | 18 | 9 | Redis 存储：消息、保留、会话（默认不编译） |
@@ -169,7 +171,7 @@ func TestTopicTree_Subscribe(t *testing.T) {
 ### 测试清单
 
 集成测试按文件组织，每个文件覆盖一个语义域。下表由源码直接统计
-（`grep -c '^func Test' tests/integration/*_test.go`），合计 **140 个**：
+（`grep -c '^func Test' tests/integration/*_test.go`），合计 **142 个**：
 
 | 文件 | 测试数 | 覆盖重点 |
 |------|--------|----------|
@@ -191,6 +193,7 @@ func TestTopicTree_Subscribe(t *testing.T) {
 | `session_expiry_test.go` | 3 | 会话过期与清理 |
 | `lifecycle_regression_test.go` | 2 | 服务生命周期回归 |
 | `message_expiry_test.go` | 2 | 消息过期（Message Expiry Interval） |
+| `publish_properties_test.go` | 2 | MQTT 5.0 PUBLISH 属性中继与版本门控（本轮新增） |
 | `qos1_regression_test.go` | 2 | QoS 1 回归 |
 | `websocket_test.go` | 2 | WebSocket 传输 |
 | `wss_test.go` | 2 | WSS（WebSocket over TLS） |
@@ -199,7 +202,7 @@ func TestTopicTree_Subscribe(t *testing.T) {
 | `request_response_test.go` | 1 | 请求 / 响应模式（Response Topic） |
 | `subscription_id_test.go` | 1 | MQTT 5.0 Subscription Identifier |
 | `write_queue_test.go` | 1 | 写队列与背压 |
-| **合计** | **140** | |
+| **合计** | **142** | |
 
 具体测试函数名可用 `go test -list '.*' ./tests/integration/...` 列出。本表**不逐条维护函数名**，
 以免每次新增用例都要同步文档、产生漂移；只维护"文件 -> 数量 -> 语义域"这一层。

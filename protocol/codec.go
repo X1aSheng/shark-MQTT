@@ -49,6 +49,20 @@ func NewCodec(maxPacketSize int) *Codec {
 	return c
 }
 
+// NewCodecForVersion creates a Codec bound to an explicit protocol version.
+//
+// A codec obtained from NewCodec starts at MQTT 3.1.1 and only learns the
+// negotiated version by decoding a CONNECT through the adapter handshake. That
+// is the right path for a connection, but it leaves a caller that must encode a
+// version-specific frame outside a handshake -- tooling, and tests that assert
+// what a v5-only field does on the wire -- with no way to bind the version.
+// Pass a version outside SpecOf's table and the codec falls back to 3.1.1.
+func NewCodecForVersion(maxPacketSize int, version Version) *Codec {
+	c := NewCodec(maxPacketSize)
+	c.setVersion(version)
+	return c
+}
+
 // setVersion records the protocol version and re-derives its capability table.
 func (c *Codec) setVersion(v uint8) {
 	c.protocolVersion = v
