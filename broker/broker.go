@@ -1459,6 +1459,10 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 			Payload:    pkt.Payload,
 			Retain:     pkt.Retain,
 			ReceivedAt: time.Now(),
+			// The routing happens on PUBREL, so the publisher's properties have
+			// to survive the wait here or the delivered message loses them
+			// (MQTT 5.0 §3.3.2.3). doDeliver relays them from this packet.
+			Properties: pkt.Properties,
 		}, limit) {
 			// Budget exhausted (or no session context): reject with the
 			// receive-max reason (or a plain success PUBREC for MQTT 3.1.1,
@@ -2465,6 +2469,11 @@ func (b *Broker) handlePubRel(clientID string, packetID uint16) {
 				Topic:    msg.Topic,
 				Payload:  msg.Payload,
 				PacketID: msg.PacketID,
+				// The staging record kept the publisher's MQTT 5 properties for
+				// exactly this moment: doDeliver relays them to each subscriber
+				// (§3.3.2.3), and it is the only chance to, since the record is
+				// dropped below.
+				Properties: msg.Properties,
 			}
 			subscribers := b.topics.Match(msg.Topic)
 			for _, sub := range subscribers {

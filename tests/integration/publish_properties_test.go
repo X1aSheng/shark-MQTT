@@ -168,3 +168,89 @@ func TestPublishPropertiesNotEmittedToV311Subscriber(t *testing.T) {
 			string(got.Payload), payload)
 	}
 }
+
+// TestPublishPropertiesRelayedForQoS2 covers the same §3.3.2.3 relay on the QoS
+// 2 path. A QoS 2 publish is not routed when it arrives: the broker stages it
+// until PUBREL, so the staged copy has to carry the publisher's properties or
+// the delivered message loses them -- which is exactly what happened, making
+// the relay above reachable for QoS 0/1 only.
+func TestPublishPropertiesRelayedForQoS2(t *testing.T) {
+	brk := testBroker(t)
+
+	sub := dialTestBroker(t, brk)
+	defer sub.Close()
+	subCodec := protocol.NewCodecForVersion(0, protocol.Version50)
+	connectWithVersion(t, sub, subCodec, "props-qos2-sub", protocol.Version50, protocol.ProtocolNameMQTT)
+	subscribeWithFilterOptions(t, sub, subCodec,
+		protocol.TopicFilter{Topic: "props/qos2", QoS: 0}, nil, 1)
+
+	pub := dialTestBroker(t, brk)
+	defer pub.Close()
+	pubCodec := protocol.NewCodecForVersion(0, protocol.Version50)
+	connectWithVersion(t, pub, pubCodec, "props-qos2-pub", protocol.Version50, protocol.ProtocolNameMQTT)
+
+	const payload = "qos2-body"
+	pfi := byte(1)
+	publish := &protocol.PublishPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 2},
+		PacketID:    1,
+		Topic:       "props/qos2",
+		Payload:     []byte(payload),
+		Properties: &protocol.Properties{
+			PayloadFormat:   &pfi,
+			ContentType:     "application/json",
+			ResponseTopic:   "props/qos2-reply",
+			CorrelationData: []byte{0xCA, 0xFE},
+			UserProperties:  []protocol.UserProperty{{Key: "trace", Value: "q2"}},
+		},
+	}
+	pub.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := pubCodec.Encode(pub, publish); err != nil {
+		t.Fatalf("PUBLISH: %v", err)
+	}
+	pub.SetDeadline(time.Now().Add(2 * time.Second))
+	pkt, err := pubCodec.Decode(pub) // PUBREC
+	if err != nil {
+		t.Fatalf("PUBREC: %v", err)
+	}
+	if _, ok := pkt.(*protocol.PubRecPacket); !ok {
+		t.Fatalf("expected PUBREC, got %T", pkt)
+	}
+
+	// Completing the handshake is what routes the staged message.
+	pub.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := pubCodec.Encode(pub, &protocol.PubRelPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePubRel, QoS: 1},
+		PacketID:    1,
+	}); err != nil {
+		t.Fatalf("PUBREL: %v", err)
+	}
+	pub.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err := pubCodec.Decode(pub); err != nil { // PUBCOMP
+		t.Fatalf("PUBCOMP: %v", err)
+	}
+
+	got := receivePublish(t, sub, subCodec)
+	if string(got.Payload) != payload {
+		t.Errorf("payload = %q, want %q", string(got.Payload), payload)
+	}
+	props := got.Properties
+	if props == nil {
+		t.Fatal("QoS 2 delivery carried no properties: the staged message dropped them")
+	}
+	if props.ContentType != "application/json" {
+		t.Errorf("ContentType = %q, want application/json", props.ContentType)
+	}
+	if props.ResponseTopic != "props/qos2-reply" {
+		t.Errorf("ResponseTopic = %q, want props/qos2-reply", props.ResponseTopic)
+	}
+	if string(props.CorrelationData) != string([]byte{0xCA, 0xFE}) {
+		t.Errorf("CorrelationData = %x, want cafe", props.CorrelationData)
+	}
+	if props.PayloadFormat == nil || *props.PayloadFormat != pfi {
+		t.Errorf("PayloadFormat = %v, want %d", props.PayloadFormat, pfi)
+	}
+	if len(props.UserProperties) != 1 || props.UserProperties[0].Value != "q2" {
+		t.Errorf("UserProperties = %+v, want the publisher's single trace pair", props.UserProperties)
+	}
+}

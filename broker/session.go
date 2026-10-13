@@ -149,6 +149,14 @@ type InboundQoS2 struct {
 	Payload    []byte
 	Retain     bool
 	ReceivedAt time.Time
+
+	// Properties holds the publisher's MQTT 5 per-message properties while the
+	// message waits for PUBREL. A QoS 2 publish is not routed on arrival, and
+	// the routed packet is rebuilt from this staging record, so without them
+	// every QoS 2 delivery would lose the relay data §3.3.2.3 requires -- the
+	// Response Topic, Correlation Data, User Properties, Content Type and
+	// Payload Format Indicator. nil for MQTT 3.1/3.1.1 publishers.
+	Properties *protocol.Properties
 }
 
 // Manager manages all client sessions.
