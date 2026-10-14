@@ -200,7 +200,7 @@ func TestBroker_PublishWillStoresRetainedMessage(t *testing.T) {
 	}
 	defer b.Stop()
 
-	if err := b.publishWill("user1", "will/retained", []byte("offline"), 1, true); err != nil {
+	if err := b.publishWill("user1", "will/retained", []byte("offline"), 1, true, nil); err != nil {
 		t.Fatalf("publishWill: %v", err)
 	}
 
@@ -750,7 +750,7 @@ func TestBroker_WillAuthDenied(t *testing.T) {
 	}()
 
 	// Publishing a will to a topic the user cannot publish must be denied.
-	if err := b.publishWill("u1", "secret/topic", []byte("leak"), 1, false); err != nil {
+	if err := b.publishWill("u1", "secret/topic", []byte("leak"), 1, false, nil); err != nil {
 		t.Fatalf("publishWill: %v", err)
 	}
 

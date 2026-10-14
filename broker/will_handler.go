@@ -6,6 +6,8 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"github.com/X1aSheng/shark-mqtt/protocol"
 )
 
 // WillMessage represents a last will message.
@@ -16,7 +18,24 @@ type WillMessage struct {
 	Payload  []byte
 	QoS      uint8
 	Retain   bool
-	Delay    time.Duration // Delayed will message delivery
+
+	// Properties is the property set carried by the Will Message's PUBLISH.
+	//
+	// MQTT 5.0 §3.1.3.2 gives the Will Message a property section of its own,
+	// and §3.3.2.3 makes the Server a transparent relay for the per-message
+	// subset of it: the Payload Format Indicator, Message Expiry Interval,
+	// Content Type, Response Topic, Correlation Data and every User Property
+	// travel with the Will Message exactly as they would with an ordinary
+	// PUBLISH. Will Delay Interval is the one member of that set which is NOT
+	// relayed -- it tells the Server *when* to publish (§3.1.3.2.2) and is not
+	// a PUBLISH property at all (§3.3.2.3) -- so it is removed before the set
+	// is stored here. See relayableWillProperties.
+	Properties *protocol.Properties
+
+	// Delay is how long publication waits: the client's Will Delay Interval,
+	// already capped by server policy. See HandleConnection.
+	Delay time.Duration
+
 	// Conn is the network connection that registered this will. TriggerWill
 	// only fires a will owned by the given connection: after a session
 	// takeover the old connection's late abnormal-disconnect must not trigger
@@ -32,7 +51,7 @@ type WillHandler struct {
 	wg     sync.WaitGroup
 
 	// Callback to publish will message (username included for authorization)
-	publishWill func(username string, topic string, payload []byte, qos uint8, retain bool) error
+	publishWill func(username string, topic string, payload []byte, qos uint8, retain bool, props *protocol.Properties) error
 }
 
 // NewWillHandler creates a new WillHandler.
@@ -57,13 +76,17 @@ func (wh *WillHandler) Stop() {
 }
 
 // SetPublishCallback sets the callback for publishing will messages.
-func (wh *WillHandler) SetPublishCallback(fn func(username string, topic string, payload []byte, qos uint8, retain bool) error) {
+func (wh *WillHandler) SetPublishCallback(fn func(username string, topic string, payload []byte, qos uint8, retain bool, props *protocol.Properties) error) {
 	wh.publishWill = fn
 }
 
 // RegisterWill registers a will message for a client.
 // Cancels any pending delayed will for the same client.
-func (wh *WillHandler) RegisterWill(clientID string, username string, topic string, payload []byte, qos uint8, retain bool, delay time.Duration, conn net.Conn) error {
+//
+// props is the Will Properties section as decoded from the CONNECT, or nil for
+// MQTT 3.1.1 and for a CONNECT without properties; Will Delay Interval is
+// ignored here because delay already carries the effective wait.
+func (wh *WillHandler) RegisterWill(clientID string, username string, topic string, payload []byte, qos uint8, retain bool, props *protocol.Properties, delay time.Duration, conn net.Conn) error {
 	wh.mu.Lock()
 	defer wh.mu.Unlock()
 
@@ -74,16 +97,53 @@ func (wh *WillHandler) RegisterWill(clientID string, username string, topic stri
 	}
 
 	wh.wills[clientID] = &WillMessage{
-		ClientID: clientID,
-		Username: username,
-		Topic:    topic,
-		Payload:  payload,
-		QoS:      qos,
-		Retain:   retain,
-		Delay:    delay,
-		Conn:     conn,
+		ClientID:   clientID,
+		Username:   username,
+		Topic:      topic,
+		Payload:    payload,
+		QoS:        qos,
+		Retain:     retain,
+		Properties: relayableWillProperties(props),
+		Delay:      delay,
+		Conn:       conn,
 	}
 	return nil
+}
+
+// relayableWillProperties extracts the Will Properties that belong on the Will
+// Message's PUBLISH, dropping the ones that belong to the CONNECT.
+//
+// §3.1.3.2 defines exactly seven Will Properties and §3.3.2.3 accepts six of
+// them unchanged on a PUBLISH. Will Delay Interval (0x18) is the odd one out:
+// it is an instruction to the Server (§3.1.3.2.2) and is not in the PUBLISH
+// property set, so relaying it would be a Protocol Error on the wire. The
+// Authentication Method/Data pair is not a Will Property at all, so nothing
+// else has to be filtered here.
+//
+// The returned set is nil when there is nothing to relay, which keeps a v3.1.1
+// or property-free will byte-identical to the pre-existing packet instead of
+// growing an empty property section.
+//
+// UserProperties is shared with the decoded CONNECT rather than deep-copied:
+// the packet outlives the will, and the slice is only ever read.
+func relayableWillProperties(props *protocol.Properties) *protocol.Properties {
+	if props == nil {
+		return nil
+	}
+	out := &protocol.Properties{
+		PayloadFormat:         props.PayloadFormat,
+		MessageExpiryInterval: props.MessageExpiryInterval,
+		ContentType:           props.ContentType,
+		ResponseTopic:         props.ResponseTopic,
+		CorrelationData:       props.CorrelationData,
+		UserProperties:        props.UserProperties,
+	}
+	if out.PayloadFormat == nil && out.MessageExpiryInterval == nil &&
+		out.ContentType == "" && out.ResponseTopic == "" && out.CorrelationData == nil &&
+		len(out.UserProperties) == 0 {
+		return nil
+	}
+	return out
 }
 
 // TriggerWill triggers the will message for a client (on abnormal disconnect).
@@ -158,7 +218,7 @@ func (wh *WillHandler) RemoveWill(clientID string) {
 
 func (wh *WillHandler) publishWillMessage(will *WillMessage) error {
 	if wh.publishWill != nil && len(will.Topic) > 0 {
-		return wh.publishWill(will.Username, will.Topic, will.Payload, will.QoS, will.Retain)
+		return wh.publishWill(will.Username, will.Topic, will.Payload, will.QoS, will.Retain, will.Properties)
 	}
 	return nil
 }

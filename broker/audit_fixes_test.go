@@ -973,14 +973,14 @@ func TestWillTriggerScopedToOwningConnection(t *testing.T) {
 	defer connB.Close()
 
 	fired := make(chan string, 1)
-	wh.SetPublishCallback(func(username, topic string, payload []byte, qos uint8, retain bool) error {
+	wh.SetPublishCallback(func(username, topic string, payload []byte, qos uint8, retain bool, _ *protocol.Properties) error {
 		fired <- topic
 		return nil
 	})
 
 	// New connection B registered its will (the takeover already fired A's
 	// will and removed it; only B's will remains).
-	if err := wh.RegisterWill("cid", "user", "b/will", []byte("x"), 1, false, 0, connB); err != nil {
+	if err := wh.RegisterWill("cid", "user", "b/will", []byte("x"), 1, false, nil, 0, connB); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 

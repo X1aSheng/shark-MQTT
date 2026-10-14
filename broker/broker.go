@@ -197,8 +197,8 @@ func New(opts ...Option) *Broker {
 	)
 
 	// Setup Will callback
-	b.will.SetPublishCallback(func(username string, topic string, payload []byte, qos uint8, retain bool) error {
-		return b.publishWill(username, topic, payload, qos, retain)
+	b.will.SetPublishCallback(func(username string, topic string, payload []byte, qos uint8, retain bool, props *protocol.Properties) error {
+		return b.publishWill(username, topic, payload, qos, retain, props)
 	})
 
 	return b
@@ -611,7 +611,7 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 				"requested", willDelay, "max", b.opts.maxWillDelay)
 			willDelay = b.opts.maxWillDelay
 		}
-		if err := b.will.RegisterWill(clientID, connectPkt.Username, connectPkt.WillTopic, connectPkt.WillMessage, connectPkt.Flags.WillQoS, connectPkt.Flags.WillRetain, willDelay, conn); err != nil {
+		if err := b.will.RegisterWill(clientID, connectPkt.Username, connectPkt.WillTopic, connectPkt.WillMessage, connectPkt.Flags.WillQoS, connectPkt.Flags.WillRetain, connectPkt.WillProperties, willDelay, conn); err != nil {
 			b.metrics.IncErrors("will")
 			return fmt.Errorf("broker: register will failed: %w", err)
 		}
@@ -3102,7 +3102,16 @@ func (b *Broker) republish(clientID string, packetID uint16, topic string, paylo
 	return nil
 }
 
-func (b *Broker) publishWill(username string, topic string, payload []byte, qos uint8, retain bool) error {
+// publishWill publishes a client's Will Message.
+//
+// props is the relayable subset of the CONNECT's Will Properties, already
+// stripped of Will Delay Interval (see relayableWillProperties). It is attached
+// to the will's PUBLISH so the ordinary delivery path applies §3.3.2.3 to it:
+// doDeliver relays those properties to each subscriber unaltered and adds the
+// Server's own Subscription Identifiers and remaining Message Expiry Interval.
+// A will with RETAIN set stores them with the retained copy through
+// handleRetainedMessage, so a later subscriber sees them too.
+func (b *Broker) publishWill(username string, topic string, payload []byte, qos uint8, retain bool, props *protocol.Properties) error {
 	// A will message must respect publish authorization just like a normal
 	// PUBLISH, otherwise any client could set a will on a topic it has no
 	// permission to publish.
@@ -3118,8 +3127,9 @@ func (b *Broker) publishWill(username string, topic string, payload []byte, qos 
 			QoS:        qos,
 			Retain:     retain,
 		},
-		Topic:   topic,
-		Payload: payload,
+		Topic:      topic,
+		Payload:    payload,
+		Properties: props,
 	}
 
 	if retain {

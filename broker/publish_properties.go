@@ -19,7 +19,10 @@ import (
 // Topic Alias is deliberately NOT copied: it names a mapping in the
 // *publisher's* inbound alias space and is meaningless to a subscriber
 // (§3.3.2.3.4). Likewise absent are Authentication Method/Data and the Will
-// properties, which are CONNECT/AUTH scope.
+// Delay Interval, which are CONNECT/AUTH scope. The other Will Properties are
+// relayed like any other publisher's: a Will Message reaches this function as
+// an ordinary PUBLISH whose Properties were taken from the CONNECT's Will
+// Properties minus the delay (see relayableWillProperties).
 //
 // Two properties belong to the Server rather than the publisher:
 //   - the Subscription Identifiers of the matching subscriptions, and

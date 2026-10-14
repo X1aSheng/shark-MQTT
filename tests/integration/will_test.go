@@ -402,3 +402,127 @@ func TestWillMessageQoS(t *testing.T) {
 		})
 	}
 }
+
+// connectV5WithWill connects an MQTT 5.0 client carrying a Will Message with
+// the given properties, and returns the decoded CONNACK.
+func connectV5WithWill(t *testing.T, conn net.Conn, codec *protocol.Codec, pkt *protocol.ConnectPacket) *protocol.ConnAckPacket {
+	t.Helper()
+	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := codec.Encode(conn, pkt); err != nil {
+		t.Fatalf("CONNECT with will: %v", err)
+	}
+	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	resp, err := codec.Decode(conn)
+	if err != nil {
+		t.Fatalf("CONNACK: %v", err)
+	}
+	ca, ok := resp.(*protocol.ConnAckPacket)
+	if !ok {
+		t.Fatalf("expected CONNACK, got %T", resp)
+	}
+	if ca.ReasonCode != protocol.ConnAckAccepted {
+		t.Fatalf("expected CONNACK accepted, got %d", ca.ReasonCode)
+	}
+	return ca
+}
+
+// awaitWillPublish reads one PUBLISH from a subscriber and fails the test if
+// anything else arrives first.
+func awaitWillPublish(t *testing.T, conn net.Conn, codec *protocol.Codec, within time.Duration) *protocol.PublishPacket {
+	t.Helper()
+	conn.SetReadDeadline(time.Now().Add(within))
+	pkt, err := codec.Decode(conn)
+	if err != nil {
+		t.Fatalf("subscriber did not receive the will: %v", err)
+	}
+	pub, ok := pkt.(*protocol.PublishPacket)
+	if !ok {
+		t.Fatalf("expected PUBLISH, got %T", pkt)
+	}
+	return pub
+}
+
+// TestWillPropertiesRelayedToSubscriber covers MQTT 5.0 §3.1.3.2 + §3.3.2.3.
+//
+// The Will Message has a property section of its own, and once published it is
+// an ordinary PUBLISH: the Server must relay the publisher's per-message
+// properties to subscribers unaltered. Dropping them broke request/response
+// for a will -- a responder could not be reached because its Response Topic
+// never arrived -- and stripped the payload format and application tags.
+//
+// The Will Delay Interval is the one member of that section that must NOT be
+// relayed: it instructs the Server about when to publish (§3.1.3.2.2) and is
+// not a PUBLISH property at all, so forwarding it would put a property on the
+// wire that §3.3.2.3 does not allow there.
+func TestWillPropertiesRelayedToSubscriber(t *testing.T) {
+	brk := testBroker(t)
+
+	subConn := dialTestBroker(t, brk)
+	subCodec := protocol.NewCodec(0)
+	connectClient(t, subConn, subCodec, "will-props-sub")
+	subscribeToTopic(t, subConn, subCodec, "client/will-with-props", 1, 1)
+
+	payloadFormat := byte(1)
+	expiry := uint32(30)
+	willDelay := uint32(1)
+	willConn := dialTestBroker(t, brk)
+	willCodec := protocol.NewCodec(0)
+	connectV5WithWill(t, willConn, willCodec, &protocol.ConnectPacket{
+		FixedHeader:     protocol.FixedHeader{PacketType: protocol.PacketTypeConnect},
+		ProtocolName:    protocol.ProtocolNameMQTT,
+		ProtocolVersion: protocol.Version50,
+		Flags: protocol.ConnectFlags{
+			CleanSession: true,
+			WillFlag:     true,
+			WillQoS:      1,
+		},
+		KeepAlive:   30,
+		ClientID:    "will-props-client",
+		WillTopic:   "client/will-with-props",
+		WillMessage: []byte(`{"state":"offline"}`),
+		WillProperties: &protocol.Properties{
+			PayloadFormat:         &payloadFormat,
+			MessageExpiryInterval: &expiry,
+			ContentType:           "application/json",
+			ResponseTopic:         "client/will-with-props/reply",
+			CorrelationData:       []byte("corr-7"),
+			UserProperties:        []protocol.UserProperty{{Key: "source", Value: "will"}},
+			WillDelayInterval:     &willDelay,
+		},
+	})
+
+	willConn.Close()
+
+	pub := awaitWillPublish(t, subConn, subCodec, 2*time.Second)
+	if string(pub.Payload) != `{"state":"offline"}` {
+		t.Errorf("payload = %q", string(pub.Payload))
+	}
+	got := pub.Properties
+	if got == nil {
+		t.Fatal("delivered will carries no property section: the Will Properties were dropped")
+	}
+	if got.PayloadFormat == nil || *got.PayloadFormat != payloadFormat {
+		t.Errorf("PayloadFormat = %v, want %d", got.PayloadFormat, payloadFormat)
+	}
+	if got.ContentType != "application/json" {
+		t.Errorf("ContentType = %q, want application/json", got.ContentType)
+	}
+	if got.ResponseTopic != "client/will-with-props/reply" {
+		t.Errorf("ResponseTopic = %q", got.ResponseTopic)
+	}
+	if string(got.CorrelationData) != "corr-7" {
+		t.Errorf("CorrelationData = %q, want corr-7", string(got.CorrelationData))
+	}
+	if len(got.UserProperties) != 1 || got.UserProperties[0].Key != "source" ||
+		got.UserProperties[0].Value != "will" {
+		t.Errorf("UserProperties = %+v, want the publisher's single pair", got.UserProperties)
+	}
+	if got.MessageExpiryInterval == nil {
+		t.Error("MessageExpiryInterval missing: the will's own interval must be relayed")
+	}
+	if got.WillDelayInterval != nil {
+		t.Errorf("WillDelayInterval = %d in the delivered PUBLISH: it is a CONNECT-scope "+
+			"instruction, not a PUBLISH property", *got.WillDelayInterval)
+	}
+	subConn.Close()
+}
