@@ -36,6 +36,7 @@ var allowedMetricLabels = map[string]map[string]bool{
 		"qos2_pid_reuse":                true,
 		"rate_limited":                  true,
 		"receive_max_buffered_overflow": true,
+		"receive_max_exceeded":          true,
 		"retained_limit":                true,
 		"unknown_topic_alias":           true,
 		"write_queue_full":              true,

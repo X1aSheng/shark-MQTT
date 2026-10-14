@@ -1678,13 +1678,28 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 			return
 		}
 
-		// Accept: enforce the per-client inbound budget (mirrors the outbound
-		// maxInflight cap), store retained state, then send PUBREC.
-		limit := b.opts.maxInflight
-		if limit <= 0 {
-			limit = 100
+		// Accept: enforce the server's advertised inbound budget, store
+		// retained state, then send PUBREC.
+		//
+		// The budget is sess.ReceiveMax -- the very number the CONNACK carried
+		// -- rather than the raw configuration, so what is enforced and what
+		// was promised cannot drift apart. (The previous code took
+		// b.opts.maxInflight and, unconfigured, a hardcoded 100, while the
+		// CONNACK advertised 65535.)
+		//
+		// Only QoS 2 needs a table to count against. §3.3.4 bounds the QoS 1
+		// and QoS 2 PUBLISH packets "where it has not sent a PUBACK or PUBCOMP
+		// in response", and a QoS 1 exchange ends with the PUBACK this function
+		// queues below -- before the next PUBLISH is read -- so the outstanding
+		// QoS 1 count cannot exceed one and never trips the budget. A QoS 2
+		// exchange stays open until PUBREL, which is what the table tracks.
+		if sess == nil {
+			// No session to hold a budget; acknowledge and drop, which is what
+			// the old combined nil guard did on this branch.
+			b.ackDiscardedPublish(clientID, sess, pkt, protocol.ReasonCodeSuccess)
+			return
 		}
-		if sess == nil || !sess.AddInboundQoS2(&InboundQoS2{
+		if !sess.AddInboundQoS2(&InboundQoS2{
 			PacketID:   pkt.PacketID,
 			QoS:        pkt.QoS,
 			Topic:      pkt.Topic,
@@ -1695,11 +1710,8 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 			// to survive the wait here or the delivered message loses them
 			// (MQTT 5.0 §3.3.2.3). doDeliver relays them from this packet.
 			Properties: pkt.Properties,
-		}, limit) {
-			// Budget exhausted (or no session context): reject with the
-			// receive-max reason (or a plain success PUBREC for MQTT 3.1.1,
-			// whose PUBREC has no reason field).
-			b.ackDiscardedPublish(clientID, sess, pkt, protocol.ReasonCodeReceiveMaxExceeded)
+		}, int(sess.ReceiveMax)) {
+			b.rejectInboundOverBudget(clientID, sess, pkt)
 			return
 		}
 		if pkt.Retain {
@@ -1746,6 +1758,40 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 	}
 }
 
+// rejectInboundOverBudget answers a QoS 1/2 PUBLISH the broker refuses because
+// the client already has as many exchanges outstanding as the Receive Maximum
+// it was told about allows.
+//
+// MQTT 5.0 §3.3.4 prescribes a DISCONNECT with Reason Code 0x93 (Receive
+// Maximum exceeded) for this. 0x93 is legal in no other packet -- Table 2-6
+// lists it for DISCONNECT alone, and §3.5.2.1 requires a PUBREC sender to use
+// one of that packet's listed codes -- so it must not be delivered as a
+// PUBREC/PUBACK reason. (0x97 Quota exceeded is the acknowledgement-family code
+// for a refusal like this one.)
+//
+// MQTT 3.1 and 3.1.1 have no Receive Maximum at all, so there nothing was
+// negotiated to exceed: the budget reached there is the broker's own resource
+// guard, the connection stays up, and the publish is acknowledged and dropped
+// as before. sess may be nil for the same reason -- with no session there is no
+// negotiated number either, so the connection is kept there too.
+func (b *Broker) rejectInboundOverBudget(clientID string, sess *Session, pkt *protocol.PublishPacket) {
+	b.metrics.IncMessagesDropped("receive_max_exceeded")
+	b.metrics.IncErrors("flow_control")
+
+	receiveMax := uint16(0)
+	if sess != nil {
+		receiveMax = sess.ReceiveMax
+	}
+	b.logger.Debug("inbound receive maximum exceeded",
+		"clientID", clientID, "packetID", pkt.PacketID, "receiveMax", receiveMax)
+
+	if sess != nil && sess.Spec().ServerDisconnect {
+		b.closeProtocolViolationWithReason(clientID, sess, protocol.DisconnectReceiveMaximumExceeded)
+		return
+	}
+	b.ackDiscardedPublish(clientID, sess, pkt, protocol.ReasonCodeSuccess)
+}
+
 // ackDiscardedPublish acknowledges a QoS 1/2 PUBLISH that the broker decided
 // to discard (rate limit, expired on arrival, invalid topic, denied by the
 // authorizer, inflight budget exhausted) so the client can release its packet
@@ -1763,6 +1809,10 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 // senders that send the PUBREL anyway (MQTT 3.1.1 clients must, having been
 // given no reason code, and §4.3.3 obliges a receiver to answer every PUBREL
 // with PUBCOMP), not the normal continuation of this flow.
+//
+// v5Reason must be a code Table 2-6 allows in PUBACK/PUBREC; a DISCONNECT-only
+// code (0x93, 0x94, 0x95, ...) belongs on a DISCONNECT instead -- see
+// rejectInboundOverBudget for the one case that used to get this wrong.
 func (b *Broker) ackDiscardedPublish(clientID string, sess *Session, pkt *protocol.PublishPacket, v5Reason byte) {
 	if pkt.QoS == 0 {
 		return

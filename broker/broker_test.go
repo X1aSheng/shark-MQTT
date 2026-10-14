@@ -740,6 +740,177 @@ func TestOutboundWindowGatesSeparatelyFromInboundLimit(t *testing.T) {
 	}
 }
 
+// inboundWirePump installs a clientState for clientID on a net.Pipe and returns
+// two handles on the broker's write side: collect, which closes the socket,
+// waits for the drain to finish and decodes everything the broker wrote; and
+// closed, which fires as soon as the broker closes the connection by itself.
+//
+// net.Pipe writes block until the peer reads, so a reader has to drain
+// concurrently; collecting into a bytes.Buffer is safe because the test only
+// reads it after the drain goroutine has finished (happens-after via close).
+func inboundWirePump(t *testing.T, b *Broker, clientID string, version protocol.Version) (collect func() []protocol.Packet, closed <-chan struct{}) {
+	t.Helper()
+
+	serverConn, clientConn := net.Pipe()
+	t.Cleanup(func() { clientConn.Close() })
+	b.mu.Lock()
+	b.connections[clientID] = &clientState{
+		conn:  serverConn,
+		codec: protocol.NewCodecForVersion(0, version),
+	}
+	b.mu.Unlock()
+
+	var wire bytes.Buffer
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		_, _ = io.Copy(&wire, clientConn)
+	}()
+
+	return func() []protocol.Packet {
+		t.Helper()
+		serverConn.Close() // idempotent: a teardown path may have closed it
+		<-drained
+		return decodePacketStream(t, wire.Bytes(), version)
+	}, drained
+}
+
+// decodePacketStream decodes every packet in raw, failing on a truncated or
+// undecodable frame -- which is itself a finding, since a refusal must write
+// nothing.
+func decodePacketStream(t *testing.T, raw []byte, version protocol.Version) []protocol.Packet {
+	t.Helper()
+
+	dec := protocol.NewCodecForVersion(0, version)
+	r := bytes.NewReader(raw)
+	var pkts []protocol.Packet
+	for r.Len() > 0 {
+		pkt, err := dec.Decode(r)
+		if err != nil {
+			t.Fatalf("decode wire stream at offset %d: %v (raw % X)", len(raw)-r.Len(), err, raw)
+		}
+		pkts = append(pkts, pkt)
+	}
+	return pkts
+}
+
+// TestInboundReceiveMaxExceededDisconnects covers §3.3.4: a client that leaves
+// more QoS 1/2 PUBLISH packets unacknowledged than the Receive Maximum the
+// server advertised has committed a Protocol Error, and the prescribed answer
+// is a DISCONNECT carrying 0x93 (Receive Maximum exceeded).
+//
+// The broker used to answer with a PUBREC whose reason code was 0x93. Table 2-6
+// lists 0x93 for DISCONNECT only -- 0x97 (Quota exceeded) is the code an
+// acknowledgement may carry -- and §3.5.2.1 requires the sender of a PUBREC to
+// use one of the listed codes, so a conformant client had to read that packet
+// as a Malformed Packet while the connection stayed up and the violation went
+// unrecorded.
+func TestInboundReceiveMaxExceededDisconnects(t *testing.T) {
+	b := New(WithAuth(AllowAllAuth{}))
+
+	sess := b.sessions.CreateSession("rm-inbound", &protocol.ConnectPacket{
+		Flags:           protocol.ConnectFlags{CleanSession: true},
+		KeepAlive:       60,
+		ProtocolVersion: protocol.Version50,
+		ClientID:        "rm-inbound",
+	}, false)
+	// The advertised value is taken from the wire in
+	// TestConnAckReceiveMaxIsServerLimit; here it is set directly so the test
+	// reaches the boundary without pushing maxInflight (100) publishes.
+	sess.ReceiveMax = 2
+
+	collect, _ := inboundWirePump(t, b, "rm-inbound", protocol.Version50)
+
+	publish := func(id uint16) {
+		b.handlePublish("rm-inbound", sess, &protocol.PublishPacket{
+			FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 2},
+			PacketID:    id,
+			Topic:       "rm/inbound",
+			Payload:     []byte("staged"),
+		})
+	}
+	for _, id := range []uint16{1, 2} {
+		publish(id)
+	}
+	// One past the advertised limit: the offending PUBLISH is dropped and the
+	// connection is torn down.
+	publish(3)
+
+	pkts := collect()
+
+	// The two accepted publishes are acknowledged so the client can proceed.
+	if len(pkts) != 3 {
+		t.Fatalf("broker wrote %d packets (%T), want 2 PUBREC + 1 DISCONNECT", len(pkts), pkts)
+	}
+	for i, wantID := range []uint16{1, 2} {
+		rec, ok := pkts[i].(*protocol.PubRecPacket)
+		if !ok {
+			t.Fatalf("packet %d = %T, want *protocol.PubRecPacket", i, pkts[i])
+		}
+		if rec.PacketID != wantID || rec.ReasonCode != protocol.ReasonCodeSuccess {
+			t.Errorf("PUBREC %d = {pid:%d rc:0x%02X}, want {pid:%d rc:0x00}",
+				i, rec.PacketID, rec.ReasonCode, wantID)
+		}
+	}
+
+	disc, ok := pkts[2].(*protocol.DisconnectPacket)
+	if !ok {
+		t.Fatalf("the over-limit publish was answered with %T; §3.3.4 requires a DISCONNECT "+
+			"carrying 0x93, which is the only packet Table 2-6 allows that code in", pkts[2])
+	}
+	if disc.ReasonCode != protocol.DisconnectReceiveMaximumExceeded {
+		t.Errorf("DISCONNECT reason = 0x%02X, want 0x93 (Receive Maximum exceeded)", disc.ReasonCode)
+	}
+}
+
+// TestInboundBudgetPreV5KeepsConnection is the control for the version gate on
+// this path. MQTT 3.1 and 3.1.1 have no Receive Maximum at all, so there is no
+// negotiated limit to exceed: the per-client budget there is the broker's own
+// resource guard, and a client that trips it must keep its connection (its
+// PUBREC has no reason field to report anything with). Without this case a
+// change that tore down every over-budget client would still pass the test
+// above.
+func TestInboundBudgetPreV5KeepsConnection(t *testing.T) {
+	b := New(WithAuth(AllowAllAuth{}))
+
+	sess := b.sessions.CreateSession("rm-311", &protocol.ConnectPacket{
+		Flags:           protocol.ConnectFlags{CleanSession: true},
+		KeepAlive:       60,
+		ProtocolVersion: protocol.Version311,
+		ClientID:        "rm-311",
+	}, false)
+	sess.ReceiveMax = 2
+
+	collect, closed := inboundWirePump(t, b, "rm-311", protocol.Version311)
+
+	for _, id := range []uint16{1, 2, 3} {
+		b.handlePublish("rm-311", sess, &protocol.PublishPacket{
+			FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 2},
+			PacketID:    id,
+			Topic:       "rm/inbound",
+			Payload:     []byte("staged"),
+		})
+	}
+
+	// The drain goroutine only finishes when the socket is closed, so it
+	// staying open here is the assertion: no teardown happened.
+	select {
+	case <-closed:
+		t.Fatal("the broker closed the connection: MQTT 3.1.1 has no Receive Maximum to exceed")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	pkts := collect()
+	if len(pkts) != 3 {
+		t.Errorf("broker wrote %d packets, want 3 PUBRECs (one per accepted-and-dropped publish)", len(pkts))
+	}
+	for i, pkt := range pkts {
+		if _, ok := pkt.(*protocol.PubRecPacket); !ok {
+			t.Errorf("packet %d = %T, want *protocol.PubRecPacket", i, pkt)
+		}
+	}
+}
+
 func TestAssignedClientID(t *testing.T) {
 	// Session's AssignedClientID field is writable and readable.
 	mgr := NewManager(nil)

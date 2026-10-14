@@ -579,10 +579,14 @@ func (s *Session) RemoveInflight(packetID uint16) bool {
 	return true
 }
 
-// AddInboundQoS2 stages an accepted inbound QoS 2 publish (PUBREC sent). The
-// per-client budget mirrors the outbound maxInflight cap so a client that
-// never completes its half of the handshake cannot grow the table without
-// bound. Returns false when the budget is exhausted.
+// AddInboundQoS2 stages an accepted inbound QoS 2 publish (PUBREC sent).
+//
+// maxPending is the Receive Maximum this connection was told about, so a client
+// that never completes its half of the handshake cannot grow the table without
+// bound, and the bound it hits is the one it was promised rather than an
+// unrelated internal constant (MQTT 5.0 §3.3.4 / §4.9). It is a per-Network-
+// Connection number, not session state: a reconnect renegotiates it. Returns
+// false when the budget is exhausted.
 func (s *Session) AddInboundQoS2(msg *InboundQoS2, maxPending int) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
