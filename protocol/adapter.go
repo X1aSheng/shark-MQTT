@@ -100,6 +100,21 @@ type PacketCodec interface {
 	Spec() Spec
 }
 
+// OutboundPacketSizer is implemented by codecs that can bound the size of the
+// packets they write, so the broker can push the client's Maximum Packet Size
+// (MQTT 5.0 §3.1.2.11.4) down into the encoder.
+//
+// It is a separate, optional interface rather than a fourth method on
+// PacketCodec for the same reason the broker declares packetFlusher rather than
+// widening net.Conn: a codec that cannot size its output is not obliged to
+// pretend it can, and a caller that needs the capability asks for it with a
+// type assertion instead of the contract growing for every implementation.
+// *protocol.Codec implements it.
+type OutboundPacketSizer interface {
+	// SetOutboundMaxPacketSize bounds outbound packets; 0 means unbounded.
+	SetOutboundMaxPacketSize(n int)
+}
+
 // Adapter is the complete implementation contract for one access protocol.
 // Adding a protocol (MQTT-over-QUIC / MQTT-SN / CoAP) requires only a new
 // Adapter; MQTTServer and the broker core stay unchanged.

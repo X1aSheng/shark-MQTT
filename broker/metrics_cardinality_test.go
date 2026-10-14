@@ -31,6 +31,7 @@ var allowedMetricLabels = map[string]map[string]bool{
 		"message_expired":               true,
 		"offline_queue_full":            true,
 		"offline_stale":                 true,
+		"packet_too_large":              true,
 		"pubrec_rejected":               true,
 		"qos2_pid_reuse":                true,
 		"rate_limited":                  true,

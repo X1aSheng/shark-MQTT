@@ -72,6 +72,13 @@ type clientState struct {
 	// only for such connections; used to handle re-authentication AUTH packets
 	// during the session.
 	enhancedAuth EnhancedAuthenticator
+
+	// metrics records outbound packets the codec refused to send because they
+	// exceeded the client's Maximum Packet Size. The writer goroutine has no
+	// Broker reference, so the counter is reached through here. Nil for
+	// clientStates built without one (unit tests), hence the nil guard in
+	// classifyWriteError.
+	metrics metrics.Metrics
 }
 
 // Broker is the core MQTT message broker that orchestrates TopicTree, QoSEngine,
@@ -264,6 +271,18 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 	sp := c.Spec
 	if sp.Version == 0 {
 		sp, _ = protocol.SpecOf(connectPkt.ProtocolVersion)
+	}
+
+	// Push the client's Maximum Packet Size into the codec (MQTT 5.0
+	// §3.1.2.11.4) before any CONNACK is produced, so every packet this
+	// connection sends -- the rejection CONNACKs below included -- is bounded by
+	// it. The property exists only in MQTT 5, so a 3.1.1 CONNECT leaves the codec
+	// unbounded; the task is skipped entirely for an adapter whose codec cannot
+	// enforce a bound.
+	if connectPkt.Properties != nil && connectPkt.Properties.MaximumPacketSize != nil {
+		if sizer, ok := codec.(protocol.OutboundPacketSizer); ok {
+			sizer.SetOutboundMaxPacketSize(int(*connectPkt.Properties.MaximumPacketSize))
+		}
 	}
 
 	// Validate CONNECT per MQTT spec. The CONNECT packet was already decoded by
@@ -571,6 +590,7 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 		stopWrites:   make(chan struct{}),
 		syncWrites:   make(chan syncWrite),
 		enhancedAuth: enhancedAuth,
+		metrics:      b.metrics,
 	}
 	b.connections[clientID] = cs
 	online := len(b.connections)
@@ -2503,6 +2523,33 @@ func (b *Broker) sendDisconnectBeforeClose(clientID string, pkt protocol.Packet)
 	return true
 }
 
+// classifyWriteError decides what a codec Encode failure means for the
+// connection.
+//
+// The one failure that is not a connection-level error is the codec refusing a
+// packet larger than the client's Maximum Packet Size. [MQTT-3.1.2-25] requires
+// the server to discard such a packet "without sending it and then behave as if
+// it had completed sending that Application Message": the client never learns
+// about it, the session keeps going, and the caller must NOT close the socket
+// the way it does for a genuine write failure.
+//
+// A refused CONNACK is the exception. Every other packet has a defined no-op
+// outcome, but a client whose CONNACK is dropped waits forever for a reply that
+// is never coming, so that case is reported as a failure and the caller closes
+// the connection rather than leaking a half-open session.
+func (cs *clientState) classifyWriteError(pkt protocol.Packet, err error) error {
+	if err == nil || !errors.Is(err, protocol.ErrPacketTooLarge) {
+		return err
+	}
+	if _, isConnAck := pkt.(*protocol.ConnAckPacket); isConnAck {
+		return err
+	}
+	if cs.metrics != nil {
+		cs.metrics.IncMessagesDropped("packet_too_large")
+	}
+	return nil
+}
+
 // writeOrEnqueue writes pkt to a client connection. With an async write queue
 // configured it enqueues and returns; the writer goroutine serializes the
 // actual socket writes (R1). Without one (clientStates created outside
@@ -2512,7 +2559,7 @@ func (cs *clientState) writeOrEnqueue(pkt protocol.Packet) error {
 		cs.wmu.Lock()
 		err := cs.codec.Encode(cs.conn, pkt)
 		cs.wmu.Unlock()
-		return err
+		return cs.classifyWriteError(pkt, err)
 	}
 	select {
 	case cs.out <- pkt:
@@ -2560,8 +2607,17 @@ func (cs *clientState) writeOne(pkt protocol.Packet, deadline time.Duration) err
 	if deadline > 0 {
 		_ = cs.conn.SetWriteDeadline(time.Now().Add(deadline))
 	}
-	if err := cs.codec.Encode(cs.conn, pkt); err != nil {
+	encErr := cs.codec.Encode(cs.conn, pkt)
+	if err := cs.classifyWriteError(pkt, encErr); err != nil {
 		return err
+	}
+	if encErr != nil {
+		// classifyWriteError swallows exactly one failure -- the codec refusing
+		// an oversized packet -- so a non-nil encode error that survived it
+		// means nothing reached the socket and there is nothing to flush.
+		// Flushing anyway would push an empty frame on a transport that frames
+		// each packet (WebSocket).
+		return nil
 	}
 	// Transports that frame packets (WebSocket) flush the buffered packet as one
 	// message after each Encode (R5).

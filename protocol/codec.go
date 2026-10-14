@@ -31,12 +31,25 @@ func putDecodeReader(r *bytes.Reader) {
 	decodeReaderPool.Put(r)
 }
 
+// encodeBufferPool reuses the scratch buffer of Encode's guarded path. The
+// buffer never escapes Encode, and each connection owns its codec and writes
+// through it from a single goroutine, so a package-level pool is safe.
+var encodeBufferPool = sync.Pool{
+	New: func() any { return new(bytes.Buffer) },
+}
+
 // Codec handles encoding and decoding of MQTT packets.
 type Codec struct {
 	maxPacketSize   int
 	protocolVersion uint8            // set after CONNECT is decoded
 	spec            Spec             // capability table for protocolVersion
 	pool            *bufferpool.Pool // optional buffer pool for decode buffers
+
+	// outboundMax is the largest packet, fixed header included, this codec may
+	// put on the wire: the client's Maximum Packet Size (MQTT 5.0 §3.1.2.11.4).
+	// 0 means unbounded, which is both the default and the correct reading of a
+	// client that did not declare the property.
+	outboundMax int
 }
 
 // NewCodec creates a new Codec with the specified maximum packet size.
@@ -96,6 +109,31 @@ func (c *Codec) Spec() Spec {
 // SetPool sets an optional buffer pool for decode operations.
 func (c *Codec) SetPool(p *bufferpool.Pool) {
 	c.pool = p
+}
+
+// SetOutboundMaxPacketSize bounds every packet this codec writes with the
+// client's Maximum Packet Size (MQTT 5.0 §3.1.2.11.4).
+//
+// The codec is the only layer that knows a packet's final wire size: the fixed
+// header's Remaining Length depends on the encoded body, and a property set is
+// variable, so the size cannot be derived from the packet struct. A value of 0
+// (the default, and the reading of a client that omitted the property) means
+// unbounded; a negative value is treated the same way.
+//
+// Once set, Encode refuses an oversized packet by returning ErrPacketTooLarge
+// without writing a single byte -- the "discard it without sending it" half of
+// [MQTT-3.1.2-25].
+func (c *Codec) SetOutboundMaxPacketSize(n int) {
+	if n < 0 {
+		n = 0
+	}
+	c.outboundMax = n
+}
+
+// OutboundMaxPacketSize returns the bound set by SetOutboundMaxPacketSize
+// (0 = unbounded).
+func (c *Codec) OutboundMaxPacketSize() int {
+	return c.outboundMax
 }
 
 // Decode reads a packet from the reader and returns the appropriate Packet type.
@@ -206,7 +244,42 @@ func validateFixedHeaderFlags(fh FixedHeader) error {
 }
 
 // Encode writes a packet to the writer.
+//
+// When the client declared a Maximum Packet Size (SetOutboundMaxPacketSize) the
+// size is enforced here, in one place, for every packet type: the packet is
+// assembled first and only handed to the writer once it fits. Streaming the
+// check into w instead would already have put the fixed header and part of the
+// body on the wire before the length was known, and the requirement is that the
+// server MUST NOT send such a packet at all ([MQTT-3.1.2-24]).
+//
+// A connection whose client declared no such limit takes the unguarded path,
+// which is byte-for-byte the pre-guard behaviour, so the common case pays
+// nothing for the guard.
 func (c *Codec) Encode(w io.Writer, p Packet) error {
+	if c.outboundMax <= 0 {
+		return c.encodeTo(w, p)
+	}
+
+	buf := encodeBufferPool.Get().(*bytes.Buffer)
+	defer func() {
+		buf.Reset()
+		encodeBufferPool.Put(buf)
+	}()
+	if err := c.encodeTo(buf, p); err != nil {
+		return err
+	}
+	// §3.1.2.11.4: Maximum Packet Size counts the whole MQTT Control Packet,
+	// fixed header and Remaining Length bytes included, which is exactly what
+	// the encoded buffer holds.
+	if buf.Len() > c.outboundMax {
+		return ErrPacketTooLarge
+	}
+	_, err := w.Write(buf.Bytes())
+	return err
+}
+
+// encodeTo encodes p straight onto w without any size guard.
+func (c *Codec) encodeTo(w io.Writer, p Packet) error {
 	c.syncSpec()
 	// Mirror Decode's reserved-nibble check before writing anything, so a
 	// malformed fixed header fails here instead of reaching the peer. Without
