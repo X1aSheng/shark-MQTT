@@ -1,6 +1,6 @@
 # Testing Guide
 
-Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。当前基线为 **481 个单元测试**、**170 个集成测试**、**61 个基准测试**（口径：源码中声明的顶层 `Test*` / `Benchmark*` 函数数，复现方式见 [测试统计](#测试统计)）。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
+Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。当前基线为 **485 个单元测试**、**170 个集成测试**、**61 个基准测试**（口径：源码中声明的顶层 `Test*` / `Benchmark*` 函数数，复现方式见 [测试统计](#测试统计)）。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
 
 ---
 
@@ -54,7 +54,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 |  +-- topic_filter_defect_test.go - topic filter 边界       |
 |  +-- windows_benchmark_test.go - Windows benchmark 隔离    |
 +------------------------------------------------------------+
-|  Unit Tests (481 declared)                                 |
+|  Unit Tests (485 declared)                                 |
 |  各包内 *_test.go 文件                                     |
 |  broker/ protocol/ client/ config/ plugin/ store/          |
 |  store/memory/ pkg/ api/ errs/                             |
@@ -67,7 +67,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 
 | 类型 | 数量 | 位置 |
 |------|------|------|
-| 单元测试 | 481 | 各包 `*_test.go`（含 `tests/defects/`） |
+| 单元测试 | 485 | 各包 `*_test.go`（含 `tests/defects/`） |
 | 集成测试 | 170 | `tests/integration/` |
 | 缺陷回归测试 | `tests/defects/` 7 个文件 / 8 个用例 + 包内回归 | `tests/defects/`、`broker/`、`client/`、`protocol/` |
 | 基准测试 | 61（Windows 本地实际执行 58） | `tests/bench/`、`plugin/`、`pkg/metrics/` |
@@ -98,7 +98,7 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 
 | 包 | 测试数 | 基准测试数 | 说明 |
 |----|--------|-----------|------|
-| broker/ | 211 | 0 | 核心逻辑：TopicTree、QoS 引擎、会话、遗嘱、认证、服务器、retained metrics、MQTT 5.0 属性中继与过期边界、重连重传、按协议版本门控的连接内重传、解码失败与 keepalive 超时的原因码回执、会话接管拆除（§3.1.4 确定性 DISCONNECT 0x8E）、入站 Receive Maximum 超限拆除（§3.3.4 DISCONNECT 0x93，预算取 CONNACK 广播值）、插件钩子上下文 |
+| broker/ | 215 | 0 | 核心逻辑：TopicTree、QoS 引擎、会话、遗嘱、认证、服务器、retained metrics、MQTT 5.0 属性中继与过期边界、重连重传、按协议版本门控的连接内重传、解码失败与 keepalive 超时的原因码回执、会话接管拆除（§3.1.4 确定性 DISCONNECT 0x8E）、入站 Receive Maximum 超限拆除（§3.3.4 DISCONNECT 0x93，预算取 CONNACK 广播值）、畸形主题名/过滤器的 Protocol Error 拆链（§4.7.1 / §4.13.1 DISCONNECT 0x82）、插件钩子上下文 |
 | protocol/ | 95 | 0 | MQTT 3.1 / 3.1.1 / 5.0 编解码、属性、报文 flags 校验（解码与编码对称）、流对齐不变量、属性出现次数与所属报文类型校验（Table 2-4，解码与编码双向）、DISCONNECT 原因码的协议版本门控、协议适配层（15 种报文；握手失败仍返回 codec，供服务端回 CONNACK） |
 | client/ | 40 | 0 | MQTT 客户端连接、发布、订阅、断开清理、QoS 2 入站 ack（PUBREC 保留 flags）与对端 reason-code 守卫 |
 | config/ | 24 | 0 | 配置解析与校验 |
@@ -111,7 +111,7 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 | pkg/logger/ | 7 | 0 | slog 日志适配 |
 | errs/ | 4 | 0 | 错误定义 |
 | tests/defects/ | 8 | 0 | 审查发现缺陷的最小复现和回归测试 |
-| **单元测试合计** | **481** | **4** | |
+| **单元测试合计** | **485** | **4** | |
 | tests/integration/ | 170 | 0 | 端到端集成测试（含部署验证） |
 | tests/bench/ | 0 | 57 | 全栈 TCP、E2E 数据验证、微基准 |
 | **基准测试合计** | | **61** | |
@@ -128,10 +128,10 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 | 指标 | 数量 |
 |------|------|
 | `.go` 文件 | 174（67 非测试 / 107 测试） |
-| 非测试代码行数 | 17,175 |
-| 测试代码行数 | 29,617 |
+| 非测试代码行数 | 17,214 |
+| 测试代码行数 | 29,954 |
 
-主要模块的非测试行数：`broker` 7,519（17 文件）· `protocol` 3,851（13）· `store` 1,459（10）·
+主要模块的非测试行数：`broker` 7,558（17 文件）· `protocol` 3,851（13）· `store` 1,459（10）·
 `client` 916（2）· `api` 532（2）· `pkg` 466（7）· `config` 366（2）· `plugin` 200（1）·
 `cmd` 160（1）· `errs` 43（1）；其余分布在 `examples/`、`scripts/`、`tests/`。
 
@@ -211,7 +211,7 @@ func TestTopicTree_Subscribe(t *testing.T) {
 | `retained_test.go` | 11 | 保留消息投递、更新、删除、通配符匹配、RetainHandling |
 | `qa_mqtt31_verify_test.go` | 8 | MQTT 3.1 语义专项验收 |
 | `unsubscribe_test.go` | 8 | 取消订阅、批量取消、通配符取消、重新订阅、系统主题隔离 |
-| `edge_case_test.go` | 5 | 认证失败、重复 ClientID、非法主题过滤器、连接数上限、空 ClientID |
+| `edge_case_test.go` | 5 | 认证失败、重复 ClientID、非法主题过滤器（畸形即 Protocol Error 拆链 0x82，非 SUBACK 失败码）、连接数上限、空 ClientID |
 | `persistent_session_test.go` | 5 | CleanSession=false 会话保持、重连恢复、重复 ClientID 接管 |
 | `retain_as_published_test.go` | 5 | Retain As Published 对出站 RETAIN 的影响（本轮修复回归） |
 | `topic_wildcard_test.go` | 5 | `+` / `#` 通配符匹配（含根级 `#` 与混合形式） |
