@@ -35,7 +35,18 @@ type Session struct {
 	// still awaiting PUBREL (see InboundQoS2).
 	inboundQoS2 map[uint16]*InboundQoS2
 	packetIDSeq uint16
-	ReceiveMax  uint16
+
+	// ReceiveMax is the server's INBOUND limit for this connection: the
+	// largest number of QoS 1/2 PUBLISH packets the server is willing to have
+	// unacknowledged from this client at once. It is the value the CONNACK
+	// advertises (MQTT 5.0 §3.2.2.3.3) and the threshold inbound enforcement
+	// applies (§3.3.4).
+	//
+	// It carries the server's own policy only. Property 0x21 arrives in both
+	// CONNECT and CONNACK meaning opposite things, and this field used to hold
+	// min(client, server), which made the CONNACK advertise the client's own
+	// declaration back at it as if it were the server's limit.
+	ReceiveMax uint16
 
 	// TopicAliasMax is the largest Topic Alias the server accepts FROM the
 	// client: the value advertised in the CONNACK (MQTT 5.0 §3.2.2.3.8) and
@@ -53,6 +64,18 @@ type Session struct {
 	// exists to keep apart. It is recorded so a future server-side alias
 	// sender knows its ceiling.
 	ClientTopicAliasMax uint16
+
+	// OutboundWindow is the largest number of QoS 1/2 PUBLISH packets the
+	// server may leave unacknowledged towards this client: the client's
+	// declared Receive Maximum (MQTT 5.0 §3.1.2.11.6), capped by the server's
+	// own send-side policy.
+	//
+	// The cap is explicitly allowed -- "The Server might choose to send fewer
+	// than Receive Maximum messages to the Client" -- so this is deliberately
+	// not the same number as ReceiveMax, and it is never advertised: a CONNACK
+	// states the server's inbound limit, not the window the server grants
+	// itself on the outbound side.
+	OutboundWindow uint16
 
 	mu sync.RWMutex
 
@@ -275,21 +298,22 @@ func (m *Manager) CreateSession(clientID string, connectPkt *protocol.ConnectPac
 	}
 
 	sess := &Session{
-		ClientID:      clientID,
-		Username:      connectPkt.Username,
-		IsClean:       connectPkt.Flags.CleanSession,
-		ProtocolVer:   connectPkt.ProtocolVersion,
-		KeepAlive:     connectPkt.KeepAlive,
-		ConnectedAt:   time.Now(),
-		LastActivity:  time.Now(),
-		Subscriptions: make(map[string]uint8),
-		SubOptions:    make(map[string]SubscriptionOptions),
-		Inflight:      make(map[uint16]*InflightMsg),
-		inboundQoS2:   make(map[uint16]*InboundQoS2),
-		packetIDSeq:   1,
-		ReceiveMax:    65535,
-		topicAliases:  make(map[uint16]string),
-		state:         StateConnected,
+		ClientID:       clientID,
+		Username:       connectPkt.Username,
+		IsClean:        connectPkt.Flags.CleanSession,
+		ProtocolVer:    connectPkt.ProtocolVersion,
+		KeepAlive:      connectPkt.KeepAlive,
+		ConnectedAt:    time.Now(),
+		LastActivity:   time.Now(),
+		Subscriptions:  make(map[string]uint8),
+		SubOptions:     make(map[string]SubscriptionOptions),
+		Inflight:       make(map[uint16]*InflightMsg),
+		inboundQoS2:    make(map[uint16]*InboundQoS2),
+		packetIDSeq:    1,
+		ReceiveMax:     65535,
+		OutboundWindow: 65535,
+		topicAliases:   make(map[uint16]string),
+		state:          StateConnected,
 	}
 
 	sess.stats.ConnectCount++
@@ -774,6 +798,7 @@ func (m *Manager) Restore(ctx context.Context, clientID string) (*Session, error
 		inboundQoS2:    make(map[uint16]*InboundQoS2),
 		packetIDSeq:    1,
 		ReceiveMax:     65535,
+		OutboundWindow: 65535,
 		topicAliases:   make(map[uint16]string),
 	}
 
@@ -916,9 +941,11 @@ func (s *Session) TrackSent(msgSize int) {
 }
 
 // CanSendOutbound reports whether another QoS 1/2 message can be sent to this
-// client without exceeding the ReceiveMaximum limit (MQTT 5.0 §4.9).
+// client without exceeding the client's Receive Maximum (MQTT 5.0 §4.9). It is
+// the outbound window, not the server's inbound limit, that gates this; see
+// OutboundWindow.
 func (s *Session) CanSendOutbound() bool {
-	return int(atomic.LoadInt32(&s.outboundUnacked)) < int(s.ReceiveMax)
+	return int(atomic.LoadInt32(&s.outboundUnacked)) < int(s.OutboundWindow)
 }
 
 // IncOutboundUnacked increments the outbound unacknowledged counter.

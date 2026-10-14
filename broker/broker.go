@@ -499,21 +499,33 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 		}
 	}
 
-	// Negotiate Receive Maximum (MQTT 5.0 §3.1.2.11.6).
-	// Use the smaller of client-requested and server-configured values.
+	// Negotiate Receive Maximum (MQTT 5.0 §3.1.2.11.6 / §3.2.2.3.3).
+	//
+	// Property identifier 0x21 names two independent limits that point in
+	// opposite directions, and conflating them was a defect. The CONNECT value
+	// is how many QoS 1/2 publishes the CLIENT will hold unacknowledged from
+	// the server; the CONNACK value is how many the SERVER will hold
+	// unacknowledged from the client. The broker kept min(client, server) in
+	// one field and used it for both, so a client that declared 1 -- asking to
+	// receive one concurrent publish -- was told the server would accept only
+	// one from it, which is a false statement about the server's capacity.
+	//
+	// The two assignments below are the whole fix: what is advertised and
+	// enforced inbound is the server's own figure, and the outbound window is
+	// the client's, capped by the server's policy.
+	//
+	// Both are per-Network-Connection, not session state (§3.1.2.11.6), so a
+	// resumed session re-negotiates them here rather than restoring them.
 	serverReceiveMax := uint16(b.opts.maxInflight)
 	if serverReceiveMax == 0 {
-		serverReceiveMax = 65535
+		serverReceiveMax = 65535 // not configured: unbounded inbound
 	}
 	clientReceiveMax := uint16(65535)
 	if connectPkt.Properties != nil && connectPkt.Properties.ReceiveMaximum != nil {
 		clientReceiveMax = *connectPkt.Properties.ReceiveMaximum
 	}
-	if clientReceiveMax < serverReceiveMax {
-		sess.ReceiveMax = clientReceiveMax
-	} else {
-		sess.ReceiveMax = serverReceiveMax
-	}
+	sess.ReceiveMax = serverReceiveMax
+	sess.OutboundWindow = min(clientReceiveMax, serverReceiveMax)
 
 	// Negotiate Topic Alias Maximum (MQTT 5.0 §3.1.2.11.5 / §3.2.2.3.8).
 	//

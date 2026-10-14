@@ -318,7 +318,7 @@ func TestSessionInflight(t *testing.T) {
 // TestSessionOutboundBuffer verifies QoS 1/2 deliveries are buffered when the
 // client's receive window is full and popped once a slot frees (P2-14).
 func TestSessionOutboundBuffer(t *testing.T) {
-	sess := &Session{ReceiveMax: 1}
+	sess := &Session{OutboundWindow: 1}
 	sess.IncOutboundUnacked()
 	if sess.CanSendOutbound() {
 		t.Fatal("expected receive window to be full with 1 unacked")
@@ -356,7 +356,7 @@ func TestSessionOutboundBuffer(t *testing.T) {
 // messages once maxBufferedOutbound is reached, so a client that never
 // acknowledges cannot exhaust broker memory (R6).
 func TestOutboundBufferBounded(t *testing.T) {
-	sess := &Session{ReceiveMax: 1}
+	sess := &Session{OutboundWindow: 1}
 	sess.IncOutboundUnacked() // window full
 	pkt := &protocol.PublishPacket{}
 	pkt.FixedHeader.PacketType = protocol.PacketTypePublish
@@ -383,7 +383,7 @@ func TestOutboundBufferBounded(t *testing.T) {
 // TestOutboundUnackedFloor verifies spurious acknowledgments cannot drive the
 // flow-control counter below zero (P2-16).
 func TestOutboundUnackedFloor(t *testing.T) {
-	sess := &Session{ReceiveMax: 5}
+	sess := &Session{OutboundWindow: 5}
 	sess.IncOutboundUnacked()
 	sess.IncOutboundUnacked()
 

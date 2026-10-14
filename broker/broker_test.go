@@ -698,7 +698,9 @@ func TestBroker_ConnAckTopicAliasMaxAdvertisesServerLimit(t *testing.T) {
 // ─── MQTT 5.0 Receive Maximum ────────────────────────────
 
 func TestReceiveMaxSessionDefault(t *testing.T) {
-	// Session created without explicit ReceiveMaximum should default to 65535.
+	// A Session built by the manager, before any CONNECT negotiation has run,
+	// must default both directions to 65535 (§3.1.2.11.6 / §3.2.2.3.3: an
+	// absent property means 65535).
 	mgr := NewManager(nil)
 	connectPkt := &protocol.ConnectPacket{
 		ProtocolName:    protocol.ProtocolNameMQTT,
@@ -710,6 +712,31 @@ func TestReceiveMaxSessionDefault(t *testing.T) {
 	sess := mgr.CreateSession("rm-default", connectPkt, false)
 	if sess.ReceiveMax != 65535 {
 		t.Errorf("default ReceiveMax = %d, want 65535", sess.ReceiveMax)
+	}
+	if sess.OutboundWindow != 65535 {
+		t.Errorf("default OutboundWindow = %d, want 65535", sess.OutboundWindow)
+	}
+}
+
+// TestOutboundWindowGatesSeparatelyFromInboundLimit pins which of the two
+// Receive Maximum directions gates the outbound window. They share property
+// identifier 0x21 but are independent numbers, so a session whose server-side
+// inbound limit is 100 and whose client declared 1 must stop after one
+// unacknowledged delivery -- and one whose client declared 30 must not be
+// capped at the server's inbound figure either.
+func TestOutboundWindowGatesSeparatelyFromInboundLimit(t *testing.T) {
+	sess := &Session{ReceiveMax: 100, OutboundWindow: 1}
+	sess.IncOutboundUnacked()
+	if sess.CanSendOutbound() {
+		t.Error("outbound window 1 with one unacked delivery must be full, regardless of ReceiveMax 100")
+	}
+
+	sess = &Session{ReceiveMax: 1, OutboundWindow: 30}
+	for i := 0; i < 29; i++ {
+		sess.IncOutboundUnacked()
+	}
+	if !sess.CanSendOutbound() {
+		t.Error("outbound window 30 with 29 unacked deliveries must still be open, regardless of ReceiveMax 1")
 	}
 }
 
