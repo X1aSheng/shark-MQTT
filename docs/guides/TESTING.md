@@ -129,7 +129,7 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 |------|------|
 | `.go` 文件 | 168（67 非测试 / 101 测试） |
 | 非测试代码行数 | 16,567 |
-| 测试代码行数 | 27,896 |
+| 测试代码行数 | 27,868 |
 
 主要模块的非测试行数：`broker` 7,047（17 文件）· `protocol` 3,727（13）· `store` 1,447（10）·
 `client` 916（2）· `api` 532（2）· `pkg` 466（7）· `config` 366（2）· `plugin` 200（1）·
