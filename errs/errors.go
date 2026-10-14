@@ -18,6 +18,7 @@ var (
 	ErrUnsupportedVersion = errors.New("unsupported protocol version")
 	ErrIncomplete         = errors.New("incomplete packet")
 	ErrPacketTooLarge     = errors.New("packet exceeds maximum size")
+	ErrProtocolError      = errors.New("protocol error")
 
 	// 认证错误
 	ErrAuthFailed    = errors.New("authentication failed")

@@ -50,7 +50,7 @@ func (c *Codec) decodeConnect(r io.Reader, fh FixedHeader) (*ConnectPacket, erro
 	// MQTT 5.0 properties
 	var props, willProps *Properties
 	if c.spec.Properties {
-		props, err = c.decodeProperties(reader)
+		props, err = c.decodeProperties(reader, locusConnect)
 		if err != nil {
 			return nil, err
 		}
@@ -65,7 +65,7 @@ func (c *Codec) decodeConnect(r io.Reader, fh FixedHeader) (*ConnectPacket, erro
 	var willMessage []byte
 	if flags.WillFlag {
 		if c.spec.Properties {
-			willProps, err = c.decodeProperties(reader)
+			willProps, err = c.decodeProperties(reader, locusWill)
 			if err != nil {
 				return nil, err
 			}
@@ -351,7 +351,7 @@ func (c *Codec) decodeConnAck(r io.Reader, fh FixedHeader) (*ConnAckPacket, erro
 	// MQTT 5.0: remaining bytes (if any) are properties, and all of them must
 	// be consumed (NEW-18).
 	if c.spec.Properties && fh.RemainingLength > 2 {
-		props, err = c.decodeProperties(reader)
+		props, err = c.decodeProperties(reader, locusConnAck)
 		if err != nil {
 			return nil, err
 		}

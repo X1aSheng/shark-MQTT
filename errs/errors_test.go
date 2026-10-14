@@ -20,6 +20,7 @@ func TestErrorSentinels(t *testing.T) {
 		{"ErrUnsupportedVersion", ErrUnsupportedVersion, "unsupported protocol version"},
 		{"ErrIncomplete", ErrIncomplete, "incomplete packet"},
 		{"ErrPacketTooLarge", ErrPacketTooLarge, "packet exceeds maximum size"},
+		{"ErrProtocolError", ErrProtocolError, "protocol error"},
 		{"ErrAuthFailed", ErrAuthFailed, "authentication failed"},
 		{"ErrNotAuthorized", ErrNotAuthorized, "not authorized"},
 		{"ErrInflightFull", ErrInflightFull, "inflight queue full"},

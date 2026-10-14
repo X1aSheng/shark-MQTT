@@ -204,12 +204,12 @@ func TestPropertiesValidateMQTT5ScalarConstraints(t *testing.T) {
 		})
 	}
 
-	_, err := codec.decodeProperties(bytes.NewReader([]byte{0x02, PropMaximumQoS, 0x02}))
+	_, err := codec.decodeProperties(bytes.NewReader([]byte{0x02, PropMaximumQoS, 0x02}), locusConnAck)
 	if !errors.Is(err, ErrMalformedPacket) {
 		t.Fatalf("decode invalid MaximumQoS error = %v, want %v", err, ErrMalformedPacket)
 	}
 
-	_, err = codec.decodeProperties(bytes.NewReader([]byte{0xFF, 0xFF, 0xFF, 0xFF, 0x7F}))
+	_, err = codec.decodeProperties(bytes.NewReader([]byte{0xFF, 0xFF, 0xFF, 0xFF, 0x7F}), locusConnAck)
 	if err == nil {
 		t.Fatal("expected overlong property length varint to fail")
 	}

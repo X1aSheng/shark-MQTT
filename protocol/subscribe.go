@@ -35,7 +35,7 @@ func (c *Codec) decodeSubscribe(r io.Reader, fh FixedHeader) (*SubscribePacket, 
 
 	var props *Properties
 	if c.spec.Properties {
-		props, err = c.decodeProperties(reader)
+		props, err = c.decodeProperties(reader, locusSubscribe)
 		if err != nil {
 			return nil, err
 		}
@@ -166,7 +166,7 @@ func (c *Codec) decodeSubAck(r io.Reader, fh FixedHeader) (*SubAckPacket, error)
 		defer putDecodeReader(reader)
 
 		if c.spec.Properties {
-			props, err = c.decodeProperties(reader)
+			props, err = c.decodeProperties(reader, locusSubAck)
 			if err != nil {
 				return nil, err
 			}
@@ -250,7 +250,7 @@ func (c *Codec) decodeUnsubscribe(r io.Reader, fh FixedHeader) (*UnsubscribePack
 
 	var props *Properties
 	if c.spec.Properties {
-		props, err = c.decodeProperties(reader)
+		props, err = c.decodeProperties(reader, locusUnsubscribe)
 		if err != nil {
 			return nil, err
 		}
@@ -345,7 +345,7 @@ func (c *Codec) decodeUnsubAck(r io.Reader, fh FixedHeader) (*UnsubAckPacket, er
 		defer putDecodeReader(reader)
 
 		if c.spec.Properties {
-			props, err = c.decodeProperties(reader)
+			props, err = c.decodeProperties(reader, locusUnsubAck)
 			if err != nil {
 				return nil, err
 			}
@@ -444,7 +444,7 @@ func (c *Codec) decodeDisconnect(r io.Reader, fh FixedHeader) (*DisconnectPacket
 	var props *Properties
 	if fh.RemainingLength > 1 {
 		var err error
-		props, err = c.decodeProperties(reader)
+		props, err = c.decodeProperties(reader, locusDisconnect)
 		if err != nil {
 			return nil, err
 		}
@@ -516,7 +516,7 @@ func (c *Codec) decodeAuth(r io.Reader, fh FixedHeader) (*AuthPacket, error) {
 	var props *Properties
 	if fh.RemainingLength > 1 {
 		var err error
-		props, err = c.decodeProperties(reader)
+		props, err = c.decodeProperties(reader, locusAuth)
 		if err != nil {
 			return nil, err
 		}

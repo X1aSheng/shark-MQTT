@@ -69,7 +69,7 @@ func (c *Codec) decodePublish(r io.Reader, fh FixedHeader) (*PublishPacket, erro
 		}
 		reader := decodeReader(data)
 		defer putDecodeReader(reader)
-		props, err = c.decodeProperties(reader)
+		props, err = c.decodeProperties(reader, locusPublish)
 		if err != nil {
 			return nil, fmt.Errorf("decode properties: %w", err)
 		}
@@ -327,7 +327,7 @@ func (c *Codec) decodeAckFields(r io.Reader, fh FixedHeader) (uint16, byte, *Pro
 
 	var props *Properties
 	if reader.Len() > 0 {
-		props, err = c.decodeProperties(reader)
+		props, err = c.decodeProperties(reader, locusAck)
 		if err != nil {
 			return 0, 0, nil, err
 		}

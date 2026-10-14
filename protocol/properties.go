@@ -116,7 +116,65 @@ var propTypeMap = map[byte]propType{
 	PropReasonString:           propTypeUTF8String,
 }
 
-func (c *Codec) decodeProperties(r io.Reader) (*Properties, error) {
+// propertyLocus names the packet (or the CONNECT Will) whose property section
+// is being decoded.
+//
+// It exists because the two MQTT 5.0 rules that govern a property section --
+// which Identifiers Table 2-4 allows in it, and which of those may appear more
+// than once -- are functions of the packet type, not of the Identifier alone.
+// A flat Properties struct cannot express either rule on its own, so the caller
+// has to say where it is decoding from.
+type propertyLocus uint8
+
+const (
+	locusConnect propertyLocus = iota
+	locusWill
+	locusConnAck
+	locusPublish
+	// locusAck covers PUBACK, PUBREC, PUBREL and PUBCOMP: Table 2-4 gives all
+	// four the same property set (Reason String and User Property only).
+	locusAck
+	locusSubscribe
+	locusSubAck
+	locusUnsubscribe
+	locusUnsubAck
+	locusDisconnect
+	locusAuth
+)
+
+// maxPropertyID bounds every Identifier Table 2-4 defines, which is also the
+// largest Identifier this version of the protocol uses: "all of the Property
+// Identifiers are one byte long" (non-normative comment on §2.2.2.2). It sizes
+// the occurrence bitmap in decodeProperties and lets an out-of-range Identifier
+// be told apart from a defined one before that bitmap is indexed.
+const maxPropertyID = 0x2A
+
+// propertyMayRepeat reports whether propID may appear more than once in the
+// property section identified by locus.
+//
+// Table 2-4 marks exactly two properties repeatable, and neither is repeatable
+// everywhere:
+//
+//   - User Property may be repeated in every packet type that defines it, and
+//     the relative order of the pairs is significant (§3.3.2.3.7).
+//   - Subscription Identifier may be repeated in a PUBLISH, where §3.3.2.3.8
+//     uses the repetition to report that one publication matched more than one
+//     subscription. It may NOT be repeated in a SUBSCRIBE: §3.8.2.1.2 states
+//     that it is a Protocol Error to include it more than once, because a
+//     SUBSCRIBE carries a single identifier that applies to every Topic Filter
+//     in its list.
+//
+// That second case is why the answer needs the locus rather than a fixed set of
+// Identifiers: the same Identifier is repeatable in one packet type and a
+// Protocol Error in another.
+func propertyMayRepeat(locus propertyLocus, propID byte) bool {
+	if propID == PropUserProperty {
+		return true
+	}
+	return propID == PropSubscriptionIdentifier && locus == locusPublish
+}
+
+func (c *Codec) decodeProperties(r io.Reader, locus propertyLocus) (*Properties, error) {
 	propLen, err := readVarInt(r)
 	if err != nil {
 		return nil, err
@@ -148,11 +206,31 @@ func (c *Codec) decodeProperties(r io.Reader) (*Properties, error) {
 	defer putDecodeReader(reader)
 
 	props := &Properties{}
+	// seen records the Identifiers already consumed in this section so a repeat
+	// can be rejected. A plain array indexed by Identifier is enough: the range
+	// test below is what makes the index safe, and it keeps the whole check
+	// allocation-free and local to one decodeProperties call.
+	var seen [maxPropertyID + 1]bool
 	for reader.Len() > 0 {
 		propType, err := reader.ReadByte()
 		if err != nil {
 			return nil, err
 		}
+		if propType > maxPropertyID {
+			return nil, fmt.Errorf("%w: unknown property ID 0x%02X", ErrMalformedPacket, propType)
+		}
+		// Repeating a property Table 2-4 allows only once is a Protocol Error,
+		// not a malformed packet: the bytes parse and the field is well typed,
+		// the peer simply sent a combination the specification forbids. It is
+		// worth rejecting because the alternative is a silent "last one wins",
+		// which changes meaning without leaving a trace -- a second
+		// Subscription Identifier on a SUBSCRIBE would otherwise be copied onto
+		// every Topic Filter in the list (see decodeSubscribe), so a filter the
+		// client tagged with one identifier would quietly acquire another's.
+		if seen[propType] && !propertyMayRepeat(locus, propType) {
+			return nil, fmt.Errorf("%w: property 0x%02X appears more than once", ErrProtocolError, propType)
+		}
+		seen[propType] = true
 		switch propType {
 		case PropPayloadFormat:
 			v, err := reader.ReadByte()
