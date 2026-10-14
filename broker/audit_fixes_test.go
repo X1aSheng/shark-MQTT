@@ -459,7 +459,7 @@ func TestBroker_PersistentSessionBoundToUsername(t *testing.T) {
 	// gracefully (the session is persisted with owner "alice").
 	aliceConn, aliceCodec := connect("shared-client", "alice", "alice-pw")
 	sub := &protocol.SubscribePacket{
-		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe},
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe, QoS: 1},
 		PacketID:    1,
 		Topics:      []protocol.TopicFilter{{Topic: "persist/t", QoS: 1}},
 	}
@@ -570,7 +570,7 @@ func TestBroker_SharedSubscriptionAuthorizedByRealFilter(t *testing.T) {
 	// granted (the ACL is evaluated against "team/station", not the raw
 	// "$share/g1/team/station").
 	sub := &protocol.SubscribePacket{
-		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe},
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe, QoS: 1},
 		PacketID:    1,
 		Topics:      []protocol.TopicFilter{{Topic: "$share/g1/team/station", QoS: 1}},
 	}
@@ -589,7 +589,7 @@ func TestBroker_SharedSubscriptionAuthorizedByRealFilter(t *testing.T) {
 	// A shared subscription whose real filter is wider than the ACL ("team/#"
 	// under "team/+") must be refused.
 	sub2 := &protocol.SubscribePacket{
-		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe},
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe, QoS: 1},
 		PacketID:    2,
 		Topics:      []protocol.TopicFilter{{Topic: "$share/g1/team/#", QoS: 1}},
 	}
@@ -788,7 +788,7 @@ func TestBroker_QoS2InboundStageSurvivesReconnect(t *testing.T) {
 		t.Fatalf("sub CONNACK: %v", err)
 	}
 	if err := subCodec.Encode(subConn, &protocol.SubscribePacket{
-		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe},
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe, QoS: 1},
 		PacketID:    1,
 		Topics:      []protocol.TopicFilter{{Topic: "h4/t", QoS: 0}},
 	}); err != nil {

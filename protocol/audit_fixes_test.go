@@ -295,7 +295,7 @@ func TestPropertySectionVersionGatedAcrossPackets(t *testing.T) {
 			return &PubRecPacket{FixedHeader: FixedHeader{PacketType: PacketTypePubRec}, PacketID: 1, Properties: props}
 		}},
 		{"PUBREL", func(_ uint8, props *Properties) Packet {
-			return &PubRelPacket{FixedHeader: FixedHeader{PacketType: PacketTypePubRel}, PacketID: 1, Properties: props}
+			return &PubRelPacket{FixedHeader: FixedHeader{PacketType: PacketTypePubRel, QoS: 1}, PacketID: 1, Properties: props}
 		}},
 		{"PUBCOMP", func(_ uint8, props *Properties) Packet {
 			return &PubCompPacket{FixedHeader: FixedHeader{PacketType: PacketTypePubComp}, PacketID: 1, Properties: props}

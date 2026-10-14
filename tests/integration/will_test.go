@@ -53,6 +53,7 @@ func subscribeToTopic(t *testing.T, conn net.Conn, codec *protocol.Codec, topic 
 	subPkt := &protocol.SubscribePacket{
 		FixedHeader: protocol.FixedHeader{
 			PacketType: protocol.PacketTypeSubscribe,
+			QoS:        1,
 		},
 		PacketID: packetID,
 		Topics: []protocol.TopicFilter{

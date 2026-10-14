@@ -302,7 +302,7 @@ func TestEncodeRejectsAdditionalMalformed(t *testing.T) {
 		{
 			name: "pubrel zero packet id",
 			packet: &PubRelPacket{
-				FixedHeader: FixedHeader{PacketType: PacketTypePubRel},
+				FixedHeader: FixedHeader{PacketType: PacketTypePubRel, QoS: 1},
 				PacketID:    0,
 			},
 		},
@@ -367,7 +367,7 @@ func TestMQTT5SubscribeWithProperties(t *testing.T) {
 
 	subID := uint32(42)
 	pkt := &SubscribePacket{
-		FixedHeader: FixedHeader{PacketType: PacketTypeSubscribe},
+		FixedHeader: FixedHeader{PacketType: PacketTypeSubscribe, QoS: 1},
 		PacketID:    99,
 		Topics: []TopicFilter{
 			{Topic: "sensor/+/temp", QoS: 2},

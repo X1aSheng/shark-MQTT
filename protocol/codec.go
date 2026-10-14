@@ -168,26 +168,37 @@ func (c *Codec) Decode(r io.Reader) (Packet, error) {
 	}
 }
 
+// validateFixedHeaderFlags enforces the reserved low nibble of the fixed
+// header listed in MQTT 3.1.1 Table 2.2 / MQTT 5.0 Table 2-2 for every packet
+// except PUBLISH ([MQTT-2.2.2-1]); a receiver that sees another value must
+// close the network connection ([MQTT-2.2.2-2]).
 func validateFixedHeaderFlags(fh FixedHeader) error {
 	if fh.PacketType == PacketTypePublish {
+		// PUBLISH is the only packet type whose flags carry meaning: DUP and
+		// RETAIN are free, and only QoS 3 (both QoS bits set) is forbidden.
 		if fh.QoS == 3 {
 			return ErrInvalidPacket
 		}
 		return nil
 	}
 
-	flags := (fh.QoS << 1)
-	if fh.Retain {
-		flags |= 0x01
-	}
-
 	switch fh.PacketType {
 	case PacketTypePubRel, PacketTypeSubscribe, PacketTypeUnsubscribe:
-		if flags != 0x02 {
+		// Reserved nibble 0b0010: QoS 1, DUP 0, RETAIN 0. QoS and RETAIN are
+		// checked, but the DUP bit deliberately is not: the reference
+		// implementation retransmits PUBREL / SUBSCRIBE / UNSUBSCRIBE with DUP
+		// set (smart-mqtt InflightQueue: PUB_REL_HEADER_DUP,
+		// SUBSCRIBE_HEADER_DUP), so rejecting 0b1010 would tear down those
+		// peers on every retransmission.
+		if fh.QoS != 1 || fh.Retain {
 			return ErrInvalidPacket
 		}
 	default:
-		if flags != 0x00 {
+		// Reserved nibble 0b0000: DUP, QoS and RETAIN must all be clear.
+		// DUP has to be tested explicitly -- folding only QoS and RETAIN into
+		// a bitmask would silently accept 0b1000 (e.g. a PINGREQ carrying the
+		// DUP bit), which is exactly the hole this branch closes.
+		if fh.Dup || fh.QoS != 0 || fh.Retain {
 			return ErrInvalidPacket
 		}
 	}
@@ -197,6 +208,16 @@ func validateFixedHeaderFlags(fh FixedHeader) error {
 // Encode writes a packet to the writer.
 func (c *Codec) Encode(w io.Writer, p Packet) error {
 	c.syncSpec()
+	// Mirror Decode's reserved-nibble check before writing anything, so a
+	// malformed fixed header fails here instead of reaching the peer. Without
+	// it a wrong nibble (the QoS 2 PUBREC bug: the QoS bit set on a packet
+	// whose reserved nibble is 0b0000) compiles, passes the unit tests and is
+	// only rejected by the real peer -- which tears the connection down.
+	if fh := p.GetFixedHeader(); fh != nil {
+		if err := validateFixedHeaderFlags(*fh); err != nil {
+			return err
+		}
+	}
 	switch pkt := p.(type) {
 	case *ConnectPacket:
 		return c.encodeConnect(w, pkt)

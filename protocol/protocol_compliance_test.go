@@ -54,7 +54,7 @@ func TestMQTT5AckPacketsRoundTripWithProperties(t *testing.T) {
 		{
 			name: "PUBREL",
 			packet: &PubRelPacket{
-				FixedHeader: FixedHeader{PacketType: PacketTypePubRel},
+				FixedHeader: FixedHeader{PacketType: PacketTypePubRel, QoS: 1},
 				PacketID:    12,
 				ReasonCode:  reason,
 				Properties:  props,
@@ -305,14 +305,14 @@ func TestEncodeRejectsMalformedPacketIdentifiersAndTopics(t *testing.T) {
 		{
 			name: "subscribe empty filters",
 			packet: &SubscribePacket{
-				FixedHeader: FixedHeader{PacketType: PacketTypeSubscribe},
+				FixedHeader: FixedHeader{PacketType: PacketTypeSubscribe, QoS: 1},
 				PacketID:    1,
 			},
 		},
 		{
 			name: "unsubscribe empty filters",
 			packet: &UnsubscribePacket{
-				FixedHeader: FixedHeader{PacketType: PacketTypeUnsubscribe},
+				FixedHeader: FixedHeader{PacketType: PacketTypeUnsubscribe, QoS: 1},
 				PacketID:    1,
 			},
 		},
