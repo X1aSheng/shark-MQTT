@@ -1620,13 +1620,12 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 		}
 	}
 
-	// Reject wildcard topics per MQTT spec §3.3.2
+	// A Topic Name containing '#' or '+' is not well-formed (§4.7.1.2
+	// [MQTT-4.7.1-1], §4.7.1.3 [MQTT-4.7.1-2]), which makes it a Protocol Error
+	// and the connection the thing that has to go -- not the publish, which is
+	// what the old PUBACK/PUBREC 0x90 answered. See rejectMalformedTopic.
 	if !protocol.ValidatePublishTopic(pkt.Topic) {
-		b.metrics.IncMessagesDropped("invalid_topic")
-		// QoS 1/2 need an acknowledgement (PUBACK or PUBREC, not a raw
-		// PUBACK for QoS 2) so the client releases the packet id; MQTT 5
-		// clients additionally learn the reason (audit).
-		b.ackDiscardedPublish(clientID, sess, pkt, protocol.ReasonCodeTopicNameInvalid)
+		b.rejectMalformedTopic(clientID, sess, "publish")
 		return
 	}
 
@@ -1790,6 +1789,44 @@ func (b *Broker) rejectInboundOverBudget(clientID string, sess *Session, pkt *pr
 		return
 	}
 	b.ackDiscardedPublish(clientID, sess, pkt, protocol.ReasonCodeSuccess)
+}
+
+// rejectMalformedTopic tears down a connection whose PUBLISH Topic Name,
+// SUBSCRIBE Topic Filter or UNSUBSCRIBE Topic Filter is not well-formed.
+//
+// MQTT 5.0 §4.7.1.2 [MQTT-4.7.1-1] and §4.7.1.3 [MQTT-4.7.1-2] put MUST-level
+// constraints on where '#' and '+' may appear, so a topic or filter that breaks
+// them is a Protocol Error. §4.13.1 requires a Server that detects a Protocol
+// Error to close the Network Connection [MQTT-4.13.1-1], sending a DISCONNECT
+// with 0x82 (Protocol Error) unless §3.14.2.1 defines a more specific code --
+// and it defines none for a malformed topic.
+//
+// The acknowledgement codes this path used to send are all defined for a topic
+// that is *not* malformed: Table 3-4 describes 0x90 (Topic Name invalid) as
+// "The Topic Name is not malformed, but is not accepted by this Client or
+// Server", and Tables 3-8/3-9 describe 0x8F (Topic Filter invalid) as
+// "correctly formed but is not allowed". Sending either for a malformed topic
+// told a conformant client the wrong thing; on an MQTT 3.1 connection, whose
+// SUBACK carries no failure code at all, it collapsed to 0x00 (Granted QoS 0),
+// which reports the malformed subscription as granted.
+//
+// No acknowledgement is sent for a QoS 1/2 PUBLISH that reaches here: the
+// DISCONNECT ends the exchange, and §4.13.1 makes closing the connection the
+// required action, not the ack.
+//
+// where names the entry point ("publish", "subscribe", "unsubscribe") so the
+// log line and the drop metric say which one tripped.
+//
+// The version gate inside closeProtocolViolationWithReason is what keeps an
+// MQTT 3.1 / 3.1.1 connection silent while still closing it. encodeDisconnect
+// would refuse the reason code on a pre-v5 codec anyway and write nothing, so
+// removing the gate changes no observable behaviour -- which is exactly why the
+// wire-level half of that guarantee is pinned by protocol.TestDisconnectVersionGuard
+// rather than by a broker test.
+func (b *Broker) rejectMalformedTopic(clientID string, sess *Session, where string) {
+	b.metrics.IncMessagesDropped("malformed_topic")
+	b.logger.Debug("malformed topic rejected", "clientID", clientID, "where", where)
+	b.closeProtocolViolationWithReason(clientID, sess, protocol.DisconnectProtocolError)
 }
 
 // ackDiscardedPublish acknowledges a QoS 1/2 PUBLISH that the broker decided
@@ -2005,15 +2042,17 @@ func (b *Broker) handleSubscribe(clientID string, sess *Session, pkt *protocol.S
 			var realFilter string
 			var ok bool
 			shareName, realFilter, ok = ParseSharedFilter(topic.Topic)
+			// A malformed shared filter is a malformed filter: same Protocol
+			// Error, same teardown (see rejectMalformedTopic).
 			if !ok || !protocol.ValidateTopicFilter(realFilter) {
-				reasonCodes[i] = failCode
-				continue
+				b.rejectMalformedTopic(clientID, sess, "subscribe-shared")
+				return
 			}
 			aclFilter = realFilter
 			shared = true
 		} else if !protocol.ValidateTopicFilter(topic.Topic) {
-			reasonCodes[i] = failCode
-			continue
+			b.rejectMalformedTopic(clientID, sess, "subscribe")
+			return
 		}
 
 		// Check authorization against the effective (non-shared) filter.
@@ -2089,11 +2128,13 @@ func (b *Broker) handleUnsubscribe(clientID string, sess *Session, pkt *protocol
 		// Handle shared subscription unsubscribe
 		if IsSharedSubscription(topic) {
 			shareName, realFilter, ok := ParseSharedFilter(topic)
+			// Malformed shared filter: same Protocol Error and teardown as a
+			// malformed plain one (see rejectMalformedTopic). The old 0x8F
+			// (Topic Filter invalid) is defined for a filter that is
+			// "correctly formed but is not allowed", which this is not.
 			if !ok || !protocol.ValidateTopicFilter(realFilter) {
-				if reasonCodes != nil {
-					reasonCodes = append(reasonCodes, protocol.ReasonCodeTopicFilterInvalid)
-				}
-				continue
+				b.rejectMalformedTopic(clientID, sess, "unsubscribe-shared")
+				return
 			}
 			b.topics.UnsubscribeShared(shareName, realFilter, clientID)
 			sess.RemoveSubscription(topic)
@@ -2104,10 +2145,8 @@ func (b *Broker) handleUnsubscribe(clientID string, sess *Session, pkt *protocol
 		}
 
 		if !protocol.ValidateTopicFilter(topic) {
-			if reasonCodes != nil {
-				reasonCodes = append(reasonCodes, protocol.ReasonCodeTopicFilterInvalid)
-			}
-			continue
+			b.rejectMalformedTopic(clientID, sess, "unsubscribe")
+			return
 		}
 		b.topics.Unsubscribe(topic, clientID)
 		sess.RemoveSubscription(topic)

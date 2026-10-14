@@ -178,70 +178,63 @@ func TestMQTT31ConnAckSessionPresentZero(t *testing.T) {
 	}
 }
 
-// TestMQTT31SubAckNoFailureCode verifies an MQTT 3.1 SUBACK never carries the
-// 0x80 subscription-failure code (introduced in 3.1.1): a rejected filter
-// yields a granted QoS 0 (0x00) instead. The 3.1.1 control uses the same
-// invalid filter and must still get 0x80.
-func TestMQTT31SubAckNoFailureCode(t *testing.T) {
+// TestMQTT31MalformedFilterTearsDown drives a SUBSCRIBE whose Topic Filter is
+// not well-formed on MQTT 3.1 and 3.1.1, the two versions where the Server
+// cannot say why it is giving up: they have no server DISCONNECT at all.
+//
+// MQTT 5.0 §4.7.1.2 [MQTT-4.7.1-1] and §4.7.1.3 [MQTT-4.7.1-2] make a malformed
+// filter a Protocol Error, and §4.13.1 [MQTT-4.13.1-1] makes closing the
+// Network Connection mandatory -- in every version, since the requirement is
+// not version-gated. So neither version may answer with a SUBACK.
+//
+// This replaces TestMQTT31SubAckNoFailureCode, which used the malformed filter
+// to exercise the 3.1 / 3.1.1 SUBACK failure-code difference. That difference
+// is real and still worth pinning, but the malformed filter is no longer a
+// per-filter refusal: the surviving coverage is
+// TestQA_3_1_SubAckNoFailureCodeUnderACL, which drives the same difference
+// through the ACL -- the one path that still legitimately answers a per-filter
+// failure. On 3.1 that path yields 0x00, on 3.1.1 it yields 0x80.
+func TestMQTT31MalformedFilterTearsDown(t *testing.T) {
 	brk := testBroker(t)
 
-	// An invalid filter ("#" is not the last level) is rejected server-side.
-	const badFilter = "a/#/b"
+	for _, tc := range []struct {
+		name    string
+		proto   string
+		version byte
+	}{
+		{"mqtt31", protocol.ProtocolNameMQIsdp, protocol.Version31},
+		{"mqtt311", protocol.ProtocolNameMQTT, protocol.Version311},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := dialTestBroker(t, brk)
+			defer conn.Close()
+			codec := protocol.NewCodec(0)
+			if ca, err := connectVersion(t, conn, codec, tc.proto, tc.version,
+				"malformed-filter-"+tc.name, true); err != nil {
+				t.Fatalf("connect: %v", err)
+			} else if ca.ReasonCode != protocol.ConnAckAccepted {
+				t.Fatalf("CONNACK = 0x%02X, want 0x00", ca.ReasonCode)
+			}
 
-	subscribe := func(conn net.Conn, codec *protocol.Codec) *protocol.SubAckPacket {
-		t.Helper()
-		sub := &protocol.SubscribePacket{
-			FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe, QoS: 1},
-			PacketID:    1,
-			Topics:      []protocol.TopicFilter{{Topic: badFilter, QoS: 0}},
-		}
-		conn.SetDeadline(time.Now().Add(2 * time.Second))
-		if err := codec.Encode(conn, sub); err != nil {
-			t.Fatalf("encode SUBSCRIBE: %v", err)
-		}
-		conn.SetDeadline(time.Now().Add(2 * time.Second))
-		resp, err := codec.Decode(conn)
-		if err != nil {
-			t.Fatalf("decode SUBACK: %v", err)
-		}
-		subAck, ok := resp.(*protocol.SubAckPacket)
-		if !ok {
-			t.Fatalf("expected SUBACK, got %T", resp)
-		}
-		return subAck
-	}
+			sub := &protocol.SubscribePacket{
+				FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe, QoS: 1},
+				PacketID:    1,
+				Topics:      []protocol.TopicFilter{{Topic: "a/#/b", QoS: 0}},
+			}
+			conn.SetDeadline(time.Now().Add(2 * time.Second))
+			if err := codec.Encode(conn, sub); err != nil {
+				t.Fatalf("encode SUBSCRIBE: %v", err)
+			}
 
-	// --- MQTT 3.1: no 0x80 failure code. ---
-	conn31 := dialTestBroker(t, brk)
-	codec31 := protocol.NewCodec(0)
-	if ca, err := connectVersion(t, conn31, codec31,
-		protocol.ProtocolNameMQIsdp, protocol.Version31, "mqtt31-suback", true); err != nil {
-		t.Fatalf("3.1 connect: %v", err)
-	} else if ca.ReasonCode != protocol.ConnAckAccepted {
-		t.Fatalf("3.1 CONNACK = 0x%02X, want 0x00", ca.ReasonCode)
-	}
-	subAck31 := subscribe(conn31, codec31)
-	if len(subAck31.ReasonCodes) != 1 {
-		t.Fatalf("3.1 SUBACK reason codes = %v, want exactly 1 entry", subAck31.ReasonCodes)
-	}
-	if subAck31.ReasonCodes[0] == protocol.SubAckFailure {
-		t.Fatalf("3.1 SUBACK returned 0x80; MQTT 3.1 has no subscription-failure code")
-	}
-	if subAck31.ReasonCodes[0] != protocol.ReasonCodeGrantedQoS0 {
-		t.Errorf("3.1 SUBACK code = 0x%02X, want 0x00 (granted QoS 0)", subAck31.ReasonCodes[0])
-	}
-
-	// --- MQTT 3.1.1 control: 0x80 is still used. ---
-	conn311 := dialTestBroker(t, brk)
-	codec311 := protocol.NewCodec(0)
-	if ca, err := connectVersion(t, conn311, codec311,
-		protocol.ProtocolNameMQTT, protocol.Version311, "mqtt311-suback", true); err != nil {
-		t.Fatalf("3.1.1 connect: %v", err)
-	} else if ca.ReasonCode != protocol.ConnAckAccepted {
-		t.Fatalf("3.1.1 CONNACK = 0x%02X, want 0x00", ca.ReasonCode)
-	}
-	subAck311 := subscribe(conn311, codec311)
-	if len(subAck311.ReasonCodes) != 1 || subAck311.ReasonCodes[0] != protocol.SubAckFailure {
-		t.Errorf("3.1.1 SUBACK reason codes = %v, want [0x80]", subAck311.ReasonCodes)
+			// Nothing may come back -- no SUBACK, and no DISCONNECT either,
+			// because these versions have no server DISCONNECT -- but the
+			// connection must be closed.
+			conn.SetDeadline(time.Now().Add(2 * time.Second))
+			pkt, err := codec.Decode(conn)
+			if err == nil {
+				t.Fatalf("%s answered the malformed filter with %T; §4.13.1 requires the connection to be "+
+					"closed with no per-filter acknowledgement", tc.name, pkt)
+			}
+		})
 	}
 }

@@ -341,18 +341,39 @@ func TestQA_3_1_SubAckNoFailureCodeUnderACL(t *testing.T) {
 	check(protocol.ProtocolNameMQTT, protocol.Version311, protocol.SubAckFailure)          // 0x80
 }
 
-// TestQA_3_1_1_SubAckFailureStillReturns0x80 is an explicit control that the
-// 3.1 change did not leak into 3.1.1 via the invalid-filter path too.
-func TestQA_3_1_1_SubAckFailureStillReturns0x80(t *testing.T) {
+// TestQA_3_1_1_MalformedFilterTearsDown is the explicit control that the
+// malformed-filter teardown is not gated to MQTT 5.0: §4.13.1
+// [MQTT-4.13.1-1] applies to 3.1.1 as well, where the only difference is that
+// no DISCONNECT can be sent.
+//
+// It replaces a control that drove the invalid-filter path and expected a
+// SUBACK 0x80. That path no longer exists -- a malformed filter is a Protocol
+// Error, not a per-filter refusal -- and the 3.1 / 3.1.1 SUBACK failure-code
+// difference it was guarding is covered through the ACL by
+// TestQA_3_1_SubAckNoFailureCodeUnderACL.
+func TestQA_3_1_1_MalformedFilterTearsDown(t *testing.T) {
 	brk := testBroker(t)
 	conn := dialTestBroker(t, brk)
+	defer conn.Close()
 	codec := protocol.NewCodec(0)
-	if _, err := connectVersion(t, conn, codec, protocol.ProtocolNameMQTT, protocol.Version311, "qa311-invalid-filter", true); err != nil {
+	if _, err := connectVersion(t, conn, codec, protocol.ProtocolNameMQTT, protocol.Version311, "qa311-malformed-filter", true); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	sa := qaSubscribe(t, conn, codec, 1, "a/#/b", 0)
-	if len(sa.ReasonCodes) != 1 || sa.ReasonCodes[0] != protocol.SubAckFailure {
-		t.Errorf("3.1.1 SUBACK = %v, want [0x80]", sa.ReasonCodes)
+
+	sub := &protocol.SubscribePacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe, QoS: 1},
+		PacketID:    1,
+		Topics:      []protocol.TopicFilter{{Topic: "a/#/b", QoS: 0}},
+	}
+	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := codec.Encode(conn, sub); err != nil {
+		t.Fatalf("encode SUBSCRIBE: %v", err)
+	}
+
+	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if pkt, err := codec.Decode(conn); err == nil {
+		t.Fatalf("3.1.1 answered the malformed filter with %T; the connection must be closed instead, "+
+			"with no SUBACK and no DISCONNECT", pkt)
 	}
 }
 

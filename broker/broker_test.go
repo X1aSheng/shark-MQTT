@@ -1013,3 +1013,303 @@ func TestBroker_WillAuthDenied(t *testing.T) {
 		t.Fatal("subscriber received a message for a will on a non-authorized topic")
 	}
 }
+
+// malformedTopicTeardown drives one malformed-topic scenario against a broker
+// whose only connection is a net.Pipe pair, and returns whatever the broker
+// managed to write before the socket went away.
+//
+// The scenario is expressed as a closure because the three entry points
+// (handlePublish, handleSubscribe, handleUnsubscribe) take different packet
+// types; keeping them in one table would need an interface this repo does not
+// have for control packets. The session is passed in because every teardown
+// gate reads the negotiated protocol version from it.
+//
+// On the pre-v5 cases the assertion is that nothing is written and the
+// connection still goes away. That pins the wire contract, but it cannot tell a
+// working broker-side version gate from a removed one: encodeDisconnect refuses
+// a reason code on a pre-v5 codec and writes nothing, so the same empty stream
+// results either way. The layer that actually guards the wire is pinned
+// separately by protocol.TestDisconnectVersionGuard; the broker-side gate in
+// rejectMalformedTopic is kept for the same reason the other teardown paths
+// keep theirs -- it does not depend on that codec behaviour, and it is what
+// decides whether closeProtocolViolationWithReason is reached at all.
+func malformedTopicTeardown(t *testing.T, name string, version protocol.Version, drive func(b *Broker, clientID string, sess *Session)) []protocol.Packet {
+	t.Helper()
+
+	clientID := "mt-" + name
+	b := New(WithAuth(AllowAllAuth{}))
+	sess := b.sessions.CreateSession(clientID, &protocol.ConnectPacket{
+		Flags:           protocol.ConnectFlags{CleanSession: true},
+		KeepAlive:       60,
+		ProtocolVersion: version,
+		ClientID:        clientID,
+	}, false)
+
+	collect, _ := inboundWirePump(t, b, clientID, version)
+	drive(b, clientID, sess)
+	return collect()
+}
+
+// TestMalformedTopicNameIsProtocolError covers a PUBLISH whose Topic Name is not
+// well-formed.
+//
+// MQTT 5.0 §4.7.1.2 [MQTT-4.7.1-1] and §4.7.1.3 [MQTT-4.7.1-2] put MUST-level
+// constraints on where '#' and '+' may appear, so a Topic Name containing one is
+// a Protocol Error. §4.13.1 requires a Server that detects a Protocol Error to
+// close the Network Connection [MQTT-4.13.1-1], sending a DISCONNECT with 0x82
+// (Protocol Error) unless §3.14.2.1 defines a more specific code -- and it
+// defines none for this case.
+//
+// The broker used to answer with a PUBACK/PUBREC carrying 0x90 (Topic Name
+// invalid) and keep the connection open. Table 3-4 defines 0x90 as "The Topic
+// Name is not malformed, but is not accepted by this Client or Server", so it
+// was the wrong code for a malformed name; and on an MQTT 3.1 connection
+// ackDiscardedPublish collapsed the reason to 0x00, which is a success
+// acknowledgement for a publish that was never routed.
+func TestMalformedTopicNameIsProtocolError(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		version protocol.Version
+		qos     byte
+	}{
+		{"mqtt50_qos1", protocol.Version50, 1},
+		{"mqtt50_qos2", protocol.Version50, 2},
+		{"mqtt311_qos1", protocol.Version311, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			qos := tc.qos
+			pkts := malformedTopicTeardown(t, tc.name, tc.version, func(b *Broker, clientID string, sess *Session) {
+				b.handlePublish(clientID, sess, &protocol.PublishPacket{
+					FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: qos},
+					PacketID:    7,
+					Topic:       "sport#", // '#' is illegal in a Topic Name
+					Payload:     []byte("x"),
+				})
+			})
+
+			if tc.version != protocol.Version50 {
+				if len(pkts) != 0 {
+					t.Fatalf("broker wrote %d packets (%T), want none: MQTT 3.1.1 has no server DISCONNECT, "+
+						"but the connection must still be closed rather than acknowledged", len(pkts), pkts)
+				}
+				return
+			}
+			if len(pkts) != 1 {
+				t.Fatalf("broker wrote %d packets (%T), want 1 DISCONNECT", len(pkts), pkts)
+			}
+			disc, ok := pkts[0].(*protocol.DisconnectPacket)
+			if !ok {
+				t.Fatalf("the malformed publish was answered with %T; §4.13.1 requires the connection to be "+
+					"closed with a DISCONNECT carrying 0x82, and Table 3-4 reserves 0x90 for a Topic Name that is "+
+					"\"not malformed\"", pkts[0])
+			}
+			if disc.ReasonCode != protocol.DisconnectProtocolError {
+				t.Errorf("DISCONNECT reason = 0x%02X, want 0x82 (Protocol Error)", disc.ReasonCode)
+			}
+		})
+	}
+}
+
+// TestMalformedSubscribeFilterIsProtocolError covers a SUBSCRIBE whose Topic
+// Filter is not well-formed. Same reasoning as
+// TestMalformedTopicNameIsProtocolError, applied to §3.8.4.
+//
+// The old behaviour was worse here than for PUBLISH: subAckFailureCode returns
+// 0x00 (Granted QoS 0) for an MQTT 3.1 connection, whose SUBACK has no failure
+// code at all, so a client subscribing to "sport#" was told its malformed
+// subscription had been granted.
+func TestMalformedSubscribeFilterIsProtocolError(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		version protocol.Version
+	}{
+		{"mqtt50", protocol.Version50},
+		{"mqtt311", protocol.Version311},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pkts := malformedTopicTeardown(t, tc.name, tc.version, func(b *Broker, clientID string, sess *Session) {
+				b.handleSubscribe(clientID, sess, &protocol.SubscribePacket{
+					FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe},
+					PacketID:    3,
+					Topics:      []protocol.TopicFilter{{Topic: "sport#", QoS: 1}},
+				})
+			})
+
+			if tc.version != protocol.Version50 {
+				if len(pkts) != 0 {
+					t.Fatalf("broker wrote %d packets (%T), want none: MQTT 3.1.1 has no server DISCONNECT, "+
+						"but the connection must still be closed rather than answered 0x00 (Granted QoS 0)",
+						len(pkts), pkts)
+				}
+				return
+			}
+			if len(pkts) != 1 {
+				t.Fatalf("broker wrote %d packets (%T), want 1 DISCONNECT", len(pkts), pkts)
+			}
+			disc, ok := pkts[0].(*protocol.DisconnectPacket)
+			if !ok {
+				t.Fatalf("the malformed subscribe was answered with %T; §4.13.1 requires the connection to be "+
+					"closed with a DISCONNECT carrying 0x82, and 0x8F is defined for a Topic Filter that is "+
+					"\"correctly formed but is not allowed\"", pkts[0])
+			}
+			if disc.ReasonCode != protocol.DisconnectProtocolError {
+				t.Errorf("DISCONNECT reason = 0x%02X, want 0x82 (Protocol Error)", disc.ReasonCode)
+			}
+		})
+	}
+}
+
+// TestMalformedUnsubscribeFilterIsProtocolError covers an UNSUBSCRIBE whose
+// Topic Filter is not well-formed, the third entry point with the same defect.
+//
+// Here the old code did send a Table 3-9 code (0x8F) on an MQTT 5 connection, but
+// 0x8F is defined for a filter that is "correctly formed but is not allowed",
+// and the connection stayed open either way.
+func TestMalformedUnsubscribeFilterIsProtocolError(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		version protocol.Version
+	}{
+		{"mqtt50", protocol.Version50},
+		{"mqtt311", protocol.Version311},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pkts := malformedTopicTeardown(t, tc.name, tc.version, func(b *Broker, clientID string, sess *Session) {
+				b.handleUnsubscribe(clientID, sess, &protocol.UnsubscribePacket{
+					FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeUnsubscribe},
+					PacketID:    5,
+					Topics:      []string{"sport#"},
+				})
+			})
+
+			if tc.version != protocol.Version50 {
+				if len(pkts) != 0 {
+					t.Fatalf("broker wrote %d packets (%T), want none: MQTT 3.1.1 has no server DISCONNECT, "+
+						"but the connection must still be closed", len(pkts), pkts)
+				}
+				return
+			}
+			if len(pkts) != 1 {
+				t.Fatalf("broker wrote %d packets (%T), want 1 DISCONNECT", len(pkts), pkts)
+			}
+			disc, ok := pkts[0].(*protocol.DisconnectPacket)
+			if !ok {
+				t.Fatalf("the malformed unsubscribe was answered with %T; §4.13.1 requires the connection to be "+
+					"closed with a DISCONNECT carrying 0x82", pkts[0])
+			}
+			if disc.ReasonCode != protocol.DisconnectProtocolError {
+				t.Errorf("DISCONNECT reason = 0x%02X, want 0x82 (Protocol Error)", disc.ReasonCode)
+			}
+		})
+	}
+}
+
+// TestWellFormedTopicIsNotTornDown is the control for the three tests above:
+// well-formed Topic Names and Topic Filters must still be acknowledged, and the
+// connection must survive. Without it a change that tore down every publish or
+// subscribe would pass those tests just as well.
+//
+// The connection-survival assertion is made by driving two requests in a row and
+// requiring an answer to both: if the first request had torn the connection
+// down, the second write would have nowhere to go.
+func TestWellFormedTopicIsNotTornDown(t *testing.T) {
+	b := New(WithAuth(AllowAllAuth{}))
+	sess := b.sessions.CreateSession("wf", &protocol.ConnectPacket{
+		Flags:           protocol.ConnectFlags{CleanSession: true},
+		KeepAlive:       60,
+		ProtocolVersion: protocol.Version50,
+		ClientID:        "wf",
+	}, false)
+
+	serverConn, clientConn := net.Pipe()
+	t.Cleanup(func() {
+		clientConn.Close()
+		serverConn.Close()
+	})
+	codec := protocol.NewCodecForVersion(0, protocol.Version50)
+	b.mu.Lock()
+	b.connections["wf"] = &clientState{conn: serverConn, codec: codec}
+	b.mu.Unlock()
+
+	// driveThenRead starts the reader before running drive, and waits for
+	// exactly one decodable packet. The reader has to be running first:
+	// net.Pipe delivers per Write, so a synchronous broker write with no
+	// reader on the other end blocks forever. A timeout means the broker never
+	// answered, which is what a teardown looks like from this side.
+	driveThenRead := func(what string, drive func()) protocol.Packet {
+		t.Helper()
+		type result struct {
+			pkt protocol.Packet
+			err error
+		}
+		ch := make(chan result, 1)
+		go func() {
+			pkt, err := codec.Decode(clientConn)
+			ch <- result{pkt, err}
+		}()
+		drive()
+		select {
+		case r := <-ch:
+			if r.err != nil {
+				t.Fatalf("decode %s: %v", what, r.err)
+			}
+			return r.pkt
+		case <-time.After(time.Second):
+			t.Fatalf("broker never wrote %s; the connection looks torn down", what)
+			return nil
+		}
+	}
+
+	// 1. Well-formed QoS 1 publish -> PUBACK, twice, to prove the connection lives.
+	for i := 0; i < 2; i++ {
+		id := uint16(10 + i)
+		got := driveThenRead("PUBACK", func() {
+			b.handlePublish("wf", sess, &protocol.PublishPacket{
+				FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 1},
+				PacketID:    id,
+				Topic:       "sport/tennis",
+				Payload:     []byte("x"),
+			})
+		})
+		ack, ok := got.(*protocol.PubAckPacket)
+		if !ok {
+			t.Fatalf("well-formed publish answered with %T, want *protocol.PubAckPacket", got)
+		}
+		if ack.ReasonCode != protocol.ReasonCodeSuccess {
+			t.Errorf("PUBACK reason = 0x%02X, want 0x00", ack.ReasonCode)
+		}
+	}
+
+	// 2. Well-formed subscribe -> SUBACK granting the requested QoS.
+	gotSub := driveThenRead("SUBACK", func() {
+		b.handleSubscribe("wf", sess, &protocol.SubscribePacket{
+			FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe},
+			PacketID:    20,
+			Topics:      []protocol.TopicFilter{{Topic: "sport/+", QoS: 1}},
+		})
+	})
+	sub, ok := gotSub.(*protocol.SubAckPacket)
+	if !ok {
+		t.Fatalf("well-formed subscribe answered with %T, want *protocol.SubAckPacket", gotSub)
+	}
+	if len(sub.ReasonCodes) != 1 || sub.ReasonCodes[0] != 1 {
+		t.Errorf("SUBACK reason codes = %v, want [1] (Granted QoS 1)", sub.ReasonCodes)
+	}
+
+	// 3. Well-formed unsubscribe -> UNSUBACK success, even with no prior
+	// subscription: [MQTT-3.10.4-5] requires a response either way.
+	gotUnsub := driveThenRead("UNSUBACK", func() {
+		b.handleUnsubscribe("wf", sess, &protocol.UnsubscribePacket{
+			FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeUnsubscribe},
+			PacketID:    21,
+			Topics:      []string{"sport/tennis"},
+		})
+	})
+	unsub, ok := gotUnsub.(*protocol.UnsubAckPacket)
+	if !ok {
+		t.Fatalf("well-formed unsubscribe answered with %T, want *protocol.UnsubAckPacket", gotUnsub)
+	}
+	if len(unsub.ReasonCodes) != 1 || unsub.ReasonCodes[0] != protocol.ReasonCodeSuccess {
+		t.Errorf("UNSUBACK reason codes = %v, want [0x00]", unsub.ReasonCodes)
+	}
+}

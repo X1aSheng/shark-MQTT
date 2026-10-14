@@ -131,44 +131,67 @@ func TestDuplicateClientID(t *testing.T) {
 }
 
 // TestInvalidTopicFilter tests that invalid topic filters are rejected.
+// TestInvalidTopicFilter drives a SUBSCRIBE whose Topic Filter is not
+// well-formed. MQTT 5.0 §4.7.1.2 [MQTT-4.7.1-1] and §4.7.1.3 [MQTT-4.7.1-2]
+// put MUST-level constraints on where '#' and '+' may appear, so a filter that
+// breaks them is a Protocol Error, and §4.13.1 requires the Server to close the
+// Network Connection with a DISCONNECT carrying 0x82 (Protocol Error).
+//
+// This used to assert a SUBACK carrying 0x80 instead. That was the wrong
+// answer twice over: 0x8F (Topic Filter invalid) is the code defined for a
+// filter that is "correctly formed but is not allowed", and 0x80 (Unspecified
+// error) says nothing while leaving the connection up -- so a conformant client
+// was told its malformed subscription had merely been refused, and could keep
+// sending.
+//
+// Each filter gets its own connection: the first one tears the connection down,
+// so a single connection cannot carry all three.
 func TestInvalidTopicFilter(t *testing.T) {
-	b := testBroker(t)
-	conn := dialTestBroker(t, b)
-	codec := protocol.NewCodec(0)
-	connectClient(t, conn, codec, "invalid-filter-client")
-
 	invalidFilters := []string{
 		"a/#/b", // # must be last
 		"+foo",  // + must be entire level
 		"a+/b",  // + must be entire level
 	}
 
-	for i, filter := range invalidFilters {
-		subPkt := &protocol.SubscribePacket{
-			FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe, QoS: 1},
-			PacketID:    uint16(i + 1),
-			Topics:      []protocol.TopicFilter{{Topic: filter, QoS: 0}},
-		}
-		conn.SetDeadline(time.Now().Add(2 * time.Second))
-		if err := codec.Encode(conn, subPkt); err != nil {
-			t.Fatalf("encode SUBSCRIBE: %v", err)
-		}
+	for _, filter := range invalidFilters {
+		t.Run(filter, func(t *testing.T) {
+			b := testBroker(t)
+			conn := dialTestBroker(t, b)
+			defer conn.Close()
+			codec := protocol.NewCodec(0)
+			connectClient(t, conn, codec, "invalid-filter-client")
 
-		conn.SetDeadline(time.Now().Add(2 * time.Second))
-		pkt, err := codec.Decode(conn)
-		if err != nil {
-			t.Fatalf("decode SUBACK: %v", err)
-		}
-		subAck, ok := pkt.(*protocol.SubAckPacket)
-		if !ok {
-			t.Fatalf("expected SUBACK, got %T", pkt)
-		}
-		if len(subAck.ReasonCodes) == 0 {
-			t.Fatalf("SUBACK for %q: no reason codes", filter)
-		}
-		if subAck.ReasonCodes[0] != protocol.SubAckFailure {
-			t.Errorf("filter %q: expected failure (0x80), got 0x%02x", filter, subAck.ReasonCodes[0])
-		}
+			subPkt := &protocol.SubscribePacket{
+				FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe, QoS: 1},
+				PacketID:    1,
+				Topics:      []protocol.TopicFilter{{Topic: filter, QoS: 0}},
+			}
+			conn.SetDeadline(time.Now().Add(2 * time.Second))
+			if err := codec.Encode(conn, subPkt); err != nil {
+				t.Fatalf("encode SUBSCRIBE: %v", err)
+			}
+
+			conn.SetDeadline(time.Now().Add(2 * time.Second))
+			pkt, err := codec.Decode(conn)
+			if err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			disc, ok := pkt.(*protocol.DisconnectPacket)
+			if !ok {
+				t.Fatalf("malformed filter %q answered with %T, want *protocol.DisconnectPacket", filter, pkt)
+			}
+			if disc.ReasonCode != protocol.DisconnectProtocolError {
+				t.Errorf("filter %q: DISCONNECT reason = 0x%02X, want 0x82 (Protocol Error)",
+					filter, disc.ReasonCode)
+			}
+
+			// The DISCONNECT must be followed by the close, not by a live
+			// connection that can keep publishing.
+			conn.SetDeadline(time.Now().Add(2 * time.Second))
+			if _, err := codec.Decode(conn); err == nil {
+				t.Errorf("filter %q: broker kept the connection open after the DISCONNECT", filter)
+			}
+		})
 	}
 }
 

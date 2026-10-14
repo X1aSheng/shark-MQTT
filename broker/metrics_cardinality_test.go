@@ -26,8 +26,8 @@ var allowedMetricLabels = map[string]map[string]bool{
 		"session_user_mismatch": true,
 	},
 	"IncMessagesDropped": {
-		"invalid_topic":                 true,
 		"invalid_topic_alias":           true,
+		"malformed_topic":               true,
 		"message_expired":               true,
 		"offline_queue_full":            true,
 		"offline_stale":                 true,
