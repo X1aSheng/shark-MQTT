@@ -598,6 +598,17 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 	go cs.writeLoop()
 	b.metrics.SetOnlineSessions(online)
 
+	// MQTT 5.0 §3.1.3.2.2 / §3.1.4: a new connection with Clean Start set to 1
+	// ends the existing Session, so a Will Message of the previous connection
+	// that is still waiting out its delay has to be published now rather than
+	// carried past the Session it belongs to. This runs after the take-over
+	// trigger above -- which is what arms that pending publication -- and
+	// before the new will is registered below, which would otherwise replace
+	// the very registration FireWill has to find.
+	if connectPkt.Flags.CleanSession {
+		b.will.FireWill(clientID)
+	}
+
 	// Register will message
 	if connectPkt.Flags.WillFlag {
 		var willDelay time.Duration
@@ -610,6 +621,17 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 			b.logger.Debug("capping will delay", "clientID", clientID,
 				"requested", willDelay, "max", b.opts.maxWillDelay)
 			willDelay = b.opts.maxWillDelay
+		}
+		// MQTT 5.0 §3.1.3.2.2: the Will Message is published when the Will
+		// Delay Interval has passed *or the Session ends, whichever happens
+		// first*. A Session whose Expiry Interval is 0 ends the moment the
+		// Network Connection closes (§3.1.2.11.2), so such a will may not be
+		// delayed at all; and a Session that expires sooner than the delay
+		// bounds the wait to its own lifetime. Folding the Session lifetime
+		// into the delay here -- rather than racing a second timer against it
+		// -- makes "whichever first" hold by construction.
+		if sessionEnds := time.Duration(sess.ExpiryInterval) * time.Second; sessionEnds < willDelay {
+			willDelay = sessionEnds
 		}
 		if err := b.will.RegisterWill(clientID, connectPkt.Username, connectPkt.WillTopic, connectPkt.WillMessage, connectPkt.Flags.WillQoS, connectPkt.Flags.WillRetain, connectPkt.WillProperties, willDelay, conn); err != nil {
 			b.metrics.IncErrors("will")

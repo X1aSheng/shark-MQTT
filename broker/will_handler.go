@@ -32,8 +32,12 @@ type WillMessage struct {
 	// is stored here. See relayableWillProperties.
 	Properties *protocol.Properties
 
-	// Delay is how long publication waits: the client's Will Delay Interval,
-	// already capped by server policy. See HandleConnection.
+	// Delay is the effective wait before the Will Message is published: the
+	// client's Will Delay Interval as bounded by server policy and by the
+	// Session's own lifetime. §3.1.3.2.2 requires publication when "the Will
+	// Delay Interval has passed or the Session ends, whichever happens first",
+	// so a wait longer than the Session is not a wait at all; the broker folds
+	// that into this value when the will is registered. See HandleConnection.
 	Delay time.Duration
 
 	// Conn is the network connection that registered this will. TriggerWill
@@ -90,11 +94,10 @@ func (wh *WillHandler) RegisterWill(clientID string, username string, topic stri
 	wh.mu.Lock()
 	defer wh.mu.Unlock()
 
-	// Cancel pending delayed will goroutine for the same client
-	if cancel, exists := wh.cancel[clientID]; exists {
-		cancel()
-		delete(wh.cancel, clientID)
-	}
+	// A new CONNECT for this ClientID replaces whatever was registered for it,
+	// and any delayed publication still waiting must not outlive that
+	// replacement.
+	wh.stopTimerLocked(clientID)
 
 	wh.wills[clientID] = &WillMessage{
 		ClientID:   clientID,
@@ -150,6 +153,11 @@ func relayableWillProperties(props *protocol.Properties) *protocol.Properties {
 // When conn is non-nil it must match the connection that registered the will:
 // a stale disconnect from a superseded connection must not fire the will of
 // the connection that took over the clientID (audit).
+//
+// A will with a delay is armed rather than published, and stays registered
+// while it waits so that FireWill can still publish it if the Session ends
+// first. Triggering an already-armed will is a no-op: the takeover path and
+// the superseded readLoop's late error both reach here.
 func (wh *WillHandler) TriggerWill(clientID string, conn net.Conn) error {
 	wh.mu.Lock()
 	will, exists := wh.wills[clientID]
@@ -163,32 +171,81 @@ func (wh *WillHandler) TriggerWill(clientID string, conn net.Conn) error {
 		wh.mu.Unlock()
 		return nil
 	}
-	delete(wh.wills, clientID)
-	wh.mu.Unlock()
-	if will.Delay > 0 {
-		// Delayed will message
-		ctx, cancel := context.WithCancel(context.Background())
-		wh.mu.Lock()
-		wh.cancel[clientID] = cancel
+	if _, armed := wh.cancel[clientID]; armed {
 		wh.mu.Unlock()
-		wh.wg.Add(1)
-		go func() {
-			defer wh.wg.Done()
-			select {
-			case <-time.After(will.Delay):
-				if err := wh.publishWillMessage(will); err != nil {
-					_ = err // will delivery failed (non-critical, broker may already be disconnected)
-				}
-			case <-ctx.Done():
-				// Will was cancelled (client reconnected before delay elapsed)
-			}
-		}()
-	} else {
+		return nil
+	}
+	if will.Delay <= 0 {
+		delete(wh.wills, clientID)
+		wh.mu.Unlock()
 		if err := wh.publishWillMessage(will); err != nil {
 			_ = err // will delivery failed (non-critical, broker may already be disconnected)
 		}
+		return nil
 	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	wh.cancel[clientID] = cancel
+	wh.wg.Add(1)
+	wh.mu.Unlock()
+
+	go func() {
+		defer wh.wg.Done()
+		select {
+		case <-time.After(will.Delay):
+			// Re-check ownership under the lock: a replacement registration
+			// (or FireWill/CancelWill racing the timer) may have taken the
+			// will over, and publishing it then would duplicate a will that
+			// another path already sent or deliberately suppressed.
+			wh.mu.Lock()
+			current, ok := wh.wills[clientID]
+			ours := ok && current == will
+			if ours {
+				delete(wh.wills, clientID)
+				delete(wh.cancel, clientID)
+			}
+			wh.mu.Unlock()
+			if !ours {
+				return
+			}
+			if err := wh.publishWillMessage(will); err != nil {
+				_ = err // will delivery failed (non-critical, broker may already be disconnected)
+			}
+		case <-ctx.Done():
+			// Will was cancelled (client reconnected before delay elapsed)
+		}
+	}()
 	return nil
+}
+
+// FireWill publishes a will that is waiting out its Will Delay Interval, and
+// is a no-op when nothing is pending.
+//
+// §3.1.3.2.2: "The Server delays publishing the Client's Will Message until the
+// Will Delay Interval has passed or the Session ends, whichever happens first."
+// A new connection with Clean Start set to 1 ends the existing Session
+// (§3.1.4), and so does a take-over under it, so a publication still waiting at
+// that moment must be sent rather than left to its timer -- the will is part of
+// the Session state and cannot outlive it.
+//
+// Only an *armed* publication is fired. A will that was merely registered for a
+// live connection is left alone: this method is called from the CONNECT path,
+// where the connection that owns an untriggered will may still be reading.
+func (wh *WillHandler) FireWill(clientID string) {
+	wh.mu.Lock()
+	will, exists := wh.wills[clientID]
+	_, armed := wh.cancel[clientID]
+	if !exists || !armed {
+		wh.mu.Unlock()
+		return
+	}
+	wh.stopTimerLocked(clientID)
+	delete(wh.wills, clientID)
+	wh.mu.Unlock()
+
+	if err := wh.publishWillMessage(will); err != nil {
+		_ = err // will delivery failed (non-critical, broker may already be disconnected)
+	}
 }
 
 // CancelWill canc a pending delayed will message for a client.
@@ -196,10 +253,7 @@ func (wh *WillHandler) CancelWill(clientID string) {
 	wh.mu.Lock()
 	defer wh.mu.Unlock()
 
-	if cancel, exists := wh.cancel[clientID]; exists {
-		cancel()
-		delete(wh.cancel, clientID)
-	}
+	wh.stopTimerLocked(clientID)
 	// Also remove from wills if still registered
 	delete(wh.wills, clientID)
 }
@@ -210,6 +264,13 @@ func (wh *WillHandler) RemoveWill(clientID string) {
 	defer wh.mu.Unlock()
 
 	delete(wh.wills, clientID)
+	wh.stopTimerLocked(clientID)
+}
+
+// stopTimerLocked cancels the armed delayed publication of one client, if any.
+// The caller holds wh.mu. Cancelling an already-fired timer is a no-op, so a
+// stale entry cannot be told apart from a live one and is removed either way.
+func (wh *WillHandler) stopTimerLocked(clientID string) {
 	if cancel, exists := wh.cancel[clientID]; exists {
 		cancel()
 		delete(wh.cancel, clientID)

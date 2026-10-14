@@ -407,6 +407,131 @@ func TestWillHandler_FullLifecycle(t *testing.T) {
 	}
 }
 
+// --- FireWill tests ---
+
+// TestWillHandler_FireWill_PublishesPendingDelayed covers the Session-end half
+// of MQTT 5.0 §3.1.3.2.2: a will that is waiting out its Will Delay Interval
+// has to be published as soon as the Session ends, not when the timer happens
+// to expire.
+func TestWillHandler_FireWill_PublishesPendingDelayed(t *testing.T) {
+	var mu sync.Mutex
+	var publishes int
+	published := make(chan struct{}, 4)
+
+	wh := NewWillHandler()
+	wh.SetPublishCallback(func(_, _ string, _ []byte, _ uint8, _ bool, _ *protocol.Properties) error {
+		mu.Lock()
+		publishes++
+		mu.Unlock()
+		published <- struct{}{}
+		return nil
+	})
+
+	delay := 300 * time.Millisecond
+	wh.RegisterWill("client1", "user1", "client1/status", []byte("data"), 1, false, nil, delay, nil)
+	if err := wh.TriggerWill("client1", nil); err != nil {
+		t.Fatalf("TriggerWill: %v", err)
+	}
+
+	select {
+	case <-published:
+		t.Fatal("will published before the delay elapsed")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// The Session ends: the pending publication must go out now.
+	wh.FireWill("client1")
+
+	select {
+	case <-published:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("FireWill did not publish the pending will")
+	}
+
+	if _, ok := wh.GetWillInfo("client1"); ok {
+		t.Error("expected the will to be gone after FireWill")
+	}
+
+	// The armed timer must not fire a second copy after the original deadline.
+	time.Sleep(delay + 100*time.Millisecond)
+	mu.Lock()
+	got := publishes
+	mu.Unlock()
+	if got != 1 {
+		t.Errorf("published %d times, want exactly 1: the cancelled timer fired again", got)
+	}
+}
+
+// TestWillHandler_FireWill_NoOpWhenNotArmed guards the call site: FireWill runs
+// on every CONNECT with Clean Start, where the connection that owns a merely
+// registered will may still be live and reading.
+func TestWillHandler_FireWill_NoOpWhenNotArmed(t *testing.T) {
+	var mu sync.Mutex
+	var publishes int
+
+	wh := NewWillHandler()
+	wh.SetPublishCallback(func(_, _ string, _ []byte, _ uint8, _ bool, _ *protocol.Properties) error {
+		mu.Lock()
+		publishes++
+		mu.Unlock()
+		return nil
+	})
+
+	wh.RegisterWill("client1", "user1", "client1/status", []byte("data"), 1, false, nil, 5*time.Second, nil)
+	wh.FireWill("client1")
+	wh.FireWill("nonexistent")
+
+	mu.Lock()
+	got := publishes
+	mu.Unlock()
+	if got != 0 {
+		t.Errorf("published %d times, want 0: FireWill must only fire an armed publication", got)
+	}
+	if _, ok := wh.GetWillInfo("client1"); !ok {
+		t.Error("a registered but untriggered will must survive FireWill")
+	}
+}
+
+// TestWillHandler_TriggerWill_Idempotent covers the take-over sequence, where
+// the takeover path and the superseded readLoop's late error both trigger the
+// same registration.
+func TestWillHandler_TriggerWill_Idempotent(t *testing.T) {
+	var mu sync.Mutex
+	var publishes int
+	done := make(chan struct{}, 4)
+
+	wh := NewWillHandler()
+	wh.SetPublishCallback(func(_, _ string, _ []byte, _ uint8, _ bool, _ *protocol.Properties) error {
+		mu.Lock()
+		publishes++
+		mu.Unlock()
+		done <- struct{}{}
+		return nil
+	})
+
+	delay := 100 * time.Millisecond
+	wh.RegisterWill("client1", "user1", "client1/status", []byte("data"), 0, false, nil, delay, nil)
+	for i := 0; i < 3; i++ {
+		if err := wh.TriggerWill("client1", nil); err != nil {
+			t.Fatalf("TriggerWill #%d: %v", i, err)
+		}
+	}
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("will never published")
+	}
+
+	time.Sleep(delay)
+	mu.Lock()
+	got := publishes
+	mu.Unlock()
+	if got != 1 {
+		t.Errorf("published %d times, want exactly 1", got)
+	}
+}
+
 // --- relayableWillProperties tests ---
 
 // TestRelayableWillProperties pins the split between the Will Properties that

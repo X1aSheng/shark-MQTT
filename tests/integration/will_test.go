@@ -186,6 +186,15 @@ func TestWillMessageOnAbnormalDisconnect(t *testing.T) {
 // published AFTER the delay on abnormal disconnect. Previously disconnect()
 // cancelled the just-armed delayed-will timer, so a delayed will never fired
 // (P2-5b).
+//
+// The client must keep its Session alive across the disconnect for the delay to
+// be observable at all: §3.1.3.2.2 publishes the Will Message when the Will
+// Delay Interval has passed *or the Session ends, whichever happens first*, and
+// §3.1.2.11.2 ends the Session with the Network Connection when the Session
+// Expiry Interval is 0. Clean Start forces that interval to 0 in this broker,
+// so the CONNECT below declares a Session Expiry Interval instead and leaves
+// Clean Start unset. The counterpart -- a Clean Start client whose will is
+// therefore published at once -- is TestWillMessage_CleanStartPublishesImmediately.
 func TestWillMessage_DelayedFires(t *testing.T) {
 	broker := testBroker(t)
 
@@ -194,7 +203,8 @@ func TestWillMessage_DelayedFires(t *testing.T) {
 	connectTestClient(t, subConn, subCodec, "will-delay-sub")
 	subscribeToTopic(t, subConn, subCodec, "client/delayed-will", 1, 1)
 
-	delay := uint32(1) // seconds
+	delay := uint32(1)          // seconds
+	sessionExpiry := uint32(30) // seconds: must outlive the delay
 	willConn := dialTestBroker(t, broker)
 	willCodec := protocol.NewCodec(0)
 	connectPkt := &protocol.ConnectPacket{
@@ -204,7 +214,7 @@ func TestWillMessage_DelayedFires(t *testing.T) {
 		ProtocolName:    protocol.ProtocolNameMQTT,
 		ProtocolVersion: protocol.Version50,
 		Flags: protocol.ConnectFlags{
-			CleanSession: true,
+			CleanSession: false,
 			WillFlag:     true,
 			WillQoS:      1,
 			WillRetain:   false,
@@ -215,6 +225,9 @@ func TestWillMessage_DelayedFires(t *testing.T) {
 		WillMessage: []byte("delayed-will-payload"),
 		WillProperties: &protocol.Properties{
 			WillDelayInterval: &delay,
+		},
+		Properties: &protocol.Properties{
+			SessionExpiryInterval: &sessionExpiry,
 		},
 	}
 	willConn.SetDeadline(time.Now().Add(2 * time.Second))
@@ -442,6 +455,116 @@ func awaitWillPublish(t *testing.T, conn net.Conn, codec *protocol.Codec, within
 	return pub
 }
 
+// TestWillMessage_CleanStartPublishesImmediately covers the "or the Session
+// ends, whichever happens first" half of MQTT 5.0 §3.1.3.2.2.
+//
+// A Session whose Expiry Interval is 0 ends when the Network Connection closes
+// (§3.1.2.11.2), and this broker forces that interval for Clean Start
+// connections. The Session therefore ends at the abnormal disconnect, well
+// before the declared Will Delay Interval, so the Will Message must be
+// published at once instead of five seconds later. Waiting out the delay here
+// meant a subscriber heard about a dead client up to a full interval late, and
+// a client that had already ended its Session could still leave a publication
+// pending behind it.
+func TestWillMessage_CleanStartPublishesImmediately(t *testing.T) {
+	brk := testBroker(t)
+
+	subConn := dialTestBroker(t, brk)
+	subCodec := protocol.NewCodec(0)
+	connectClient(t, subConn, subCodec, "will-cleanstart-sub")
+	subscribeToTopic(t, subConn, subCodec, "client/cleanstart-will", 1, 1)
+
+	willDelay := uint32(5)
+	willConn := dialTestBroker(t, brk)
+	willCodec := protocol.NewCodec(0)
+	connectV5WithWill(t, willConn, willCodec, &protocol.ConnectPacket{
+		FixedHeader:     protocol.FixedHeader{PacketType: protocol.PacketTypeConnect},
+		ProtocolName:    protocol.ProtocolNameMQTT,
+		ProtocolVersion: protocol.Version50,
+		Flags: protocol.ConnectFlags{
+			CleanSession: true,
+			WillFlag:     true,
+			WillQoS:      1,
+		},
+		KeepAlive:   30,
+		ClientID:    "will-cleanstart-client",
+		WillTopic:   "client/cleanstart-will",
+		WillMessage: []byte("cleanstart-gone"),
+		WillProperties: &protocol.Properties{
+			WillDelayInterval: &willDelay,
+		},
+	})
+
+	// The Session ends here, so the delay cannot apply.
+	start := time.Now()
+	willConn.Close()
+
+	pub := awaitWillPublish(t, subConn, subCodec, 2*time.Second)
+	if string(pub.Payload) != "cleanstart-gone" {
+		t.Errorf("payload = %q, want %q", string(pub.Payload), "cleanstart-gone")
+	}
+	if elapsed := time.Since(start); elapsed >= 4*time.Second {
+		t.Errorf("will published after %v: the Session ended inside the 5s Will Delay Interval, "+
+			"so §3.1.3.2.2 requires publication at that point", elapsed)
+	}
+	subConn.Close()
+}
+
+// TestWillMessageSessionExpiryBoundsDelay covers the other ordering of the same
+// rule: the Session outlives the network connection but not the Will Delay
+// Interval, so the will is published when the Session ends rather than when the
+// delay expires.
+func TestWillMessageSessionExpiryBoundsDelay(t *testing.T) {
+	brk := testBroker(t)
+
+	subConn := dialTestBroker(t, brk)
+	subCodec := protocol.NewCodec(0)
+	connectClient(t, subConn, subCodec, "will-expiry-sub")
+	subscribeToTopic(t, subConn, subCodec, "client/expiry-bounded-will", 1, 1)
+
+	willDelay := uint32(30)
+	sessionExpiry := uint32(1)
+	willConn := dialTestBroker(t, brk)
+	willCodec := protocol.NewCodec(0)
+	connectV5WithWill(t, willConn, willCodec, &protocol.ConnectPacket{
+		FixedHeader:     protocol.FixedHeader{PacketType: protocol.PacketTypeConnect},
+		ProtocolName:    protocol.ProtocolNameMQTT,
+		ProtocolVersion: protocol.Version50,
+		Flags: protocol.ConnectFlags{
+			CleanSession: false,
+			WillFlag:     true,
+			WillQoS:      1,
+		},
+		KeepAlive:   30,
+		ClientID:    "will-expiry-client",
+		WillTopic:   "client/expiry-bounded-will",
+		WillMessage: []byte("session-ended"),
+		WillProperties: &protocol.Properties{
+			WillDelayInterval: &willDelay,
+		},
+		Properties: &protocol.Properties{
+			SessionExpiryInterval: &sessionExpiry,
+		},
+	})
+
+	start := time.Now()
+	willConn.Close()
+
+	pub := awaitWillPublish(t, subConn, subCodec, 5*time.Second)
+	elapsed := time.Since(start)
+	if string(pub.Payload) != "session-ended" {
+		t.Errorf("payload = %q, want %q", string(pub.Payload), "session-ended")
+	}
+	if elapsed < 800*time.Millisecond {
+		t.Errorf("will published after %v, before the 1s Session Expiry Interval elapsed", elapsed)
+	}
+	if elapsed >= 10*time.Second {
+		t.Errorf("will published after %v: the 1s Session ended long before the 30s Will Delay "+
+			"Interval, so §3.1.3.2.2 requires publication at the Session end", elapsed)
+	}
+	subConn.Close()
+}
+
 // TestWillPropertiesRelayedToSubscriber covers MQTT 5.0 §3.1.3.2 + §3.3.2.3.
 //
 // The Will Message has a property section of its own, and once published it is
@@ -525,4 +648,82 @@ func TestWillPropertiesRelayedToSubscriber(t *testing.T) {
 			"instruction, not a PUBLISH property", *got.WillDelayInterval)
 	}
 	subConn.Close()
+}
+
+// TestWillMessageFiresWhenCleanStartEndsPreviousSession covers the Clean Start
+// half of §3.1.3.2.2 at the broker level.
+//
+// A client with a delay interval drops off; its Session outlives the network
+// connection, so the will sits in the delay. The client then comes back with
+// Clean Start set to 1, which ends that Session (§3.1.4) -- and a Will Message
+// cannot outlive the Session it belongs to, so it has to be published at that
+// moment rather than being left to a timer that now refers to nothing. This is
+// the case EMQX shipped a fix for; the will was silently dropped entirely there,
+// and here it would have been published up to a full interval late.
+func TestWillMessageFiresWhenCleanStartEndsPreviousSession(t *testing.T) {
+	brk := testBroker(t)
+
+	subConn := dialTestBroker(t, brk)
+	subCodec := protocol.NewCodec(0)
+	connectClient(t, subConn, subCodec, "will-cs-end-sub")
+	subscribeToTopic(t, subConn, subCodec, "client/cs-takeover-will", 1, 1)
+
+	willDelay := uint32(30)
+	sessionExpiry := uint32(60)
+	firstConn := dialTestBroker(t, brk)
+	firstCodec := protocol.NewCodec(0)
+	connectV5WithWill(t, firstConn, firstCodec, &protocol.ConnectPacket{
+		FixedHeader:     protocol.FixedHeader{PacketType: protocol.PacketTypeConnect},
+		ProtocolName:    protocol.ProtocolNameMQTT,
+		ProtocolVersion: protocol.Version50,
+		Flags: protocol.ConnectFlags{
+			CleanSession: false,
+			WillFlag:     true,
+			WillQoS:      1,
+		},
+		KeepAlive:   30,
+		ClientID:    "will-cs-end-client",
+		WillTopic:   "client/cs-takeover-will",
+		WillMessage: []byte("session-discarded"),
+		WillProperties: &protocol.Properties{
+			WillDelayInterval: &willDelay,
+		},
+		Properties: &protocol.Properties{
+			SessionExpiryInterval: &sessionExpiry,
+		},
+	})
+
+	start := time.Now()
+	firstConn.Close()
+
+	// Let the abnormal disconnect reach the broker and arm the delayed will.
+	time.Sleep(200 * time.Millisecond)
+
+	subConn.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+	if _, err := subCodec.Decode(subConn); err == nil {
+		t.Fatal("will published before the 30s delay elapsed")
+	}
+
+	// Clean Start ends the previous Session, which publishes the pending will.
+	secondConn := dialTestBroker(t, brk)
+	secondCodec := protocol.NewCodec(0)
+	connectV5WithWill(t, secondConn, secondCodec, &protocol.ConnectPacket{
+		FixedHeader:     protocol.FixedHeader{PacketType: protocol.PacketTypeConnect},
+		ProtocolName:    protocol.ProtocolNameMQTT,
+		ProtocolVersion: protocol.Version50,
+		Flags:           protocol.ConnectFlags{CleanSession: true},
+		KeepAlive:       30,
+		ClientID:        "will-cs-end-client",
+	})
+
+	pub := awaitWillPublish(t, subConn, subCodec, 2*time.Second)
+	if string(pub.Payload) != "session-discarded" {
+		t.Errorf("payload = %q, want %q", string(pub.Payload), "session-discarded")
+	}
+	if elapsed := time.Since(start); elapsed >= 10*time.Second {
+		t.Errorf("will published after %v: the Clean Start reconnect ended the Session long before "+
+			"the 30s delay, so §3.1.3.2.2 requires publication at that point", elapsed)
+	}
+	subConn.Close()
+	secondConn.Close()
 }
