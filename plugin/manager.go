@@ -13,13 +13,34 @@ import (
 type Hook string
 
 const (
-	OnAccept    Hook = "on_accept"
+	// OnAccept fires once per accepted connection, before CONNECT is read.
+	OnAccept Hook = "on_accept"
+	// OnConnected fires once a CONNECT has been accepted, just before the
+	// CONNACK is sent.
 	OnConnected Hook = "on_connected"
-	OnMessage   Hook = "on_message"
-	OnClose     Hook = "on_close"
+	// OnMessage fires for every decoded packet, not only PUBLISH.
+	OnMessage Hook = "on_message"
+	// OnClose fires once when a connection is torn down.
+	OnClose Hook = "on_close"
 )
 
 // Context provides context for hook calls.
+//
+// Each hook populates a different subset of these fields; anything not listed
+// for a hook is left at its zero value. Read the table before relying on a
+// field -- assuming a field is set because it exists here is how the documented
+// plugin examples ended up reading an always-empty Topic on OnMessage.
+//
+//	Hook         | populated
+//	-------------+---------------------------------------------------------
+//	OnAccept     | RemoteAddr
+//	OnConnected  | ClientID, Username
+//	OnMessage    | ClientID, and Topic/Payload/QoS/Retain when the packet is
+//	             | a PUBLISH (OnMessage covers every packet type)
+//	OnClose      | ClientID
+//
+// Err is reserved for a hook that needs to report a failure; the broker does
+// not set it on any hook today.
 type Context struct {
 	ClientID   string
 	Username   string

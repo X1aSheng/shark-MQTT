@@ -1237,8 +1237,28 @@ func (b *Broker) readLoop(clientID string, sess *Session, codec protocol.PacketC
 			return
 		}
 
-		// Plugin hook: OnMessage
-		b.dispatch(plugin.OnMessage, &plugin.Context{ClientID: clientID})
+		// Plugin hook: OnMessage fires for every decoded packet, not only
+		// PUBLISH (see the hook contract in plugin/manager.go). The
+		// PUBLISH-specific fields are therefore filled only when a PUBLISH
+		// actually arrived. They used to be left empty for every packet, which
+		// contradicted the documented plugin examples -- both read exactly
+		// these fields (data.Topic in docs/guides/API.md, an ACL on data.Topic
+		// in docs/architecture/ARCHITECTURE.md).
+		//
+		// The nil guard keeps the no-plugin path allocation-free, since this
+		// runs once per received packet. Payload is shared rather than copied:
+		// decodePublish allocates a packet-owned slice and never hands out
+		// pooled memory, so the hook may read it for the duration of the call.
+		if b.pluginMgr != nil {
+			hookCtx := &plugin.Context{ClientID: clientID}
+			if pub, ok := pkt.(*protocol.PublishPacket); ok {
+				hookCtx.Topic = pub.Topic
+				hookCtx.Payload = pub.Payload
+				hookCtx.QoS = pub.QoS
+				hookCtx.Retain = pub.Retain
+			}
+			b.dispatch(plugin.OnMessage, hookCtx)
+		}
 
 		// Update activity and refresh the keep-alive deadline
 		sess.UpdateActivity()
