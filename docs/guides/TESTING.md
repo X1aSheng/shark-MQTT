@@ -1,6 +1,6 @@
 # Testing Guide
 
-Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。当前基线为 **447 个单元测试**、**147 个集成测试**、**61 个基准测试**（口径：源码中声明的顶层 `Test*` / `Benchmark*` 函数数，复现方式见 [测试统计](#测试统计)）。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
+Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。当前基线为 **450 个单元测试**、**147 个集成测试**、**61 个基准测试**（口径：源码中声明的顶层 `Test*` / `Benchmark*` 函数数，复现方式见 [测试统计](#测试统计)）。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
 
 ---
 
@@ -52,7 +52,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 |  +-- topic_filter_defect_test.go - topic filter 边界       |
 |  +-- windows_benchmark_test.go - Windows benchmark 隔离    |
 +------------------------------------------------------------+
-|  Unit Tests (447 declared)                                 |
+|  Unit Tests (450 declared)                                 |
 |  各包内 *_test.go 文件                                     |
 |  broker/ protocol/ client/ config/ plugin/ store/          |
 |  store/memory/ pkg/ api/ errs/                             |
@@ -65,7 +65,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 
 | 类型 | 数量 | 位置 |
 |------|------|------|
-| 单元测试 | 447 | 各包 `*_test.go`（含 `tests/defects/`） |
+| 单元测试 | 450 | 各包 `*_test.go`（含 `tests/defects/`） |
 | 集成测试 | 147 | `tests/integration/` |
 | 缺陷回归测试 | `tests/defects/` 7 个文件 / 8 个用例 + 包内回归 | `tests/defects/`、`broker/`、`client/`、`protocol/` |
 | 基准测试 | 61（Windows 本地实际执行 58） | `tests/bench/`、`plugin/`、`pkg/metrics/` |
@@ -97,7 +97,7 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 | 包 | 测试数 | 基准测试数 | 说明 |
 |----|--------|-----------|------|
 | broker/ | 196 | 0 | 核心逻辑：TopicTree、QoS 引擎、会话、遗嘱、认证、服务器、retained metrics、MQTT 5.0 属性中继与过期边界、重连重传、按协议版本门控的连接内重传、插件钩子上下文 |
-| protocol/ | 76 | 0 | MQTT 3.1 / 3.1.1 / 5.0 编解码、属性、报文 flags 校验、协议适配层（15 种报文） |
+| protocol/ | 79 | 0 | MQTT 3.1 / 3.1.1 / 5.0 编解码、属性、报文 flags 校验（解码与编码对称）、协议适配层（15 种报文） |
 | client/ | 40 | 0 | MQTT 客户端连接、发布、订阅、断开清理、QoS 2 入站 ack（PUBREC 保留 flags）与对端 reason-code 守卫 |
 | config/ | 24 | 0 | 配置解析与校验 |
 | store/memory/ | 23 | 0 | 内存存储：会话、消息、保留消息 |
@@ -109,7 +109,7 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 | pkg/logger/ | 7 | 0 | slog 日志适配 |
 | errs/ | 4 | 0 | 错误定义 |
 | tests/defects/ | 8 | 0 | 审查发现缺陷的最小复现和回归测试 |
-| **单元测试合计** | **447** | **4** | |
+| **单元测试合计** | **450** | **4** | |
 | tests/integration/ | 147 | 0 | 端到端集成测试（含部署验证） |
 | tests/bench/ | 0 | 57 | 全栈 TCP、E2E 数据验证、微基准 |
 | **基准测试合计** | | **61** | |
@@ -126,10 +126,10 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 | 指标 | 数量 |
 |------|------|
 | `.go` 文件 | 162（67 非测试 / 95 测试） |
-| 非测试代码行数 | 16,082 |
-| 测试代码行数 | 26,378 |
+| 非测试代码行数 | 16,103 |
+| 测试代码行数 | 26,497 |
 
-主要模块的非测试行数：`broker` 6,811（17 文件）· `protocol` 3,479（13）· `store` 1,447（10）·
+主要模块的非测试行数：`broker` 6,811（17 文件）· `protocol` 3,500（13）· `store` 1,447（10）·
 `client` 916（2）· `api` 532（2）· `pkg` 466（7）· `config` 366（2）· `plugin` 200（1）·
 `cmd` 160（1）· `errs` 42（1）；其余分布在 `examples/`、`scripts/`、`tests/`。
 
@@ -462,7 +462,7 @@ make ci                # CI 完整流水线
 
 ## 缺陷回归测试
 
-审查过程中确认的缺陷必须先在 `tests/defects/` 中添加最小复现，再修复代码。当前回归项（8 个在 `tests/defects/`，另 14 个在所属包内）：
+审查过程中确认的缺陷必须先在 `tests/defects/` 中添加最小复现，再修复代码。当前回归项（8 个在 `tests/defects/`，另 16 个在所属包内）：
 
 | 位置 | 测试函数 | 覆盖缺陷 |
 |------|----------|----------|
@@ -488,6 +488,8 @@ make ci                # CI 完整流水线
 | `protocol/` | `protocol.TestPropertySectionVersionGatedAcrossPackets` | 同一门控遗漏扩散到 CONNACK / SUBSCRIBE / UNSUBSCRIBE / SUBACK；对每种报文断言「pre-v5 带属性必拒、pre-v5 无属性仍可编码、v5 带属性能编码」 |
 | `client/` | `client.TestQoS2InboundDeliverySurvivesPubRec`、`client.TestHandlePublishQoS2PubRecUsesReservedFlags` | `handlePublish` 两处 PUBREC 都设了 `QoS: 1`，而 PUBREC 的固定头 flags 是保留 `0b0000`（MQTT 3.1.1 Table 2.2 / MQTT 5.0 Table 2-2，只有 PUBREL / SUBSCRIBE / UNSUBSCRIBE 是 `0b0010`）。对端的 `validateFixedHeaderFlags` 直接判 `ErrInvalidPacket` 并断连：第一条 QoS 2 消息仍能投出（PUBREC 在投递之后发），随后订阅静默失效 |
 | `client/` | `client.TestPublishQoS2StopsBeforePubRelWhenPubRecRejects`、`client.TestPublishQoS2ReportsPubCompFailure`、`client.TestUnsubscribeReportsUnsubAckFailure` | 对端拒绝的 Reason Code 被静默当成成功：PUBREC `>= 0x80` 时仍回 PUBREL 并挂到 ctx 超时（违反 [MQTT-4.3.3-4] / [MQTT-4.4.0-2]）、PUBCOMP 非 0x00 时 `Publish` 返回 nil、UNSUBACK 逐主题的 `>= 0x80` 被整个丢弃。三处目前线上不可达（client 固定 3.1.1），属防御性深度，测试须用 `protocol.NewCodecForVersion` 绑定 5.0 才能构造 |
+| `protocol/` | `protocol.TestDecodeRejectsInvalidFixedHeaderFlags`、`protocol.TestDecodeAcceptsDupOnQoS2ControlPackets` | 解码端保留位校验把 flags 只由 QoS / RETAIN 折叠而成，漏掉 DUP 位（`0x08`）：对端发来 nibble 为 `0b1000` 的控制报文（如 `0xC8` PINGREQ+DUP、`0x18` CONNECT+DUP、`0x48` PUBACK+DUP）会被接受，违反 [MQTT-2.2.2-1] / [MQTT-2.2.2-2]。PUBREL / SUBSCRIBE / UNSUBSCRIBE 的 DUP 位**故意不校验**并由第二个测试单独锁定：smart-mqtt 重传时会给它们置 DUP（`InflightQueue` 的 `PUB_REL_HEADER_DUP` / `SUBSCRIBE_HEADER_DUP`），收紧会断连该对端 |
+| `protocol/` | `protocol.TestEncodeRejectsInvalidFixedHeaderFlags`、`protocol.TestEncodeAcceptsSpecCompliantFixedHeaderFlags` | `Encode` 从不校验固定头 flags，是 PUBREC 缺陷逃过全部单测的根因：非法 nibble 直接上线缆，只有真实对端才会拒绝并断连。现改为与 `Decode` 对称（写出前拒绝），并把 20 处用 `QoS: 0` 构造 SUBSCRIBE / UNSUBSCRIBE / PUBREL 的测试脚手架改为规范值 |
 
 运行方式：
 
