@@ -40,18 +40,7 @@ func TestRetainedMessage_NewSubscriber(t *testing.T) {
 	pubCodec := protocol.NewCodec(0)
 	connectClient(t, pubConn, pubCodec, "retain-pub")
 
-	retainPkt := &protocol.PublishPacket{
-		FixedHeader: protocol.FixedHeader{
-			PacketType: protocol.PacketTypePublish,
-			Retain:     true,
-		},
-		Topic:   "device/status",
-		Payload: []byte("online"),
-	}
-	pubConn.SetDeadline(time.Now().Add(2 * time.Second))
-	if err := pubCodec.Encode(pubConn, retainPkt); err != nil {
-		t.Fatalf("PUBLISH retained: %v", err)
-	}
+	publishRetainedQoS1(t, pubConn, pubCodec, "device/status", "online", 1)
 
 	// New subscriber connects AFTER retained message was published
 	subConn := dialTestBroker(t, broker)
@@ -90,27 +79,14 @@ func TestRetainedMessage_Update(t *testing.T) {
 	pubCodec := protocol.NewCodec(0)
 	connectClient(t, pubConn, pubCodec, "retain-update-pub")
 
-	// First retained message
-	retain1 := &protocol.PublishPacket{
-		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, Retain: true},
-		Topic:       "device/status",
-		Payload:     []byte("online"),
-	}
-	pubConn.SetDeadline(time.Now().Add(2 * time.Second))
-	if err := pubCodec.Encode(pubConn, retain1); err != nil {
-		t.Fatalf("PUBLISH retained 1: %v", err)
-	}
+	// First retained message. Both publishes are QoS 1 and each PUBACK is read
+	// before the next step: the broker stores retained state synchronously in
+	// handlePublish and only then acks, so the ack is what makes the subscriber
+	// below observe the second value rather than racing the first.
+	publishRetainedQoS1(t, pubConn, pubCodec, "device/status", "online", 1)
 
 	// Update retained message
-	retain2 := &protocol.PublishPacket{
-		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, Retain: true},
-		Topic:       "device/status",
-		Payload:     []byte("offline"),
-	}
-	pubConn.SetDeadline(time.Now().Add(2 * time.Second))
-	if err := pubCodec.Encode(pubConn, retain2); err != nil {
-		t.Fatalf("PUBLISH retained 2: %v", err)
-	}
+	publishRetainedQoS1(t, pubConn, pubCodec, "device/status", "offline", 2)
 
 	// New subscriber should get only the latest retained message
 	subConn := dialTestBroker(t, broker)
@@ -142,36 +118,11 @@ func TestRetainedMessage_Delete(t *testing.T) {
 	pubCodec := protocol.NewCodec(0)
 	connectClient(t, pubConn, pubCodec, "retain-del-pub")
 
-	// Set retained (QoS 1 so the PUBACK confirms the broker processed it).
-	retain := &protocol.PublishPacket{
-		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 1, Retain: true},
-		Topic:       "device/status",
-		Payload:     []byte("online"),
-		PacketID:    1,
-	}
-	pubConn.SetDeadline(time.Now().Add(2 * time.Second))
-	if err := pubCodec.Encode(pubConn, retain); err != nil {
-		t.Fatalf("PUBLISH retained: %v", err)
-	}
-	if _, err := pubCodec.Decode(pubConn); err != nil { // PUBACK
-		t.Fatalf("retain PUBACK: %v", err)
-	}
-
-	// Delete retained with empty payload (QoS 1: the PUBACK confirms the
-	// deletion was processed before the subscriber subscribes).
-	delRetain := &protocol.PublishPacket{
-		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 1, Retain: true},
-		Topic:       "device/status",
-		Payload:     []byte{},
-		PacketID:    2,
-	}
-	pubConn.SetDeadline(time.Now().Add(2 * time.Second))
-	if err := pubCodec.Encode(pubConn, delRetain); err != nil {
-		t.Fatalf("PUBLISH delete retained: %v", err)
-	}
-	if _, err := pubCodec.Decode(pubConn); err != nil { // PUBACK
-		t.Fatalf("delete PUBACK: %v", err)
-	}
+	// Set retained, then clear it with an empty payload. Both are QoS 1: the
+	// PUBACK confirms the broker processed each step before the subscriber
+	// subscribes.
+	publishRetainedQoS1(t, pubConn, pubCodec, "device/status", "online", 1)
+	publishRetainedQoS1(t, pubConn, pubCodec, "device/status", "", 2)
 
 	// New subscriber should NOT receive any retained message
 	subConn := dialTestBroker(t, broker)
@@ -205,16 +156,8 @@ func TestRetainedMessage_WildcardDelivery(t *testing.T) {
 		{"sensors/room2/temperature", "24.0"},
 		{"sensors/room1/humidity", "55%"},
 	}
-	for _, tc := range topics {
-		pkt := &protocol.PublishPacket{
-			FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, Retain: true},
-			Topic:       tc.topic,
-			Payload:     []byte(tc.payload),
-		}
-		pubConn.SetDeadline(time.Now().Add(2 * time.Second))
-		if err := pubCodec.Encode(pubConn, pkt); err != nil {
-			t.Fatalf("PUBLISH retained %s: %v", tc.topic, err)
-		}
+	for i, tc := range topics {
+		publishRetainedQoS1(t, pubConn, pubCodec, tc.topic, tc.payload, uint16(i+1))
 	}
 
 	// Subscribe with wildcard sensors/+/temperature
@@ -326,21 +269,50 @@ func TestRetainHandlingSendOnlyOnNewSubscription(t *testing.T) {
 
 // --- retained test helpers ---
 
+// publishRetainedQoS1 publishes a retained message at QoS 1 and does not return
+// until the broker's PUBACK has been read.
+//
+// The ack is the only reliable barrier for retained state: the broker calls
+// handleRetainedMessage synchronously inside handlePublish and writes the
+// PUBACK afterwards (broker.go:1632 then :1651), so once the PUBACK arrives the
+// stored value is guaranteed to be this one. A QoS 0 publish offers no such
+// observation point and leaves the subscriber racing the publisher's read
+// goroutine - that race is what failed TestRetainedMessage_Update on
+// macos-latest in CI run 38531226449 ("expected updated payload 'offline', got
+// online"). An empty payload clears the retained message for the topic.
+func publishRetainedQoS1(t *testing.T, conn net.Conn, codec *protocol.Codec, topic, payload string, packetID uint16) {
+	t.Helper()
+	pkt := &protocol.PublishPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 1, Retain: true},
+		PacketID:    packetID,
+		Topic:       topic,
+		Payload:     []byte(payload),
+	}
+	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := codec.Encode(conn, pkt); err != nil {
+		t.Fatalf("PUBLISH retained %s: %v", topic, err)
+	}
+	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	pktAck, err := codec.Decode(conn)
+	if err != nil {
+		t.Fatalf("PUBACK for retained %s (packetID %d): %v", topic, packetID, err)
+	}
+	ack, ok := pktAck.(*protocol.PubAckPacket)
+	if !ok {
+		t.Fatalf("expected PUBACK for retained %s, got %T", topic, pktAck)
+	}
+	if ack.PacketID != packetID {
+		t.Fatalf("PUBACK packetID = %d, want %d", ack.PacketID, packetID)
+	}
+}
+
 func publishRetained(t *testing.T, broker *api.Broker, topic, payload string) {
 	t.Helper()
 	pubConn := dialTestBroker(t, broker)
 	pubCodec := protocol.NewCodec(0)
 	connectClient(t, pubConn, pubCodec, "retain-helper-pub-"+topic)
 
-	pkt := &protocol.PublishPacket{
-		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, Retain: true},
-		Topic:       topic,
-		Payload:     []byte(payload),
-	}
-	pubConn.SetDeadline(time.Now().Add(2 * time.Second))
-	if err := pubCodec.Encode(pubConn, pkt); err != nil {
-		t.Fatalf("PUBLISH retained: %v", err)
-	}
+	publishRetainedQoS1(t, pubConn, pubCodec, topic, payload, 1)
 	pubConn.Close()
 }
 
