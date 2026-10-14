@@ -1,8 +1,10 @@
 package broker
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -444,53 +446,105 @@ func TestBroker_CleanSessionUnsubscribesOnDisconnect(t *testing.T) {
 	}
 }
 
+// TestBroker_SessionTakeover covers what a displaced connection is owed when
+// its ClientID is reused ([MQTT-3.1.4-3]).
+//
+// It drives sendTakenOverDisconnect -- the helper HandleConnection calls --
+// rather than restating the close logic the way this test used to. A hand-copy
+// can only ever assert that the copy is unchanged; this asserts that the
+// production helper produces the right frame, so a change to the helper is
+// caught here instead of being mirrored by hand.
+//
+// net.Pipe is synchronous per Write, so a reader has to be draining
+// concurrently -- and because the codec writes the fixed header and the reason
+// code in separate Writes, it has to drain the whole frame, not one chunk of
+// it, or the trailing write blocks until the deadline.
 func TestBroker_SessionTakeover(t *testing.T) {
 	b := New(WithAuth(AllowAllAuth{}))
-	if err := b.Start(); err != nil {
-		t.Fatalf("start: %v", err)
-	}
-	defer b.Stop()
 
-	serverConn1, clientConn1 := net.Pipe()
-	serverConn2, _ := net.Pipe()
+	serverConn, clientConn := net.Pipe()
+	defer clientConn.Close()
 
-	// Register first connection (simulating a connected client)
-	b.mu.Lock()
-	b.connections["takeover-client"] = &clientState{
-		conn:  serverConn1,
-		codec: protocol.NewCodec(0),
+	old := &clientState{
+		conn:  serverConn,
+		codec: protocol.NewCodecForVersion(0, protocol.Version50),
 	}
-	b.mu.Unlock()
 
-	// Simulate session takeover: close old connection, register new one.
-	// Mirrors HandleConnection lines 233-239.
-	b.mu.Lock()
-	if old, exists := b.connections["takeover-client"]; exists {
-		old.conn.Close()
-	}
-	b.connections["takeover-client"] = &clientState{
-		conn:  serverConn2,
-		codec: protocol.NewCodec(0),
-	}
-	b.mu.Unlock()
+	want := []byte{0xE0, 0x01, protocol.DisconnectSessionTakenOver}
+	frame := make(chan []byte, 1)
+	go func() {
+		got := make([]byte, len(want))
+		if _, err := io.ReadFull(clientConn, got); err != nil {
+			return // leave the channel empty; the assertion below reports it
+		}
+		frame <- got
+	}()
 
-	// First connection's client side should detect the close
-	buf := make([]byte, 1)
-	_, err := clientConn1.Read(buf)
+	b.sendTakenOverDisconnect("takeover-client", old)
+
+	select {
+	case got := <-frame:
+		if !bytes.Equal(got, want) {
+			t.Errorf("takeover frame = % X, want % X", got, want)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("no takeover DISCONNECT: nothing was written to the displaced connection")
+	}
+
+	// The caller closes the socket straight after the send, so the peer must
+	// then see the connection go away.
+	serverConn.Close()
+	clientConn.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := clientConn.Read(make([]byte, 1)); err == nil {
+		t.Error("connection still open after the takeover DISCONNECT")
+	}
+}
+
+// TestBroker_SessionTakeoverMQTT311WritesNothing pins the wire contract for a
+// displaced pre-v5 connection: MQTT 3.1.1 has no server-to-client DISCONNECT,
+// so nothing may be written.
+//
+// It is a contract pin, not a gate-removal guard. Deleting the
+// ServerDisconnect check in sendTakenOverDisconnect leaves this test green,
+// because the codec refuses the frame first and writes nothing; the guard that
+// actually protects the wire is protocol's encodeDisconnect, pinned by
+// protocol.TestDisconnectVersionGuard.
+func TestBroker_SessionTakeoverMQTT311WritesNothing(t *testing.T) {
+	b := New(WithAuth(AllowAllAuth{}))
+
+	serverConn, clientConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	old := &clientState{
+		conn:  serverConn,
+		codec: protocol.NewCodecForVersion(0, protocol.Version311),
+	}
+
+	b.sendTakenOverDisconnect("takeover-client", old)
+
+	// sendTakenOverDisconnect is synchronous, so anything it wrote has already
+	// reached the pipe by the time it returns: a read that stays empty proves
+	// nothing was sent.
+	clientConn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	buf := make([]byte, 8)
+	n, err := clientConn.Read(buf)
+	if n != 0 {
+		t.Errorf("wrote % X to a displaced MQTT 3.1.1 connection, want nothing", buf[:n])
+	}
 	if err == nil {
-		t.Error("expected first connection to be closed after takeover")
+		t.Error("read returned without data and without an error: expected a timeout")
 	}
+}
 
-	// Second connection should be the active one
-	b.mu.RLock()
-	cs := b.connections["takeover-client"]
-	b.mu.RUnlock()
-	if cs.conn != serverConn2 {
-		t.Error("expected second connection to be the active one")
-	}
+// TestBroker_SessionTakeoverNilConnectionIsSafe pins the guard the takeover
+// path relies on: the connection map can hold a nil or half-built entry (unit
+// tests register them by hand), and the DISCONNECT helper must not panic on it.
+func TestBroker_SessionTakeoverNilConnectionIsSafe(t *testing.T) {
+	b := New(WithAuth(AllowAllAuth{}))
 
-	serverConn2.Close()
-	clientConn1.Close()
+	b.sendTakenOverDisconnect("nil-conn", nil)
+	b.sendTakenOverDisconnect("nil-codec", &clientState{})
 }
 
 func TestBroker_MaxConnections(t *testing.T) {

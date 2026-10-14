@@ -125,13 +125,9 @@ func TestDuplicateClientID(t *testing.T) {
 	codec2 := protocol.NewCodec(0)
 	connectClient(t, conn2, codec2, "dup-client")
 
-	// First connection should be dead
-	conn1.SetDeadline(time.Now().Add(500 * time.Millisecond))
-	buf := make([]byte, 1)
-	_, err = conn1.Read(buf)
-	if err == nil {
-		t.Error("expected first connection to be closed")
-	}
+	// The first connection is displaced by the takeover, so [MQTT-3.1.4-3]
+	// requires it to be told why (DISCONNECT 0x8E) before the close.
+	expectDisconnectThenClose(t, conn1, protocol.DisconnectSessionTakenOver)
 }
 
 // TestInvalidTopicFilter tests that invalid topic filters are rejected.

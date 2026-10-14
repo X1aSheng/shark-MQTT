@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 
 	"github.com/X1aSheng/shark-mqtt/pkg/bufferpool"
@@ -256,7 +257,7 @@ func TestDisconnectEncodeDecode_WithAndWithoutProps(t *testing.T) {
 			name: "with reason code",
 			pkt: &DisconnectPacket{
 				FixedHeader: FixedHeader{PacketType: PacketTypeDisconnect},
-				ReasonCode:  0x84, // Session taken over
+				ReasonCode:  DisconnectSessionTakenOver,
 			},
 		},
 		{
@@ -294,6 +295,94 @@ func TestDisconnectEncodeDecode_WithAndWithoutProps(t *testing.T) {
 			}
 			if dp.ReasonCode != tt.pkt.ReasonCode {
 				t.Errorf("ReasonCode = 0x%02x, want 0x%02x", dp.ReasonCode, tt.pkt.ReasonCode)
+			}
+		})
+	}
+}
+
+// TestDisconnectVersionGuard covers the codec guard that keeps a
+// server-to-client DISCONNECT off an MQTT 3.1.1 wire. Reason codes and the
+// property section are MQTT 5.0 additions, so a pre-v5 codec has to refuse
+// them outright: a peer on 3.1.1 would read the reason code byte as the start
+// of the next packet.
+//
+// This is the guard every broker teardown path ultimately leans on -- the
+// ServerDisconnect capability gate at the call sites says "this version has a
+// server DISCONNECT", and this says "and here is what it may contain". Only
+// the codec decides what reaches the wire, so a broker-side gate alone would
+// leave it free to produce a frame the peer cannot parse. The bare-DISCONNECT
+// case is the control: the guard must refuse the v5 payload without turning
+// into a blanket refusal of the packet type, which is a legal client-to-server
+// frame in 3.1.1.
+func TestDisconnectVersionGuard(t *testing.T) {
+	props := func() *Properties {
+		return &Properties{SessionExpiryInterval: func() *uint32 { v := uint32(3600); return &v }()}
+	}
+
+	tests := []struct {
+		name    string
+		version Version
+		pkt     *DisconnectPacket
+		want    []byte // nil means the encode must be refused
+	}{
+		{
+			name:    "3.1.1 refuses a reason code",
+			version: Version311,
+			pkt: &DisconnectPacket{
+				FixedHeader: FixedHeader{PacketType: PacketTypeDisconnect},
+				ReasonCode:  DisconnectSessionTakenOver,
+			},
+		},
+		{
+			name:    "3.1.1 refuses a property section",
+			version: Version311,
+			pkt: &DisconnectPacket{
+				FixedHeader: FixedHeader{PacketType: PacketTypeDisconnect},
+				Properties:  props(),
+			},
+		},
+		{
+			name:    "3.1.1 still encodes a bare DISCONNECT",
+			version: Version311,
+			pkt:     &DisconnectPacket{FixedHeader: FixedHeader{PacketType: PacketTypeDisconnect}},
+			want:    []byte{0xE0, 0x00},
+		},
+		{
+			name:    "5.0 encodes the reason code",
+			version: Version50,
+			pkt: &DisconnectPacket{
+				FixedHeader: FixedHeader{PacketType: PacketTypeDisconnect},
+				ReasonCode:  DisconnectSessionTakenOver,
+			},
+			want: []byte{0xE0, 0x01, DisconnectSessionTakenOver},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			codec := NewCodecForVersion(0, tt.version)
+
+			var buf bytes.Buffer
+			err := codec.Encode(&buf, tt.pkt)
+
+			if tt.want == nil {
+				if !errors.Is(err, ErrMalformedPacket) {
+					t.Fatalf("Encode error = %v, want %v", err, ErrMalformedPacket)
+				}
+				// Nothing may reach the wire on a refusal. The guard runs
+				// before the fixed header is written, and a partial frame
+				// would be read by the peer as a packet boundary.
+				if buf.Len() != 0 {
+					t.Errorf("a refused DISCONNECT wrote % X, want nothing", buf.Bytes())
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Encode error = %v, want none", err)
+			}
+			if !bytes.Equal(buf.Bytes(), tt.want) {
+				t.Errorf("wire bytes = % X, want % X", buf.Bytes(), tt.want)
 			}
 		})
 	}

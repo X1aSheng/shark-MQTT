@@ -59,6 +59,16 @@
    alone only closes listeners `Serve` has registered, so relying on it leaks
    the port when `Stop` wins the race against the first `Serve`.
 
+8. **A takeover DISCONNECT is written before `b.mu` is taken.** Replacing a
+   connection's map entry has to tell the displaced peer why
+   ([MQTT-3.1.4-3]), and that write is confirmed rather than enqueued
+   (`writeFinal`, bounded by `finalWriteTimeout`) so the close cannot overtake
+   it. It therefore runs with no broker lock held. Moving it inside the `b.mu`
+   critical section would hold the top-level broker lock across a socket
+   write; resolving the connection by ClientID inside that section would
+   instead race the entry the section is about to install, and the DISCONNECT
+   could land on the incoming connection.
+
 ## Deadlock audit (2026-08-31)
 
 - `b.mu → b.topics.mu` / `b.mu → sess.mu` / `b.mu → receivedQoS2Mu`: one-way,

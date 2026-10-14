@@ -602,29 +602,9 @@ func TestPersistentSession_KickPrevious(t *testing.T) {
 		t.Fatalf("expected second CONNACK accepted, got reason %d", ca2.ReasonCode)
 	}
 
-	// First connection should be disconnected - verify by reading (should fail)
-	conn1.SetDeadline(time.Now().Add(500 * time.Millisecond))
-	buf := make([]byte, 1)
-	if _, err := conn1.Read(buf); err == nil {
-		t.Error("expected first connection to be closed after takeover")
-	}
-
-	pingPkt := &protocol.PingReqPacket{
-		FixedHeader: protocol.FixedHeader{
-			PacketType: protocol.PacketTypePingReq,
-		},
-	}
-
-	conn1.SetDeadline(time.Now().Add(1 * time.Second))
-	if err := codec1.Encode(conn1, pingPkt); err != nil {
-		t.Logf("first connection write failed (expected): %v", err)
-		return
-	}
-
-	// Try to read - should fail or get no response
-	conn1.SetDeadline(time.Now().Add(1 * time.Second))
-	_, err = codec1.Decode(conn1)
-	if err != nil {
-		t.Logf("first connection read failed (expected): %v", err)
-	}
+	// First connection is displaced, and [MQTT-3.1.4-3] makes that a told
+	// teardown rather than a silent one: it receives DISCONNECT 0x8E and then
+	// the close. Asserting the exact frame is what catches a regression to the
+	// bare close this test used to expect.
+	expectDisconnectThenClose(t, conn1, protocol.DisconnectSessionTakenOver)
 }

@@ -556,10 +556,16 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 	// same clientID (P2-10). The trigger is scoped to the old connection so a
 	// late abnormal-disconnect from the old readLoop cannot fire the NEW
 	// connection's will (audit).
+	//
+	// The takeover DISCONNECT goes first, ahead of the will trigger and ahead
+	// of the lock below: [MQTT-3.1.4-3] makes it the signal the displaced
+	// connection is owed, and it must not be sent while b.mu is held because
+	// the write is bounded rather than instant (writeFinal).
 	b.mu.RLock()
 	old, hadOld := b.connections[clientID]
 	b.mu.RUnlock()
 	if hadOld && old != nil {
+		b.sendTakenOverDisconnect(clientID, old)
 		if err := b.will.TriggerWill(clientID, old.conn); err != nil {
 			b.logger.Debug("failed to trigger takeover will", "clientID", clientID, "error", err)
 		}
@@ -2551,6 +2557,47 @@ func (b *Broker) sendDisconnectBeforeClose(clientID string, pkt protocol.Packet)
 		return false
 	}
 	return true
+}
+
+// sendTakenOverDisconnect tells the connection being replaced that its
+// ClientID has been taken over, per MQTT 5.0 §3.1.4 step 1 / [MQTT-3.1.4-3]:
+//
+//	"If the ClientID represents a Client already connected to the Server, the
+//	 Server sends a DISCONNECT packet to the existing Client with Reason Code
+//	 of 0x8E (Session taken over) as described in section 4.13 and MUST close
+//	 the Network Connection of the existing Client."
+//
+// It takes the superseded connection explicitly instead of resolving it from
+// the connection map the way sendDisconnectBeforeClose does: the caller is
+// about to replace that map entry, and a lookup racing the replacement would
+// send the DISCONNECT to the incoming connection -- the one client that has
+// nothing to be told.
+//
+// The packet is only meaningful on MQTT 5. 3.1 and 3.1.1 have no
+// server-to-client DISCONNECT, so a displaced connection on those versions is
+// closed silently, matching every other teardown path (ServerDisconnect). The
+// gate reads the *superseded* connection's own codec, because the frame has to
+// be in the wire format that connection negotiated -- the reason code lives
+// where a 3.1.1 peer expects header bytes.
+//
+// The gate is belt-and-braces: the codec refuses the same frame on a pre-v5
+// version anyway (encodeDisconnect, pinned by TestDisconnectVersionGuard). It
+// is kept here because it asks the question in the protocol's own terms, so
+// the intent does not ride on a codec implementation detail staying put.
+//
+// Unlike the other teardown paths this one is bounded but not instantaneous
+// (writeFinal waits up to finalWriteTimeout), so it must be called without
+// b.mu held.
+func (b *Broker) sendTakenOverDisconnect(clientID string, old *clientState) {
+	if old == nil || old.codec == nil || !old.codec.Spec().ServerDisconnect {
+		return
+	}
+	if !old.writeFinal(&protocol.DisconnectPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeDisconnect},
+		ReasonCode:  protocol.DisconnectSessionTakenOver,
+	}) {
+		b.logger.Debug("takeover DISCONNECT not delivered", "clientID", clientID)
+	}
 }
 
 // classifyWriteError decides what a codec Encode failure means for the
