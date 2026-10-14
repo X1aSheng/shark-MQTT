@@ -1,6 +1,6 @@
 # Testing Guide
 
-Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。当前基线为 **437 个单元测试**、**147 个集成测试**、**61 个基准测试**（口径：源码中声明的顶层 `Test*` / `Benchmark*` 函数数，复现方式见 [测试统计](#测试统计)）。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
+Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。当前基线为 **442 个单元测试**、**147 个集成测试**、**61 个基准测试**（口径：源码中声明的顶层 `Test*` / `Benchmark*` 函数数，复现方式见 [测试统计](#测试统计)）。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
 
 ---
 
@@ -8,6 +8,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 
 - [测试架构](#测试架构)
 - [测试统计](#测试统计)
+- [代码规模](#代码规模)
 - [单元测试](#单元测试)
 - [集成测试](#集成测试)
 - [基准测试](#基准测试)
@@ -51,7 +52,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 |  +-- topic_filter_defect_test.go - topic filter 边界       |
 |  +-- windows_benchmark_test.go - Windows benchmark 隔离    |
 +------------------------------------------------------------+
-|  Unit Tests (440 declared)                                 |
+|  Unit Tests (442 declared)                                 |
 |  各包内 *_test.go 文件                                     |
 |  broker/ protocol/ client/ config/ plugin/ store/          |
 |  store/memory/ pkg/ api/ errs/                             |
@@ -64,7 +65,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 
 | 类型 | 数量 | 位置 |
 |------|------|------|
-| 单元测试 | 440 | 各包 `*_test.go`（含 `tests/defects/`） |
+| 单元测试 | 442 | 各包 `*_test.go`（含 `tests/defects/`） |
 | 集成测试 | 147 | `tests/integration/` |
 | 缺陷回归测试 | `tests/defects/` 7 个文件 / 8 个用例 + 包内回归 | `tests/defects/`、`broker/`、`client/`、`protocol/` |
 | 基准测试 | 61（Windows 本地实际执行 58） | `tests/bench/`、`plugin/`、`pkg/metrics/` |
@@ -84,7 +85,7 @@ grep -c '^func Test' tests/integration/*_test.go
 grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/metrics | wc -l
 ```
 
-三点注意事项：
+四点注意事项：
 
 - **构建标签**：`store/redis/`（18 个测试 + 9 个基准）仅在 `-tags store_redis` 下编译，`store/badger/`（10 个测试）仅在 `-tags store_badger` 下编译，因此**不计入**默认口径。
 - **存储层格式测试**：`store/` 根包（8 个测试）不带构建标签，直接验证 `encoding/json` 的会话与保留消息记录布局 —— 这是 `store/badger` 与 `store/redis` 共用的持久化格式，因此无需任一后端即可回归。
@@ -95,7 +96,7 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 
 | 包 | 测试数 | 基准测试数 | 说明 |
 |----|--------|-----------|------|
-| broker/ | 194 | 0 | 核心逻辑：TopicTree、QoS 引擎、会话、遗嘱、认证、服务器、retained metrics、MQTT 5.0 属性中继与过期边界、重连重传、按协议版本门控的连接内重传 |
+| broker/ | 196 | 0 | 核心逻辑：TopicTree、QoS 引擎、会话、遗嘱、认证、服务器、retained metrics、MQTT 5.0 属性中继与过期边界、重连重传、按协议版本门控的连接内重传、插件钩子上下文 |
 | protocol/ | 76 | 0 | MQTT 3.1 / 3.1.1 / 5.0 编解码、属性、报文 flags 校验、协议适配层（15 种报文） |
 | client/ | 35 | 0 | MQTT 客户端连接、发布、订阅、断开清理 |
 | config/ | 24 | 0 | 配置解析与校验 |
@@ -108,12 +109,38 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 | pkg/logger/ | 7 | 0 | slog 日志适配 |
 | errs/ | 4 | 0 | 错误定义 |
 | tests/defects/ | 8 | 0 | 审查发现缺陷的最小复现和回归测试 |
-| **单元测试合计** | **440** | **4** | |
+| **单元测试合计** | **442** | **4** | |
 | tests/integration/ | 147 | 0 | 端到端集成测试（含部署验证） |
 | tests/bench/ | 0 | 57 | 全栈 TCP、E2E 数据验证、微基准 |
 | **基准测试合计** | | **61** | |
 | store/redis/（`store_redis`） | 18 | 9 | Redis 存储：消息、保留、会话（默认不编译） |
 | store/badger/（`store_badger`） | 10 | 0 | BadgerDB 持久化存储（默认不编译） |
+
+---
+
+## 代码规模
+
+和测试计数一样，这里是**唯一维护点**：架构文档请引用本节，不要内嵌这些数字 —— 内嵌必然漂移
+（`PROTOCOL-ADAPTER-DESIGN.md` 与 `CLUSTER-FEASIBILITY.md` 就曾长期停留在 27,265 行）。
+
+| 指标 | 数量 |
+|------|------|
+| `.go` 文件 | 160（67 非测试 / 93 测试） |
+| 非测试代码行数 | 16,050 |
+| 测试代码行数 | 25,977 |
+
+主要模块的非测试行数：`broker` 6,811（17 文件）· `protocol` 3,479（13）· `store` 1,447（10）·
+`client` 884（2）· `api` 532（2）· `pkg` 466（7）· `config` 366（2）· `plugin` 200（1）·
+`cmd` 160（1）· `errs` 42（1）；其余分布在 `examples/`、`scripts/`、`tests/`。
+
+```bash
+# 全部 .go 文件数
+find . -name '*.go' -not -path './.git/*' | wc -l
+# 非测试 .go 文件数（换成 -name '*_test.go' 即为测试文件数）
+find . -name '*.go' -not -name '*_test.go' -not -path './.git/*' | wc -l
+# 非测试代码行数（换成 -name '*_test.go' 即为测试行数）
+find . -name '*.go' -not -name '*_test.go' -not -path './.git/*' -exec cat {} + | wc -l
+```
 
 ---
 
