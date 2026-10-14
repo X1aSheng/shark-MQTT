@@ -129,6 +129,79 @@ var propertyLoci = map[byte]propertyLocusSet{
 	PropSharedSubAvailable:   locusBit(locusConnAck),
 }
 
+// propertyProbe reports whether a property set carries the Identifier id, that
+// is, whether encodeProperties would put it on the wire.
+type propertyProbe struct {
+	id  byte
+	set func(*Properties) bool
+}
+
+// propertyProbes names the property set the encoder can emit, one entry per
+// Identifier in propertyLoci.
+//
+// validatePropertyLoci walks this table rather than the encodeProperties block
+// list, so the rule lives in one place and the check runs before a single byte
+// is written. The two must not drift: TestPropertyProbesCoverPropertyLoci fails
+// when an Identifier in propertyLoci has no probe, so a property added to
+// Properties without teaching the guard about it is caught rather than silently
+// escaping the check.
+var propertyProbes = []propertyProbe{
+	{PropPayloadFormat, func(p *Properties) bool { return p.PayloadFormat != nil }},
+	{PropMessageExpiryInterval, func(p *Properties) bool { return p.MessageExpiryInterval != nil }},
+	{PropContentType, func(p *Properties) bool { return p.ContentType != "" }},
+	{PropResponseTopic, func(p *Properties) bool { return p.ResponseTopic != "" }},
+	{PropCorrelationData, func(p *Properties) bool { return p.CorrelationData != nil }},
+	{PropSubscriptionIdentifier, func(p *Properties) bool { return p.SubscriptionIdentifier != nil }},
+	{PropSessionExpiryInterval, func(p *Properties) bool { return p.SessionExpiryInterval != nil }},
+	{PropAssignedClientID, func(p *Properties) bool { return p.AssignedClientID != "" }},
+	{PropServerKeepAlive, func(p *Properties) bool { return p.ServerKeepAlive != nil }},
+	{PropAuthMethod, func(p *Properties) bool { return p.AuthenticationMethod != "" }},
+	{PropAuthData, func(p *Properties) bool { return p.AuthenticationData != nil }},
+	{PropRequestProblemInfo, func(p *Properties) bool { return p.RequestProblemInfo != nil }},
+	{PropWillDelayInterval, func(p *Properties) bool { return p.WillDelayInterval != nil }},
+	{PropRequestResponseInfo, func(p *Properties) bool { return p.RequestResponseInfo != nil }},
+	{PropResponseInfo, func(p *Properties) bool { return p.ResponseInfo != "" }},
+	{PropServerReference, func(p *Properties) bool { return p.ServerReference != "" }},
+	{PropReceiveMaximum, func(p *Properties) bool { return p.ReceiveMaximum != nil }},
+	{PropTopicAliasMax, func(p *Properties) bool { return p.TopicAliasMaximum != nil }},
+	{PropTopicAlias, func(p *Properties) bool { return p.TopicAlias != nil }},
+	{PropMaximumQoS, func(p *Properties) bool { return p.MaximumQoS != nil }},
+	{PropRetainAvailable, func(p *Properties) bool { return p.RetainAvailable != nil }},
+	{PropUserProperty, func(p *Properties) bool { return len(p.UserProperties) > 0 }},
+	{PropMaximumPacketSize, func(p *Properties) bool { return p.MaximumPacketSize != nil }},
+	{PropWildcardSubAvailable, func(p *Properties) bool { return p.WildcardSubAvailable != nil }},
+	{PropSubIDAvailable, func(p *Properties) bool { return p.SubIDAvailable != nil }},
+	{PropSharedSubAvailable, func(p *Properties) bool { return p.SharedSubAvailable != nil }},
+	{PropReasonString, func(p *Properties) bool { return p.ReasonString != "" }},
+}
+
+// validatePropertyLoci rejects a property set that carries an Identifier the
+// packet type does not define (MQTT 5.0 Table 2-4).
+//
+// This is the encoding-side half of the rule decodeProperties enforces through
+// propertyLoci. §2.2.2.2 makes "a Control Packet which contains an Identifier
+// which is not valid for its packet type" a Malformed Packet, so a peer that
+// applies the rule has to reject the packet: producing one is a defect even when
+// the local decoder is happy with it. Decoding alone cannot close this -- the
+// broker's own encoder emitted a CONNACK carrying the CONNECT-only Request
+// Response Information for as long as nothing checked this side. The section is
+// buffered before it is written, so a rejection never reaches the wire.
+func validatePropertyLoci(props *Properties, locus propertyLocus) error {
+	if props == nil {
+		return nil
+	}
+	for _, probe := range propertyProbes {
+		if !probe.set(props) {
+			continue
+		}
+		if propertyLoci[probe.id]&locusBit(locus) == 0 {
+			return fmt.Errorf("%w: property 0x%02X is not valid in this packet type",
+				ErrMalformedPacket, probe.id)
+		}
+	}
+	return nil
+}
+
 // propertyLocus names the packet (or the CONNECT Will) whose property section
 // is being decoded.
 //
@@ -486,14 +559,19 @@ func (c *Codec) decodeProperties(r io.Reader, locus propertyLocus) (*Properties,
 // reason code (PUBACK/PUBREC/PUBREL/PUBCOMP, UNSUBACK, DISCONNECT) does not use
 // this helper: those encoders already refuse properties on a pre-v5 codec
 // through their ReasonCodes check.
-func (c *Codec) writePropertySection(w io.Writer, props *Properties) error {
+//
+// locus is the packet type the section belongs to. It is required rather than
+// optional because encodeProperties applies Table 2-4 to it: a property the
+// packet type does not define is refused instead of written, which is the only
+// place that rule can be enforced on this codec's own output.
+func (c *Codec) writePropertySection(w io.Writer, props *Properties, locus propertyLocus) error {
 	if !c.spec.Properties {
 		return c.rejectPreV5Properties(props)
 	}
 	if props == nil {
 		return writeVarInt(w, 0)
 	}
-	return c.encodeProperties(w, props)
+	return c.encodeProperties(w, props, locus)
 }
 
 // rejectPreV5Properties is the guard that both writePropertySection and the
@@ -509,8 +587,12 @@ func (c *Codec) rejectPreV5Properties(props *Properties) error {
 }
 
 // encodeProperties writes the properties to w, prefixed by their length.
-func (c *Codec) encodeProperties(w io.Writer, props *Properties) error {
-	if err := validateProperties(props); err != nil {
+//
+// locus is the packet type whose property section this is, and it is validated
+// before anything is written: a property Table 2-4 does not allow here fails the
+// call rather than producing a packet a conformant peer would reject.
+func (c *Codec) encodeProperties(w io.Writer, props *Properties, locus propertyLocus) error {
+	if err := validateProperties(props, locus); err != nil {
 		return err
 	}
 
@@ -747,7 +829,13 @@ func (c *Codec) encodeProperties(w io.Writer, props *Properties) error {
 	return err
 }
 
-func validateProperties(props *Properties) error {
+// validateProperties applies every constraint a property set has to satisfy to
+// be put on the wire: the value rules of each Identifier, and Table 2-4's rule
+// that the Identifier is defined for this packet type at all.
+//
+// The value rules run first so a property that is both out of range and out of
+// place is reported as the value error it is.
+func validateProperties(props *Properties, locus propertyLocus) error {
 	if props == nil {
 		return nil
 	}
@@ -787,7 +875,7 @@ func validateProperties(props *Properties) error {
 	if props.SharedSubAvailable != nil && *props.SharedSubAvailable > 1 {
 		return ErrMalformedPacket
 	}
-	return nil
+	return validatePropertyLoci(props, locus)
 }
 
 // --- Helper functions for reading from bytes.Reader ---

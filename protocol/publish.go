@@ -157,7 +157,7 @@ func (c *Codec) encodePublish(w io.Writer, pkt *PublishPacket) error {
 	// writePropertySection gates it on the codec's negotiated version and
 	// refuses a pre-v5 codec that was handed properties -- emitting them would
 	// make the peer read the property bytes as payload (audit).
-	if err := c.writePropertySection(buf, pkt.Properties); err != nil {
+	if err := c.writePropertySection(buf, pkt.Properties, locusPublish); err != nil {
 		return err
 	}
 
@@ -356,7 +356,9 @@ func (c *Codec) encodeAckFields(packetID uint16, reasonCode byte, props *Propert
 			return nil, err
 		}
 		if props != nil {
-			if err := c.encodeProperties(&buf, props); err != nil {
+			// All four of PUBACK/PUBREC/PUBREL/PUBCOMP share one property set
+			// in Table 2-4, which is what locusAck names.
+			if err := c.encodeProperties(&buf, props, locusAck); err != nil {
 				return nil, err
 			}
 		}

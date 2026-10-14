@@ -257,7 +257,7 @@ func (c *Codec) encodeConnect(w io.Writer, pkt *ConnectPacket) error {
 
 	// MQTT 5.0 properties. The section is always present in a v5 CONNECT, so a
 	// zero length is written when the client sent none.
-	if err := c.writePropertySection(&buf, pkt.Properties); err != nil {
+	if err := c.writePropertySection(&buf, pkt.Properties, locusConnect); err != nil {
 		return err
 	}
 
@@ -269,8 +269,9 @@ func (c *Codec) encodeConnect(w io.Writer, pkt *ConnectPacket) error {
 	// Will
 	if pkt.Flags.WillFlag {
 		// The will carries a property section of its own, also always present
-		// in a v5 CONNECT.
-		if err := c.writePropertySection(&buf, pkt.WillProperties); err != nil {
+		// in a v5 CONNECT. Table 2-4 gives it its own set of Identifiers, so it
+		// gets its own locus rather than inheriting the CONNECT one.
+		if err := c.writePropertySection(&buf, pkt.WillProperties, locusWill); err != nil {
 			return err
 		}
 		if err := writeString(&buf, pkt.WillTopic); err != nil {
@@ -392,7 +393,7 @@ func (c *Codec) encodeConnAck(w io.Writer, pkt *ConnAckPacket) error {
 	// Remaining Length 2 there -- so this must be version-gated like every
 	// other property encoder. It previously wrote whatever the caller set,
 	// which put v5 property bytes into a v3.1.1 CONNACK.
-	if err := c.writePropertySection(&buf, pkt.Properties); err != nil {
+	if err := c.writePropertySection(&buf, pkt.Properties, locusConnAck); err != nil {
 		return err
 	}
 

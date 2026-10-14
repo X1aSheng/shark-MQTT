@@ -100,7 +100,7 @@ func (c *Codec) encodeSubscribe(w io.Writer, pkt *SubscribePacket) error {
 	// Properties (MQTT 5.0). The section is always present in a v5 SUBSCRIBE;
 	// writePropertySection refuses a pre-v5 codec that was handed properties
 	// instead of writing v5 bytes into a 3.1/3.1.1 frame.
-	if err := c.writePropertySection(&buf, pkt.Properties); err != nil {
+	if err := c.writePropertySection(&buf, pkt.Properties, locusSubscribe); err != nil {
 		return err
 	}
 
@@ -203,7 +203,7 @@ func (c *Codec) encodeSubAck(w io.Writer, pkt *SubAckPacket) error {
 	// Remaining Length is at least 4). This block was the one acknowledgement
 	// without a version gate: SUBACK has no reason-code check to fall back on,
 	// because in 3.1.1 its payload *is* the return codes.
-	if err := c.writePropertySection(&buf, pkt.Properties); err != nil {
+	if err := c.writePropertySection(&buf, pkt.Properties, locusSubAck); err != nil {
 		return err
 	}
 
@@ -290,7 +290,7 @@ func (c *Codec) encodeUnsubscribe(w io.Writer, pkt *UnsubscribePacket) error {
 	// refusal comes from writePropertySection itself: UNSUBSCRIBE has no reason
 	// code to check, so nothing else would catch a properties-bearing v3.1.1
 	// packet and the v5 bytes would be read as the topic list.
-	if err := c.writePropertySection(&buf, pkt.Properties); err != nil {
+	if err := c.writePropertySection(&buf, pkt.Properties, locusUnsubscribe); err != nil {
 		return err
 	}
 
@@ -386,7 +386,7 @@ func (c *Codec) encodeUnsubAck(w io.Writer, pkt *UnsubAckPacket) error {
 	// above already rejects a properties-bearing pre-v5 packet, so this call can
 	// only fail on a malformed property set; it goes through the helper anyway so
 	// that every mandatory property section is written the same way.
-	if err := c.writePropertySection(&buf, pkt.Properties); err != nil {
+	if err := c.writePropertySection(&buf, pkt.Properties, locusUnsubAck); err != nil {
 		return err
 	}
 
@@ -473,7 +473,7 @@ func (c *Codec) encodeDisconnect(w io.Writer, pkt *DisconnectPacket) error {
 			return err
 		}
 		if pkt.Properties != nil {
-			if err := c.encodeProperties(&buf, pkt.Properties); err != nil {
+			if err := c.encodeProperties(&buf, pkt.Properties, locusDisconnect); err != nil {
 				return err
 			}
 		}
@@ -548,7 +548,7 @@ func (c *Codec) encodeAuth(w io.Writer, pkt *AuthPacket) error {
 			return err
 		}
 		if pkt.Properties != nil {
-			if err := c.encodeProperties(&buf, pkt.Properties); err != nil {
+			if err := c.encodeProperties(&buf, pkt.Properties, locusAuth); err != nil {
 				return err
 			}
 		}

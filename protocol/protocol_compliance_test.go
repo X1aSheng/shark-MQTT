@@ -178,26 +178,31 @@ func TestPropertiesValidateMQTT5ScalarConstraints(t *testing.T) {
 	zeroUint16 := uint16(0)
 	zeroUint32 := uint32(0)
 
+	// Each case names a locus that DOES allow the Identifier, so the failure
+	// under test is the value rule and not Table 2-4. Steering every case into
+	// one locus would make the assertions pass for the wrong reason as soon as
+	// the locus check exists.
 	tests := []struct {
 		name  string
 		props *Properties
+		locus propertyLocus
 	}{
-		{name: "payload format", props: &Properties{PayloadFormat: &invalidByte}},
-		{name: "request problem info", props: &Properties{RequestProblemInfo: &invalidByte}},
-		{name: "request response info", props: &Properties{RequestResponseInfo: &invalidByte}},
-		{name: "receive maximum", props: &Properties{ReceiveMaximum: &zeroUint16}},
-		{name: "topic alias", props: &Properties{TopicAlias: &zeroUint16}},
-		{name: "maximum qos", props: &Properties{MaximumQoS: &invalidByte}},
-		{name: "retain available", props: &Properties{RetainAvailable: &invalidByte}},
-		{name: "maximum packet size", props: &Properties{MaximumPacketSize: &zeroUint32}},
-		{name: "wildcard available", props: &Properties{WildcardSubAvailable: &invalidByte}},
-		{name: "subscription id available", props: &Properties{SubIDAvailable: &invalidByte}},
-		{name: "shared subscription available", props: &Properties{SharedSubAvailable: &invalidByte}},
+		{name: "payload format", props: &Properties{PayloadFormat: &invalidByte}, locus: locusPublish},
+		{name: "request problem info", props: &Properties{RequestProblemInfo: &invalidByte}, locus: locusConnect},
+		{name: "request response info", props: &Properties{RequestResponseInfo: &invalidByte}, locus: locusConnect},
+		{name: "receive maximum", props: &Properties{ReceiveMaximum: &zeroUint16}, locus: locusConnect},
+		{name: "topic alias", props: &Properties{TopicAlias: &zeroUint16}, locus: locusPublish},
+		{name: "maximum qos", props: &Properties{MaximumQoS: &invalidByte}, locus: locusConnAck},
+		{name: "retain available", props: &Properties{RetainAvailable: &invalidByte}, locus: locusConnAck},
+		{name: "maximum packet size", props: &Properties{MaximumPacketSize: &zeroUint32}, locus: locusConnect},
+		{name: "wildcard available", props: &Properties{WildcardSubAvailable: &invalidByte}, locus: locusConnAck},
+		{name: "subscription id available", props: &Properties{SubIDAvailable: &invalidByte}, locus: locusConnAck},
+		{name: "shared subscription available", props: &Properties{SharedSubAvailable: &invalidByte}, locus: locusConnAck},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := codec.encodeProperties(&bytes.Buffer{}, tt.props)
+			err := codec.encodeProperties(&bytes.Buffer{}, tt.props, tt.locus)
 			if !errors.Is(err, ErrMalformedPacket) {
 				t.Fatalf("encodeProperties() error = %v, want %v", err, ErrMalformedPacket)
 			}

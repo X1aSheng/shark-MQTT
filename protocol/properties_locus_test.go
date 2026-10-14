@@ -188,3 +188,181 @@ func TestDecodeRoundTripsServerReference(t *testing.T) {
 		t.Fatalf("ServerReference after the round trip = %+v, want %q", got.Properties, reference)
 	}
 }
+
+// minimalPropertiesFor returns a property set carrying exactly the one
+// Identifier id, with a value that satisfies that Identifier's own rule.
+//
+// It is the encoding-side mirror of minimalPropertyValue: the matrix test below
+// has to fail for the locus and never for the value, or a rejection would be
+// indistinguishable from a fixture mistake.
+func minimalPropertiesFor(id byte) *Properties {
+	zero := byte(0)
+	one16 := uint16(1)
+	one32 := uint32(1)
+	const text = "x"
+	binary := []byte{0xAA}
+
+	switch id {
+	case PropPayloadFormat:
+		return &Properties{PayloadFormat: &zero}
+	case PropMessageExpiryInterval:
+		return &Properties{MessageExpiryInterval: &one32}
+	case PropContentType:
+		return &Properties{ContentType: text}
+	case PropResponseTopic:
+		return &Properties{ResponseTopic: text}
+	case PropCorrelationData:
+		return &Properties{CorrelationData: binary}
+	case PropSubscriptionIdentifier:
+		return &Properties{SubscriptionIdentifier: &one32}
+	case PropSessionExpiryInterval:
+		return &Properties{SessionExpiryInterval: &one32}
+	case PropAssignedClientID:
+		return &Properties{AssignedClientID: text}
+	case PropServerKeepAlive:
+		return &Properties{ServerKeepAlive: &one16}
+	case PropAuthMethod:
+		return &Properties{AuthenticationMethod: text}
+	case PropAuthData:
+		return &Properties{AuthenticationData: binary}
+	case PropRequestProblemInfo:
+		return &Properties{RequestProblemInfo: &zero}
+	case PropWillDelayInterval:
+		return &Properties{WillDelayInterval: &one32}
+	case PropRequestResponseInfo:
+		return &Properties{RequestResponseInfo: &zero}
+	case PropResponseInfo:
+		return &Properties{ResponseInfo: text}
+	case PropServerReference:
+		return &Properties{ServerReference: text}
+	case PropReceiveMaximum:
+		return &Properties{ReceiveMaximum: &one16}
+	case PropTopicAliasMax:
+		return &Properties{TopicAliasMaximum: &one16}
+	case PropTopicAlias:
+		return &Properties{TopicAlias: &one16}
+	case PropMaximumQoS:
+		return &Properties{MaximumQoS: &zero}
+	case PropRetainAvailable:
+		return &Properties{RetainAvailable: &zero}
+	case PropUserProperty:
+		return &Properties{UserProperties: []UserProperty{{Key: "k", Value: "v"}}}
+	case PropMaximumPacketSize:
+		return &Properties{MaximumPacketSize: &one32}
+	case PropWildcardSubAvailable:
+		return &Properties{WildcardSubAvailable: &zero}
+	case PropSubIDAvailable:
+		return &Properties{SubIDAvailable: &zero}
+	case PropSharedSubAvailable:
+		return &Properties{SharedSubAvailable: &zero}
+	case PropReasonString:
+		return &Properties{ReasonString: text}
+	}
+	panic(fmt.Sprintf("test helper: no property set for Identifier 0x%02X", id))
+}
+
+// TestEncodeLocusMatchesTable24 is the encoding-side mirror of
+// TestPropertyLegalityMatchesTable24: it walks every (Identifier, property
+// section) pair and asserts the encoder writes exactly the combinations Table
+// 2-4 lists.
+//
+// The two directions catch different mistakes, which is why both exist. A
+// decoder that accepts too much lets a broken peer through; an encoder that
+// emits too much produces the broken peer. Decoding alone cannot catch the
+// second one -- the broker shipped a CONNACK carrying a CONNECT-only Identifier
+// for as long as this side was unchecked -- so the rule has to be asserted from
+// both ends.
+func TestEncodeLocusMatchesTable24(t *testing.T) {
+	loci := []propertyLocus{
+		locusConnect, locusWill, locusConnAck, locusPublish, locusAck,
+		locusSubscribe, locusSubAck, locusUnsubscribe, locusUnsubAck,
+		locusDisconnect, locusAuth,
+	}
+
+	codec := mqtt5Codec()
+	for id, allowed := range propertyLoci {
+		for _, locus := range loci {
+			t.Run(fmt.Sprintf("0x%02X_in_locus_%d", id, locus), func(t *testing.T) {
+				err := codec.encodeProperties(&bytes.Buffer{}, minimalPropertiesFor(id), locus)
+
+				if allowed&locusBit(locus) != 0 {
+					if err != nil {
+						t.Fatalf("encodeProperties() error = %v, want the Identifier written in this packet type", err)
+					}
+					return
+				}
+				if !errors.Is(err, ErrMalformedPacket) {
+					t.Fatalf("encodeProperties() error = %v, want %v", err, ErrMalformedPacket)
+				}
+			})
+		}
+	}
+}
+
+// TestPropertyProbesCoverPropertyLoci keeps the encoder's probe table and Table
+// 2-4 from drifting apart.
+//
+// validatePropertyLoci can only check the Identifiers it has a probe for, so a
+// property added to Properties without a probe would be emitted unchecked in
+// every packet type -- the exact shape of the defect the guard exists for.
+// propertyLoci is the source of truth for which Identifiers exist, so the two
+// lists must have the same members.
+func TestPropertyProbesCoverPropertyLoci(t *testing.T) {
+	probed := make(map[byte]bool, len(propertyProbes))
+	for _, probe := range propertyProbes {
+		if probed[probe.id] {
+			t.Errorf("propertyProbes lists 0x%02X more than once", probe.id)
+		}
+		probed[probe.id] = true
+
+		if _, defined := propertyLoci[probe.id]; !defined {
+			t.Errorf("probe for 0x%02X has no entry in propertyLoci", probe.id)
+			continue
+		}
+		if !probe.set(minimalPropertiesFor(probe.id)) {
+			t.Errorf("probe for 0x%02X does not fire on the set that carries it", probe.id)
+		}
+		if probe.set(&Properties{}) {
+			t.Errorf("probe for 0x%02X fires on the empty property set", probe.id)
+		}
+	}
+	for id := range propertyLoci {
+		if !probed[id] {
+			t.Errorf("Identifier 0x%02X has no probe: the encoder would write it unchecked", id)
+		}
+	}
+}
+
+// TestEncodeRejectsConnectOnlyPropertyOnConnAck pins the defect the encode-side
+// locus guard exists for.
+//
+// buildConnAckProperties used to echo the client's Request Response Information
+// (0x19) back on the CONNACK. Table 2-4 lists 0x19 for CONNECT only, so §2.2.2.2
+// made every such CONNACK a Malformed Packet a conformant client had to reject.
+// Nothing local noticed: the decoder accepted the broker's own bytes, so only a
+// guard on the encoding side can refuse to produce a packet the packet type has
+// no room for.
+func TestEncodeRejectsConnectOnlyPropertyOnConnAck(t *testing.T) {
+	requested := byte(1)
+	pkt := &ConnAckPacket{
+		FixedHeader: FixedHeader{PacketType: PacketTypeConnAck},
+		ReasonCode:  ConnAckAccepted,
+		Properties:  &Properties{RequestResponseInfo: &requested},
+	}
+
+	var buf bytes.Buffer
+	err := mqtt5Codec().Encode(&buf, pkt)
+	if !errors.Is(err, ErrMalformedPacket) {
+		t.Fatalf("Encode() error = %v, want %v", err, ErrMalformedPacket)
+	}
+	// §2.2.2.2 answers a wrong-packet-type Identifier with 0x81; a repeat is a
+	// Protocol Error with 0x82. The two must not collapse together.
+	if errors.Is(err, ErrProtocolError) {
+		t.Errorf("a property in the wrong packet type is a malformed packet, not a Protocol Error: %v", err)
+	}
+	// The property section is buffered, so the rejection must land before the
+	// fixed header is written: a half-emitted CONNACK would be worse than none.
+	if buf.Len() != 0 {
+		t.Errorf("Encode() wrote %d bytes before rejecting, want 0", buf.Len())
+	}
+}

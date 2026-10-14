@@ -302,7 +302,15 @@ func TestPropertySectionVersionGatedAcrossPackets(t *testing.T) {
 		}},
 	}
 
-	props := func() *Properties { return &Properties{ContentType: "text/plain"} }
+	// User Property is the one Identifier Table 2-4 lists for every packet type
+	// that has a property section, so this single fixture is a legal section for
+	// all nine cases below. Content Type was the fixture until the encoder began
+	// applying Table 2-4: it is PUBLISH/Will-only, so every non-PUBLISH case
+	// here was an illegal combination -- invisible while nothing checked the
+	// encoding side, refused now.
+	props := func() *Properties {
+		return &Properties{UserProperties: []UserProperty{{Key: "k", Value: "v"}}}
+	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
