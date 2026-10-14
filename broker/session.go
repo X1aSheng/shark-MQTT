@@ -3,7 +3,7 @@ package broker
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -11,6 +11,12 @@ import (
 	"github.com/X1aSheng/shark-mqtt/protocol"
 	"github.com/X1aSheng/shark-mqtt/store"
 )
+
+// ErrTopicAliasOutOfRange is returned by RegisterTopicAlias when the alias is
+// outside the range the server advertised in the CONNACK. It is a Protocol
+// Error (MQTT 5.0 §3.3.2.3.4), so the caller answers it with a DISCONNECT
+// carrying 0x94 (Topic Alias invalid) instead of ignoring the packet.
+var ErrTopicAliasOutOfRange = errors.New("broker: topic alias exceeds negotiated maximum")
 
 // Session represents an active MQTT client session.
 type Session struct {
@@ -26,11 +32,28 @@ type Session struct {
 	Inflight      map[uint16]*InflightMsg
 	// inboundQoS2 tracks QoS 2 publishes accepted from this client that are
 	// still awaiting PUBREL (see InboundQoS2).
-	inboundQoS2   map[uint16]*InboundQoS2
-	packetIDSeq   uint16
-	ReceiveMax    uint16
+	inboundQoS2 map[uint16]*InboundQoS2
+	packetIDSeq uint16
+	ReceiveMax  uint16
+
+	// TopicAliasMax is the largest Topic Alias the server accepts FROM the
+	// client: the value advertised in the CONNACK (MQTT 5.0 §3.2.2.3.8) and
+	// the limit RegisterTopicAlias enforces. 0 means the server accepts no
+	// aliases, which is the case for MQTT 3.1.1 (no alias mechanism at all).
 	TopicAliasMax uint16
-	mu            sync.RWMutex
+
+	// ClientTopicAliasMax is the largest Topic Alias the CLIENT accepts FROM
+	// the server, as declared in the CONNECT property (§3.1.2.11.5).
+	//
+	// The two properties share identifier 0x22 but point in opposite
+	// directions, so this value must never be written into the CONNACK: that
+	// would advertise the client's own acceptance limit as the server's, and
+	// reading it back as the server's limit is exactly the defect this field
+	// exists to keep apart. It is recorded so a future server-side alias
+	// sender knows its ceiling.
+	ClientTopicAliasMax uint16
+
+	mu sync.RWMutex
 
 	// outboundUnacked tracks QoS 1/2 PUBLISH packets sent TO this client
 	// that have not yet been acknowledged (PUBACK for QoS 1, PUBCOMP for QoS 2).
@@ -226,6 +249,11 @@ func (m *Manager) CreateSession(clientID string, connectPkt *protocol.ConnectPac
 					existing.SubOptions[topic] = SubscriptionOptions{QoS: qos}
 				}
 			}
+			// [MQTT-3.3.2-7]: a receiver must not carry Topic Alias mappings
+			// over from one Network Connection to the next. Resuming keeps the
+			// subscriptions and inflight messages, but the alias table belongs
+			// to the network connection, so it starts empty again.
+			existing.topicAliases = make(map[uint16]string)
 			existing.mu.Unlock()
 			return existing
 		}
@@ -825,12 +853,13 @@ func (s *Session) TrackReceived(msgSize int) {
 }
 
 // RegisterTopicAlias registers a new topic alias mapping for this session.
-// Returns an error if the alias value exceeds the negotiated maximum.
+// Returns ErrTopicAliasOutOfRange if the alias is outside the range the server
+// advertised in the CONNACK (or if the server accepts no aliases at all).
 func (s *Session) RegisterTopicAlias(alias uint16, topic string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.TopicAliasMax == 0 || alias > s.TopicAliasMax {
-		return fmt.Errorf("topic alias %d exceeds negotiated max %d", alias, s.TopicAliasMax)
+		return ErrTopicAliasOutOfRange
 	}
 	s.topicAliases[alias] = topic
 	return nil

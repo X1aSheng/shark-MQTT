@@ -496,17 +496,27 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 		sess.ReceiveMax = serverReceiveMax
 	}
 
-	// Negotiate Topic Alias Maximum (MQTT 5.0 §3.1.2.11.7).
-	// Server supports up to 64 topic aliases per connection.
+	// Negotiate Topic Alias Maximum (MQTT 5.0 §3.1.2.11.5 / §3.2.2.3.8).
+	//
+	// Property identifier 0x22 names two limits that point in opposite
+	// directions, and conflating them was a defect:
+	//   - CONNECT Topic Alias Maximum (§3.1.2.11.5) is the highest alias the
+	//     CLIENT will accept FROM the server. It is not echoed in the CONNACK;
+	//     it only bounds what the server may send.
+	//   - CONNACK Topic Alias Maximum (§3.2.2.3.8) is the highest alias the
+	//     SERVER accepts FROM the client. That is the limit the inbound guard
+	//     enforces, and it is what the CONNACK must advertise.
+	// Storing the client's value as the server's limit meant a client that
+	// declared 0 (asking the server not to use aliases) lost its own right to
+	// send aliases and had every alias publish torn down, while every other
+	// client was capped at its own acceptance value instead of the server's.
 	const serverTopicAliasMax uint16 = 64
-	clientAliasMax := uint16(0)
-	if connectPkt.Properties != nil && connectPkt.Properties.TopicAliasMaximum != nil {
-		clientAliasMax = *connectPkt.Properties.TopicAliasMaximum
+	sess.TopicAliasMax = 0
+	if sess.Spec().TopicAlias {
+		sess.TopicAliasMax = serverTopicAliasMax
 	}
-	if clientAliasMax > 0 {
-		sess.TopicAliasMax = min(clientAliasMax, serverTopicAliasMax)
-	} else {
-		sess.TopicAliasMax = 0
+	if connectPkt.Properties != nil && connectPkt.Properties.TopicAliasMaximum != nil {
+		sess.ClientTopicAliasMax = *connectPkt.Properties.TopicAliasMaximum
 	}
 
 	// Negotiate Server Keep Alive (MQTT 5.0 §3.1.2.11.4).
@@ -1492,32 +1502,50 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 	// Resolve Topic Alias (MQTT 5.0 §3.3.2.3.4).
 	// If TopicAlias is set and TopicName is empty, resolve from alias map.
 	// If both are set, register/replace the alias mapping.
+	//
+	// The two illegal-value branches below -- alias 0 and alias above the
+	// maximum the server advertised -- are Protocol Errors and are answered
+	// with a DISCONNECT carrying 0x94 (Topic Alias invalid, §4.13) instead of
+	// being silently dropped. Dropping a publish left a QoS 1/2 client
+	// retransmitting forever, and the byte tells a conformant client exactly
+	// what it got wrong. The unmapped-alias branch keeps the generic 0x82: its
+	// value is legal, it is simply not registered.
+	//
+	// The alias==0 branch is a second line of defence. The codec already
+	// rejects Topic Alias 0 while decoding (protocol.Properties.validate), so
+	// the value cannot normally reach here; it is kept correct anyway so a
+	// future lenient decode path cannot turn it back into an ack-and-ignore.
 	if pkt.Properties != nil && pkt.Properties.TopicAlias != nil {
 		alias := *pkt.Properties.TopicAlias
 		if alias == 0 {
-			// Alias 0 is reserved (MQTT 5.0 §3.3.2.3.4). Acknowledge (with
-			// the correct packet type per QoS) and discard; previously QoS 2
-			// publishes wrongly received a PUBACK.
+			// [MQTT-3.3.2-8]: a PUBLISH packet must not carry a Topic Alias
+			// which has the value 0.
 			b.metrics.IncMessagesDropped("invalid_topic_alias")
-			b.ackDiscardedPublish(clientID, sess, pkt, protocol.ReasonCodeQuotaExceeded)
+			b.closeProtocolViolationWithReason(clientID, sess, protocol.ReasonCodeTopicAliasInvalid)
 			return
 		}
 		if pkt.Topic == "" {
 			// Resolve alias to topic.
 			resolved, ok := sess.ResolveTopicAlias(alias)
 			if !ok {
-				// MQTT-3.3.2.3.4: publishing with an alias that has no mapped
-				// topic is a protocol error; silently dropping it left a QoS
-				// 1/2 client retransmitting forever (audit).
+				// §3.3.2.3.4: an alias with no mapping, used with an empty
+				// Topic Name, is a Protocol Error. The alias value itself is
+				// not illegal, so the generic 0x82 is the right code here.
 				b.metrics.IncMessagesDropped("unknown_topic_alias")
 				b.closeProtocolViolation(clientID, sess)
 				return
 			}
 			pkt.Topic = resolved
 		} else {
-			// Register alias mapping.
+			// Register alias mapping. An alias above the maximum the server
+			// advertised in the CONNACK is a Protocol Error (§3.3.2.3.4); it
+			// used to be a Debug log the client never learned about, leaving
+			// the mapping absent and the next empty-topic publish a mystery
+			// teardown.
 			if err := sess.RegisterTopicAlias(alias, pkt.Topic); err != nil {
-				b.logger.Debug("failed to register topic alias", "clientID", clientID, "alias", alias, "error", err)
+				b.metrics.IncMessagesDropped("invalid_topic_alias")
+				b.closeProtocolViolationWithReason(clientID, sess, protocol.ReasonCodeTopicAliasInvalid)
+				return
 			}
 		}
 	}
@@ -1700,16 +1728,25 @@ func (b *Broker) ackDiscardedPublish(clientID string, sess *Session, pkt *protoc
 }
 
 // closeProtocolViolation tears down a connection that committed a protocol
-// violation. MQTT 5 clients first receive a DISCONNECT with reason 0x82;
-// MQTT 3.1.1 has no server-to-client DISCONNECT, so the connection is closed
-// directly. The DISCONNECT is confirmed written before the socket closes, so the
-// close cannot overtake it. The resulting read failure runs abnormalDisconnect,
-// which publishes the client's will.
+// violation, reporting the catch-all 0x82 (Protocol Error) reason. MQTT 5
+// clients first receive a DISCONNECT; MQTT 3.1.1 has no server-to-client
+// DISCONNECT, so the connection is closed directly. The DISCONNECT is
+// confirmed written before the socket closes, so the close cannot overtake it.
+// The resulting read failure runs abnormalDisconnect, which publishes the
+// client's will.
 func (b *Broker) closeProtocolViolation(clientID string, sess *Session) {
+	b.closeProtocolViolationWithReason(clientID, sess, protocol.ReasonCodeProtocolError)
+}
+
+// closeProtocolViolationWithReason is closeProtocolViolation with an explicit
+// DISCONNECT reason code, for violations that §4.13 gives a more precise code
+// than the catch-all 0x82 -- for example a bad Topic Alias, which is reported
+// as 0x94 (Topic Alias invalid).
+func (b *Broker) closeProtocolViolationWithReason(clientID string, sess *Session, reason byte) {
 	if sess != nil && sess.Spec().ServerDisconnect {
 		b.sendDisconnectBeforeClose(clientID, &protocol.DisconnectPacket{
 			FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeDisconnect},
-			ReasonCode:  protocol.ReasonCodeProtocolError,
+			ReasonCode:  reason,
 		})
 	}
 	if cs := b.connection(clientID); cs != nil {
@@ -2657,7 +2694,10 @@ func (b *Broker) buildConnAckProperties(sess *Session) *protocol.Properties {
 		props.ResponseInfo = sess.ClientID
 	}
 
-	// Advertise Topic Alias Maximum if the session negotiated a non-zero value.
+	// Advertise the largest Topic Alias the server accepts FROM the client
+	// (§3.2.2.3.8). The client's own CONNECT value is a different property
+	// that happens to share identifier 0x22 and is deliberately not echoed
+	// here (see Session.ClientTopicAliasMax).
 	if sess.TopicAliasMax > 0 {
 		tam := sess.TopicAliasMax
 		props.TopicAliasMaximum = &tam

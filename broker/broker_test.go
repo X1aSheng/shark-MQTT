@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"net"
 	"testing"
 	"time"
@@ -561,8 +562,8 @@ func TestSessionTopicAliasRegisterResolve(t *testing.T) {
 
 	// Register alias exceeding max
 	err = sess.RegisterTopicAlias(11, "test")
-	if err == nil {
-		t.Error("expected error for alias exceeding TopicAliasMax")
+	if !errors.Is(err, ErrTopicAliasOutOfRange) {
+		t.Errorf("alias above TopicAliasMax: err = %v, want ErrTopicAliasOutOfRange", err)
 	}
 }
 
@@ -579,8 +580,64 @@ func TestSessionTopicAliasMaxZero(t *testing.T) {
 	sess.TopicAliasMax = 0
 
 	err := sess.RegisterTopicAlias(1, "test")
-	if err == nil {
-		t.Error("expected error when TopicAliasMax is 0")
+	if !errors.Is(err, ErrTopicAliasOutOfRange) {
+		t.Errorf("err = %v, want ErrTopicAliasOutOfRange when TopicAliasMax is 0", err)
+	}
+}
+
+// TestSessionResumeClearsTopicAliases covers [MQTT-3.3.2-7]: a receiver must not
+// carry Topic Alias mappings over from one Network Connection to the next.
+// Resuming a session keeps its subscriptions, but the alias table belongs to
+// the connection that negotiated it, so the resumed session must start empty --
+// otherwise a client that reconnects and reuses an alias number without
+// re-registering it silently publishes to the previous connection's topic.
+func TestSessionResumeClearsTopicAliases(t *testing.T) {
+	mgr := NewManager(nil)
+	connectPkt := &protocol.ConnectPacket{
+		ProtocolName:    protocol.ProtocolNameMQTT,
+		ProtocolVersion: protocol.Version50,
+		Flags:           protocol.ConnectFlags{CleanSession: false},
+		KeepAlive:       60,
+		ClientID:        "alias-resume",
+	}
+	sess := mgr.CreateSession("alias-resume", connectPkt, false)
+	sess.TopicAliasMax = 64
+	if err := sess.RegisterTopicAlias(1, "sensors/temperature/room1"); err != nil {
+		t.Fatalf("RegisterTopicAlias: %v", err)
+	}
+
+	resumed := mgr.CreateSession("alias-resume", connectPkt, true)
+	if resumed != sess {
+		t.Fatal("expected the persistent session to be resumed, not recreated")
+	}
+	if topic, ok := resumed.ResolveTopicAlias(1); ok {
+		t.Errorf("alias 1 survived the reconnect as %q, want no mapping", topic)
+	}
+}
+
+// TestBroker_ConnAckTopicAliasMaxAdvertisesServerLimit pins the direction of
+// property 0x22. CONNECT's Topic Alias Maximum is the highest alias the CLIENT
+// accepts from the server; CONNACK's is the highest alias the SERVER accepts
+// from the client. A session whose client declared 0 (refusing server-sent
+// aliases) must still be told the server's own limit, because the inbound guard
+// enforces that limit -- conflating the two told the client the wrong number
+// and, worse, denied it aliases it had never refused.
+func TestBroker_ConnAckTopicAliasMaxAdvertisesServerLimit(t *testing.T) {
+	b := New(WithAuth(AllowAllAuth{}))
+
+	props := b.buildConnAckProperties(&Session{TopicAliasMax: 64, ClientTopicAliasMax: 0})
+	if props.TopicAliasMaximum == nil {
+		t.Fatal("CONNACK omitted Topic Alias Maximum although the server accepts 64")
+	}
+	if got := *props.TopicAliasMaximum; got != 64 {
+		t.Errorf("CONNACK TopicAliasMaximum = %d, want 64 (the server's inbound limit)", got)
+	}
+
+	// The reverse case: a client that accepts 10 aliases from the server must
+	// not make the CONNACK claim the server accepts 10.
+	props = b.buildConnAckProperties(&Session{TopicAliasMax: 64, ClientTopicAliasMax: 10})
+	if props.TopicAliasMaximum == nil || *props.TopicAliasMaximum != 64 {
+		t.Errorf("CONNACK TopicAliasMaximum = %v, want 64 and not the client's 10", props.TopicAliasMaximum)
 	}
 }
 
