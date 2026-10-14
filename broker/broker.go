@@ -27,6 +27,22 @@ var _ ConnectionHandler = (*Broker)(nil)
 // short so a shutdown is never held up by a client that stopped reading.
 const shutdownNotifyDelay = 50 * time.Millisecond
 
+// finalWriteTimeout bounds how long a teardown path waits for the writer
+// goroutine to put a final control packet on the wire, and is imposed as that
+// packet's socket write deadline too. A teardown must not be held open by a peer
+// that stopped reading, and the packet is a DISCONNECT: a couple of seconds is
+// already generous.
+const finalWriteTimeout = 2 * time.Second
+
+// syncWrite is one write request handed to a connection's writer goroutine,
+// together with the channel its result is reported on. It is how a teardown
+// path sends a packet that has to reach the peer before the connection closes.
+type syncWrite struct {
+	pkt      protocol.Packet
+	deadline time.Duration
+	done     chan error
+}
+
 // clientState holds the connection and codec for a client.
 type clientState struct {
 	conn  net.Conn
@@ -44,6 +60,12 @@ type clientState struct {
 	// writes under wmu. stopWrites is closed to stop the writer goroutine.
 	out        chan protocol.Packet
 	stopWrites chan struct{}
+
+	// syncWrites carries writeFinal requests. Every socket write belongs to the
+	// writer goroutine, so a packet that must not race the teardown has to go
+	// through it rather than be written from the caller; see writeFinal. It is
+	// non-nil exactly when out is.
+	syncWrites chan syncWrite
 
 	// enhancedAuth is the active MQTT 5.0 enhanced authenticator for a
 	// connection that connected via an AuthenticationMethod (§4.12). Non-nil
@@ -537,6 +559,7 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 		writeTimeout: b.opts.writeTimeout,
 		out:          make(chan protocol.Packet, qcap),
 		stopWrites:   make(chan struct{}),
+		syncWrites:   make(chan syncWrite),
 		enhancedAuth: enhancedAuth,
 	}
 	b.connections[clientID] = cs
@@ -1349,7 +1372,7 @@ func (b *Broker) readLoop(clientID string, sess *Session, codec protocol.PacketC
 			// client's will per §3.1.2.5.
 			b.logger.Debug("second CONNECT received, disconnecting", "clientID", clientID)
 			if sess != nil && sess.Spec().ServerDisconnect {
-				b.writePacket(clientID, &protocol.DisconnectPacket{
+				b.sendDisconnectBeforeClose(clientID, &protocol.DisconnectPacket{
 					FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeDisconnect},
 					ReasonCode:  protocol.ReasonCodeProtocolError,
 				})
@@ -1602,11 +1625,12 @@ func (b *Broker) ackDiscardedPublish(clientID string, sess *Session, pkt *protoc
 // closeProtocolViolation tears down a connection that committed a protocol
 // violation. MQTT 5 clients first receive a DISCONNECT with reason 0x82;
 // MQTT 3.1.1 has no server-to-client DISCONNECT, so the connection is closed
-// directly. The resulting read failure runs abnormalDisconnect, which
-// publishes the client's will.
+// directly. The DISCONNECT is confirmed written before the socket closes, so the
+// close cannot overtake it. The resulting read failure runs abnormalDisconnect,
+// which publishes the client's will.
 func (b *Broker) closeProtocolViolation(clientID string, sess *Session) {
 	if sess != nil && sess.Spec().ServerDisconnect {
-		b.writePacket(clientID, &protocol.DisconnectPacket{
+		b.sendDisconnectBeforeClose(clientID, &protocol.DisconnectPacket{
 			FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeDisconnect},
 			ReasonCode:  protocol.ReasonCodeProtocolError,
 		})
@@ -2343,6 +2367,28 @@ func (b *Broker) writePacket(clientID string, pkt protocol.Packet) {
 	}
 }
 
+// sendDisconnectBeforeClose delivers a final control packet to a client and
+// waits for the write, so a teardown that follows it cannot race the packet away
+// (see clientState.writeFinal). Every path that sends a DISCONNECT and then tears
+// the connection down goes through here: MQTT 5.0 §4.13.1, §3.1.2.5 and §3.14 all
+// expect the packet to be part of the close, and a plain writePacket delivers it
+// only some of the time.
+//
+// It reports whether the packet reached the socket. The teardown proceeds
+// either way -- a peer that stopped reading must not hold it up -- but dropping
+// the notice is worth a log, and a caller that counts notices can use the result.
+func (b *Broker) sendDisconnectBeforeClose(clientID string, pkt protocol.Packet) bool {
+	cs := b.connection(clientID)
+	if cs == nil {
+		return false
+	}
+	if sent := cs.writeFinal(pkt); !sent {
+		b.logger.Debug("final packet not delivered before close", "clientID", clientID)
+		return false
+	}
+	return true
+}
+
 // writeOrEnqueue writes pkt to a client connection. With an async write queue
 // configured it enqueues and returns; the writer goroutine serializes the
 // actual socket writes (R1). Without one (clientStates created outside
@@ -2369,33 +2415,94 @@ func (cs *clientState) writeOrEnqueue(pkt protocol.Packet) error {
 func (cs *clientState) writeLoop() {
 	for {
 		select {
+		case req := <-cs.syncWrites:
+			// A writeFinal caller is blocked on done, so the result is reported
+			// either way; the teardown that asked for the packet closes the
+			// connection itself.
+			req.done <- cs.writeOne(req.pkt, req.deadline)
 		case pkt := <-cs.out:
-			// Bound each socket write (audit): without a deadline a peer that
-			// stops reading wedges this goroutine in the TCP write forever,
-			// and with the queue full, every publisher delivering QoS 1/2
-			// messages to it stalls behind the enqueue. On expiry the socket
-			// is closed like any other write failure.
-			if cs.writeTimeout > 0 {
-				_ = cs.conn.SetWriteDeadline(time.Now().Add(cs.writeTimeout))
-			}
-			if err := cs.codec.Encode(cs.conn, pkt); err != nil {
+			if err := cs.writeOne(pkt, cs.writeTimeout); err != nil {
 				// Same zombie-connection guard as writePacket: a failed write
 				// closes the socket so the reader notices and tears the
 				// connection down promptly.
 				cs.conn.Close()
 				return
 			}
-			// Transports that frame packets (WebSocket) flush the buffered
-			// packet as one message after each Encode (R5).
-			if f, ok := cs.conn.(packetFlusher); ok {
-				if err := f.FlushPacket(); err != nil {
-					cs.conn.Close()
-					return
-				}
-			}
 		case <-cs.stopWrites:
 			return
 		}
+	}
+}
+
+// writeOne encodes pkt onto the connection, with deadline bounding the socket
+// write (0 disables it). It is the only place the writer goroutine writes, so
+// every packet reaches the socket through it in a single serialized stream.
+//
+// The deadline exists because without one a peer that stops reading wedges this
+// goroutine in the TCP write forever, and with the queue full, every publisher
+// delivering QoS 1/2 messages to it stalls behind the enqueue. On expiry the
+// caller closes the socket like any other write failure.
+func (cs *clientState) writeOne(pkt protocol.Packet, deadline time.Duration) error {
+	if deadline > 0 {
+		_ = cs.conn.SetWriteDeadline(time.Now().Add(deadline))
+	}
+	if err := cs.codec.Encode(cs.conn, pkt); err != nil {
+		return err
+	}
+	// Transports that frame packets (WebSocket) flush the buffered packet as one
+	// message after each Encode (R5).
+	if f, ok := cs.conn.(packetFlusher); ok {
+		return f.FlushPacket()
+	}
+	return nil
+}
+
+// writeFinal delivers pkt to the peer before the connection is torn down, and
+// reports whether it reached the socket.
+//
+// A plain writePacket is not enough on a teardown path. It hands the packet to
+// the writer goroutine through the queue, and disconnect closes stopWrites --
+// after which writeLoop's select can take the closed stopWrites case with
+// packets still queued and drop them, so the packet reaches the peer only some
+// of the time. Routing it through syncWrites instead makes the writer send it
+// and report back before the caller continues, which turns the DISCONNECT from a
+// hopeful part of the close into a deterministic one.
+//
+// It is bounded by finalWriteTimeout and returns false when the connection is
+// already gone, the writer exited, or the wait expired: a teardown must never
+// hang on a peer that stopped reading.
+func (cs *clientState) writeFinal(pkt protocol.Packet) bool {
+	if cs.syncWrites == nil {
+		// clientStates built outside HandleConnection have no writer goroutine;
+		// they serialize writes under wmu instead.
+		cs.wmu.Lock()
+		defer cs.wmu.Unlock()
+		return cs.writeOne(pkt, finalWriteTimeout) == nil
+	}
+
+	req := syncWrite{pkt: pkt, deadline: finalWriteTimeout, done: make(chan error, 1)}
+
+	// The wait outlasts the socket deadline the writer imposes from req, so a
+	// write that was accepted but slow is not reported as never delivered.
+	wait := finalWriteTimeout + 200*time.Millisecond
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+
+	select {
+	case cs.syncWrites <- req:
+	case <-cs.stopWrites:
+		return false
+	case <-timer.C:
+		return false
+	}
+
+	select {
+	case err := <-req.done:
+		return err == nil
+	case <-cs.stopWrites:
+		return false
+	case <-timer.C:
+		return false
 	}
 }
 
