@@ -56,6 +56,13 @@ func (a *MQTTAdapter) Identify(conn PeekConn) (bool, error) {
 // of the CONNECT fields (ValidateConnect) is intentionally left to the broker
 // core so the rejection CONNACK and rejection metrics/logs are emitted exactly
 // as before the refactor (see the deviation note reported with T03).
+//
+// The codec is returned even when the handshake fails. It carries the version
+// the CONNECT declared -- decodeConnect adopts it as soon as it reads that byte
+// -- and that is what lets the caller answer a failed v5 CONNECT with a CONNACK
+// of the right shape (MQTT 5.0 §4.13.1). Until the version byte is read the
+// codec still reports its 3.1.1 default, so a caller that gates on the codec's
+// spec sends nothing rather than a frame the peer cannot parse.
 func (a *MQTTAdapter) Handshake(ctx context.Context, conn net.Conn) (*ConnectInfo, PacketCodec, error) {
 	_ = ctx // reserved for future cancellation-aware handshakes
 
@@ -70,11 +77,11 @@ func (a *MQTTAdapter) Handshake(ctx context.Context, conn net.Conn) (*ConnectInf
 	codec := NewCodec(a.maxPacketSize)
 	pkt, err := codec.Decode(conn)
 	if err != nil {
-		return nil, nil, err
+		return nil, codec, err
 	}
 	cp, ok := pkt.(*ConnectPacket)
 	if !ok {
-		return nil, nil, ErrInvalidPacket
+		return nil, codec, ErrInvalidPacket
 	}
 	return toConnectInfo(cp), codec, nil
 }

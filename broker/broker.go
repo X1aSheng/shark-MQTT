@@ -1291,6 +1291,23 @@ func (b *Broker) readLoop(clientID string, sess *Session, codec protocol.PacketC
 				// considered dead and the session is torn down.
 				b.logger.Info("keepalive timeout", "clientID", clientID)
 				b.metrics.IncRejections("keepalive_timeout")
+				// §3.1.2.10 lets the server tell the peer why the connection
+				// is going away (0x8D, [MQTT-3.1.2-22] makes the notice
+				// optional and the close mandatory). It is worth sending when
+				// the peer is merely stalled rather than gone: a client that
+				// missed its PINGREQ still gets to learn the session expired
+				// instead of seeing a bare close. The teardown stays abnormal,
+				// so the will fires exactly as [MQTT-3.1.2-22] -- "as if the
+				// network had failed" -- requires.
+				//
+				// writeFinal bounds the attempt (2s), so a peer that really is
+				// dead cannot hold the reaper open for the full writeTimeout.
+				if sess != nil && sess.Spec().ServerDisconnect {
+					b.sendDisconnectBeforeClose(clientID, &protocol.DisconnectPacket{
+						FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeDisconnect},
+						ReasonCode:  protocol.DisconnectKeepAliveTimeout,
+					})
+				}
 			} else if reason, reportable := decodeErrorReasonCode(err); reportable {
 				// §4.13.1: on a Malformed Packet or Protocol Error the server
 				// MUST close the network connection, and SHOULD first send a
@@ -2674,19 +2691,30 @@ func buildConnAck(reasonCode byte, sessionPresent bool) *protocol.ConnAckPacket 
 	}
 }
 
-func (b *Broker) sendConnAckRaw(conn net.Conn, codec protocol.PacketCodec, reasonCode byte, sessionPresent bool) {
-	pkt := buildConnAck(reasonCode, sessionPresent)
-	if err := codec.Encode(conn, pkt); err != nil {
-		b.logger.Debug("failed to send CONNACK", "error", err)
-		return
+// writeConnAck encodes a CONNACK straight to a connection whose session does not
+// exist yet and flushes it. It exists separately from sendConnAck, which goes
+// through a registered connection's write queue: the rejection paths inside the
+// broker and the protocol server's pre-CONNECT path (server.go, where no Broker
+// method is in reach) both need the direct form.
+//
+// The flush is not optional. WebSocket transports buffer writes until
+// FlushPacket, which the per-connection writer would normally call; neither
+// caller has that writer yet, so an unflushed CONNACK never reaches the client
+// (audit). protocol.PeekConn forwards FlushPacket, so the socket the server
+// wraps still flushes.
+func writeConnAck(conn net.Conn, codec protocol.PacketCodec, reasonCode byte, sessionPresent bool) error {
+	if err := codec.Encode(conn, buildConnAck(reasonCode, sessionPresent)); err != nil {
+		return err
 	}
-	// WebSocket transports buffer writes until FlushPacket (called by the
-	// per-connection writer); this pre-registration path must flush itself or
-	// the rejection CONNACK never reaches the client (audit).
 	if f, ok := conn.(packetFlusher); ok {
-		if err := f.FlushPacket(); err != nil {
-			b.logger.Debug("failed to flush CONNACK", "error", err)
-		}
+		return f.FlushPacket()
+	}
+	return nil
+}
+
+func (b *Broker) sendConnAckRaw(conn net.Conn, codec protocol.PacketCodec, reasonCode byte, sessionPresent bool) {
+	if err := writeConnAck(conn, codec, reasonCode, sessionPresent); err != nil {
+		b.logger.Debug("failed to send CONNACK", "error", err)
 	}
 }
 

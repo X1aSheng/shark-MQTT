@@ -25,33 +25,7 @@ func disconnectRaw(reason byte) []byte { return []byte{0xE0, 0x01, reason} }
 // once the CONNACK is accepted.
 func connectV50WithWill(t *testing.T, conn net.Conn, codec *protocol.Codec, clientID, willTopic, willMessage string) {
 	t.Helper()
-
-	pkt := &protocol.ConnectPacket{
-		FixedHeader:     protocol.FixedHeader{PacketType: protocol.PacketTypeConnect},
-		ProtocolName:    protocol.ProtocolNameMQTT,
-		ProtocolVersion: protocol.Version50,
-		Flags: protocol.ConnectFlags{
-			CleanSession: true,
-			WillFlag:     true,
-		},
-		KeepAlive:   30,
-		ClientID:    clientID,
-		WillTopic:   willTopic,
-		WillMessage: []byte(willMessage),
-	}
-
-	conn.SetDeadline(time.Now().Add(2 * time.Second))
-	if err := codec.Encode(conn, pkt); err != nil {
-		t.Fatalf("CONNECT: %v", err)
-	}
-	conn.SetDeadline(time.Now().Add(2 * time.Second))
-	got, err := codec.Decode(conn)
-	if err != nil {
-		t.Fatalf("CONNACK: %v", err)
-	}
-	if ca, ok := got.(*protocol.ConnAckPacket); !ok || ca.ReasonCode != protocol.ConnAckAccepted {
-		t.Fatalf("CONNECT rejected: %v", got)
-	}
+	connectV50WithWillKeepAlive(t, conn, codec, clientID, willTopic, willMessage, 30)
 }
 
 // connectV311 connects with MQTT 3.1.1, which has no server-to-client

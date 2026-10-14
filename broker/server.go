@@ -350,6 +350,7 @@ func (s *MQTTServer) handleConn(conn net.Conn) error {
 		// the two never double-count.
 		s.metrics.IncRejections("decode_error")
 		s.metrics.IncErrors("decode")
+		s.rejectConnect(pc, codec, err)
 		return err
 	}
 	// The handshake deadline only covers identification + CONNECT; clear it so
@@ -365,6 +366,44 @@ func (s *MQTTServer) handleConn(conn net.Conn) error {
 		Codec:   codec,
 		Spec:    spec,
 	})
+}
+
+// rejectConnect answers a CONNECT that failed to decode with a CONNACK before
+// the connection is closed. MQTT 5.0 §4.13.1 permits it -- "In the case of an
+// error in a CONNECT packet it MAY send a CONNACK packet containing the Reason
+// Code" -- and it is the only chance to tell the peer what was wrong: after the
+// CONNECT the server either has a session to report on or nothing to report on
+// at all.
+//
+// It is deliberately narrow on two axes.
+//
+// Version: nothing is sent unless the codec reports a version whose CONNACK
+// carries a reason code. Handshake returns the codec even on failure and
+// decodeConnect adopts the declared version as soon as it reads that byte, so
+// this fires exactly when the peer identified itself as 5.0 before the frame
+// went wrong. A 3.1.1 or 3.1 peer, and any failure before the version byte (a
+// bad Remaining Length, a truncated body, an oversized packet), keeps the bare
+// close it has always got: a 5.0-shaped CONNACK is unparseable to them and would
+// be worse than silence. Gating on the capability rather than on the version
+// value also guarantees the codec writes a reason code at all -- encodeConnAck
+// puts that byte on the wire unconditionally, so encoding 0x82 through a 3.1.1
+// codec would emit a return code the version does not define.
+//
+// Cause: only the codec's own sentinels map to a reason code; a transport
+// failure (EOF, read deadline) stays silent. See decodeErrorReasonCode.
+func (s *MQTTServer) rejectConnect(conn net.Conn, codec protocol.PacketCodec, err error) {
+	if codec == nil || !codec.Spec().ConnAckHasReasonCode {
+		return
+	}
+	reason, reportable := decodeErrorReasonCode(err)
+	if !reportable {
+		return
+	}
+	s.logr.Warn("CONNECT rejected before the session was established",
+		"reasonCode", reason, "error", err)
+	if werr := writeConnAck(conn, codec, reason, false); werr != nil {
+		s.logr.Debug("failed to send rejection CONNACK", "error", werr)
+	}
 }
 
 // isEarlyClose returns true if the error indicates the client disconnected
