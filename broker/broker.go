@@ -1243,6 +1243,44 @@ func (b *Broker) setKeepAliveDeadline(conn net.Conn, clientID string, keepAlive 
 	}
 }
 
+// decodeErrorReasonCode maps a codec decode failure onto the reason code MQTT
+// 5.0 §4.13.1 asks the server to report before closing the network connection.
+// The same codes serve both frames the section names: a DISCONNECT for an error
+// in any packet after CONNECT, and a CONNACK for an error in the CONNECT itself.
+//
+// The split follows §2.2.2.2: a Control Packet that contains an Identifier not
+// valid for its packet type, a value not of the specified data type, a reserved
+// fixed-header nibble other than the one its type mandates, or a Remaining
+// Length that is not minimally encoded is a Malformed Packet (0x81). A repeat of
+// an at-most-once property is spelled out as a Protocol Error (0x82) by each
+// property definition, and that class alone reaches ErrProtocolError. An
+// oversized packet has a code of its own (0x95), which §4.13.1 prefers over the
+// generic 0x81: use 0x81/0x82 "unless a more specific Reason Code has been
+// defined".
+//
+// The second result is false for transport-level failures -- io.EOF, an expired
+// read deadline, a closed socket. Those carry no protocol judgement to report
+// and the socket is usually already gone, so the teardown stays silent rather
+// than inventing a violation the peer did not commit.
+func decodeErrorReasonCode(err error) (byte, bool) {
+	switch {
+	case errors.Is(err, protocol.ErrProtocolError):
+		return protocol.ReasonCodeProtocolError, true
+	case errors.Is(err, protocol.ErrMalformedPacket):
+		return protocol.ReasonCodeMalformedPacket, true
+	case errors.Is(err, protocol.ErrInvalidPacket):
+		// Reserved-nibble violations, QoS 3, an unknown packet type and a
+		// non-minimal Remaining Length all land here. §2.1.3 and §2.2.2.2 put
+		// them all under Malformed Packet, and [MQTT-2.2.2-2] requires the
+		// receiver to close the connection on the first two.
+		return protocol.ReasonCodeMalformedPacket, true
+	case errors.Is(err, protocol.ErrPacketTooLarge):
+		return protocol.ReasonCodePacketTooLarge, true
+	default:
+		return 0, false
+	}
+}
+
 func (b *Broker) readLoop(clientID string, sess *Session, codec protocol.PacketCodec, conn net.Conn) {
 	for {
 		pkt, err := codec.Decode(conn)
@@ -1253,6 +1291,28 @@ func (b *Broker) readLoop(clientID string, sess *Session, codec protocol.PacketC
 				// considered dead and the session is torn down.
 				b.logger.Info("keepalive timeout", "clientID", clientID)
 				b.metrics.IncRejections("keepalive_timeout")
+			} else if reason, reportable := decodeErrorReasonCode(err); reportable {
+				// §4.13.1: on a Malformed Packet or Protocol Error the server
+				// MUST close the network connection, and SHOULD first send a
+				// DISCONNECT carrying the reason code. Nothing else on this
+				// path tells the peer why it was dropped: the read failed, no
+				// packet was produced, and a bare close is indistinguishable
+				// from a network fault. The write is confirmed before the
+				// teardown (sendDisconnectBeforeClose), so the close cannot
+				// overtake it.
+				//
+				// MQTT 3.1.1 has no server-to-client DISCONNECT, hence the
+				// §3.1.1 gate. The teardown stays abnormal either way, so the
+				// client's will still fires (§3.1.2.5).
+				b.logger.Warn("malformed packet, disconnecting",
+					"clientID", clientID, "reasonCode", reason, "error", err)
+				b.metrics.IncErrors("protocol")
+				if sess != nil && sess.Spec().ServerDisconnect {
+					b.sendDisconnectBeforeClose(clientID, &protocol.DisconnectPacket{
+						FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeDisconnect},
+						ReasonCode:  reason,
+					})
+				}
 			} else {
 				b.logger.Debug("read error", "clientID", clientID, "error", err)
 			}
