@@ -4,6 +4,7 @@ package broker
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -114,11 +115,15 @@ func (s *Session) Spec() protocol.Spec {
 
 // SubscriptionOptions captures MQTT subscription options that affect delivery.
 type SubscriptionOptions struct {
-	QoS                    uint8
-	NoLocal                bool
-	RetainAsPublished      bool
-	RetainHandling         uint8
-	SubscriptionIdentifier *uint32 // MQTT 5.0: included in delivered PUBLISH
+	QoS               uint8
+	NoLocal           bool
+	RetainAsPublished bool
+	RetainHandling    uint8
+	// SubscriptionIdentifier is the identifier THIS subscription carries, so it
+	// stays a single value. A message that matched several subscriptions must
+	// be delivered once carrying all of their identifiers ([MQTT-3.3.4-4]),
+	// which is why the aggregate travels separately -- see matchSubscriptions.
+	SubscriptionIdentifier *uint32
 }
 
 // outboundMsg is a QoS 1/2 delivery buffered when the client's receive window
@@ -127,7 +132,11 @@ type outboundMsg struct {
 	pkt        *protocol.PublishPacket
 	deliverQoS uint8
 	subOpts    SubscriptionOptions
-	expiresAt  time.Time // absolute Message Expiry Interval deadline; zero = none (MQTT 5.0 §3.3.2.3.3)
+	// subIDs is the aggregate identifier set of every subscription that matched
+	// this message, carried alongside subOpts so a buffered delivery carries
+	// the same identifiers it would have carried if the window had been open.
+	subIDs    []uint32
+	expiresAt time.Time // absolute Message Expiry Interval deadline; zero = none (MQTT 5.0 §3.3.2.3.3)
 }
 
 // maxBufferedOutbound caps the number of QoS 1/2 deliveries buffered per
@@ -399,16 +408,32 @@ func (s *Session) HasSubscription(topic string) bool {
 // matchSubscriptions is the shared core of MatchesSubscription and
 // MatchesRetainedSubscription. It returns matched status, the maximum QoS
 // across all matching subscriptions (MQTT 3.1.1 §3.3.5 / 5.0 §3.3.5: deliver
-// once at the max QoS of matching filters), and the subscription options of
-// the highest-QoS match. When sysProtect is set, MQTT §4.7.2 system-topic
-// protection is applied (a retained $SYS message is only delivered to a
-// filter whose first level begins with $).
-func (s *Session) matchSubscriptions(topic string, sysProtect bool) (bool, uint8, SubscriptionOptions) {
+// once at the max QoS of matching filters), the subscription options of the
+// highest-QoS match, and the Subscription Identifiers of *every* matching
+// subscription. When sysProtect is set, MQTT §4.7.2 system-topic protection is
+// applied (a retained $SYS message is only delivered to a filter whose first
+// level begins with $).
+//
+// The identifier set is a separate return value rather than part of
+// SubscriptionOptions because it is an aggregate over the matches, not a
+// property of one subscription. MQTT 5.0 [MQTT-3.3.4-4] requires it: the Server
+// delivers one copy of a message that matched several subscriptions, and that
+// single copy MUST carry the identifiers of all of them.
+//
+// Identifiers are de-duplicated and sorted. De-duplicating is what keeps a
+// client from turning its own delivery into a large packet -- N overlapping
+// filters carrying the same identifier would otherwise become N identical
+// property instances on every message -- and sorting makes the encoded bytes
+// reproducible for tests. §3.3.2.3.8 leaves the order open.
+func (s *Session) matchSubscriptions(topic string, sysProtect bool) (bool, uint8, SubscriptionOptions, []uint32) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	matched := false
 	var bestQoS uint8
 	var bestOpts SubscriptionOptions
+	// Allocated lazily: the common case is a session that set no identifiers at
+	// all, and it should not pay for an allocation on every delivery.
+	var identifiers []uint32
 	for pattern, qos := range s.Subscriptions {
 		// Shared subscription filters are stored as "$share/{group}/{filter}";
 		// match against the real filter so retained messages are delivered to
@@ -429,23 +454,31 @@ func (s *Session) matchSubscriptions(topic string, sysProtect bool) (bool, uint8
 			// satisfies `qos > bestQoS` (both are 0), so the previous form left
 			// bestOpts at its zero value for QoS 0 subscriptions and silently
 			// dropped RetainAsPublished and SubscriptionIdentifier.
+			opts := s.SubOptions[pattern]
 			if !matched || qos > bestQoS {
 				bestQoS = qos
-				bestOpts = s.SubOptions[pattern]
+				bestOpts = opts
+			}
+			if opts.SubscriptionIdentifier != nil {
+				identifiers = append(identifiers, *opts.SubscriptionIdentifier)
 			}
 			matched = true
 		}
 	}
-	return matched, bestQoS, bestOpts
+	if len(identifiers) > 1 {
+		slices.Sort(identifiers)
+		identifiers = slices.Compact(identifiers)
+	}
+	return matched, bestQoS, bestOpts, identifiers
 }
 
 // MatchesSubscription checks if a topic matches any of the session's
-// subscriptions, returning the maximum QoS of the matching filters and the
-// subscription options of the highest-QoS match (including MQTT 5.0
-// SubscriptionIdentifier which must be forwarded in delivered PUBLISH
-// packets). Previously the first map-order-random match won, making the
-// delivered QoS nondeterministic when filters overlapped.
-func (s *Session) MatchesSubscription(topic string) (bool, uint8, SubscriptionOptions) {
+// subscriptions, returning the maximum QoS of the matching filters, the
+// subscription options of the highest-QoS match, and the Subscription
+// Identifiers of every match (MQTT 5.0 [MQTT-3.3.4-4]: the single delivered
+// copy must carry them all). Previously the first map-order-random match won,
+// making the delivered QoS nondeterministic when filters overlapped.
+func (s *Session) MatchesSubscription(topic string) (bool, uint8, SubscriptionOptions, []uint32) {
 	return s.matchSubscriptions(topic, false)
 }
 
@@ -453,7 +486,7 @@ func (s *Session) MatchesSubscription(topic string) (bool, uint8, SubscriptionOp
 // system-topic protection (P3-4). Live routing applies this protection in the
 // topic tree; retained delivery goes through the store, so it needs the check
 // here.
-func (s *Session) MatchesRetainedSubscription(topic string) (bool, uint8, SubscriptionOptions) {
+func (s *Session) MatchesRetainedSubscription(topic string) (bool, uint8, SubscriptionOptions, []uint32) {
 	return s.matchSubscriptions(topic, true)
 }
 
@@ -920,13 +953,19 @@ func (s *Session) ResetOutboundUnacked() {
 // window opens (P2-14). It reports whether the message was accepted; the queue
 // is bounded by maxBufferedOutbound so a client that never acknowledges cannot
 // exhaust memory (R6).
-func (s *Session) BufferOutbound(pkt *protocol.PublishPacket, deliverQoS uint8, subOpts SubscriptionOptions, expiresAt time.Time) bool {
+func (s *Session) BufferOutbound(pkt *protocol.PublishPacket, deliverQoS uint8, subOpts SubscriptionOptions, subIDs []uint32, expiresAt time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.outboundQueue) >= maxBufferedOutbound {
 		return false
 	}
-	s.outboundQueue = append(s.outboundQueue, outboundMsg{pkt: pkt, deliverQoS: deliverQoS, subOpts: subOpts, expiresAt: expiresAt})
+	s.outboundQueue = append(s.outboundQueue, outboundMsg{
+		pkt:        pkt,
+		deliverQoS: deliverQoS,
+		subOpts:    subOpts,
+		subIDs:     subIDs,
+		expiresAt:  expiresAt,
+	})
 	return true
 }
 

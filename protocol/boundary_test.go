@@ -3,6 +3,7 @@ package protocol
 import (
 	"bytes"
 	"errors"
+	"slices"
 	"testing"
 )
 
@@ -373,7 +374,7 @@ func TestMQTT5SubscribeWithProperties(t *testing.T) {
 			{Topic: "sensor/+/temp", QoS: 2},
 		},
 		Properties: &Properties{
-			SubscriptionIdentifier: &subID,
+			SubscriptionIdentifier: []uint32{subID},
 		},
 	}
 
@@ -394,7 +395,7 @@ func TestMQTT5SubscribeWithProperties(t *testing.T) {
 	if len(sp.Topics) != 1 || sp.Topics[0].QoS != 2 {
 		t.Fatalf("topics = %+v", sp.Topics)
 	}
-	if sp.Properties == nil || sp.Properties.SubscriptionIdentifier == nil || *sp.Properties.SubscriptionIdentifier != 42 {
+	if sp.Properties == nil || !slices.Equal(sp.Properties.SubscriptionIdentifier, []uint32{42}) {
 		t.Fatalf("subscription identifier = %v", sp.Properties)
 	}
 }

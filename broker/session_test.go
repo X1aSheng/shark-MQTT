@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -125,7 +126,7 @@ func TestSessionSubscriptions(t *testing.T) {
 	sess.AddSubscription("sensor/+/temp", 1)
 
 	// Test matches subscription
-	matches, qos, _ := sess.MatchesSubscription("test/device/data")
+	matches, qos, _, _ := sess.MatchesSubscription("test/device/data")
 	if !matches {
 		t.Error("expected match for test/#")
 	}
@@ -133,7 +134,7 @@ func TestSessionSubscriptions(t *testing.T) {
 		t.Errorf("expected QoS 0, got %d", qos)
 	}
 
-	matches, qos, _ = sess.MatchesSubscription("sensor/room1/temp")
+	matches, qos, _, _ = sess.MatchesSubscription("sensor/room1/temp")
 	if !matches {
 		t.Error("expected match for sensor/+/temp")
 	}
@@ -142,14 +143,14 @@ func TestSessionSubscriptions(t *testing.T) {
 	}
 
 	// Test no match
-	matches, _, _ = sess.MatchesSubscription("other/topic")
+	matches, _, _, _ = sess.MatchesSubscription("other/topic")
 	if matches {
 		t.Error("expected no match for other/topic")
 	}
 
 	// Test remove subscription
 	sess.RemoveSubscription("test/#")
-	matches, _, _ = sess.MatchesSubscription("test/device/data")
+	matches, _, _, _ = sess.MatchesSubscription("test/device/data")
 	if matches {
 		t.Error("expected no match after removing subscription")
 	}
@@ -169,7 +170,7 @@ func TestSessionMatchesSubscriptionMaxQoS(t *testing.T) {
 	sess.AddSubscription("home/#", 0)
 	sess.AddSubscription("home/temp", 2)
 
-	matches, qos, _ := sess.MatchesSubscription("home/temp")
+	matches, qos, _, _ := sess.MatchesSubscription("home/temp")
 	if !matches {
 		t.Fatal("expected match")
 	}
@@ -179,7 +180,7 @@ func TestSessionMatchesSubscriptionMaxQoS(t *testing.T) {
 
 	// Shared subscription filters merge too.
 	sess.AddSubscription("$share/g/home/#", 1)
-	matches, qos, _ = sess.MatchesSubscription("home/temp")
+	matches, qos, _, _ = sess.MatchesSubscription("home/temp")
 	if !matches {
 		t.Fatal("expected match with shared filter")
 	}
@@ -188,12 +189,82 @@ func TestSessionMatchesSubscriptionMaxQoS(t *testing.T) {
 	}
 
 	// Retained variant applies the same rule.
-	matches, qos, _ = sess.MatchesRetainedSubscription("home/temp")
+	matches, qos, _, _ = sess.MatchesRetainedSubscription("home/temp")
 	if !matches {
 		t.Fatal("expected retained match")
 	}
 	if qos != 2 {
 		t.Errorf("expected retained max QoS 2, got %d", qos)
+	}
+}
+
+// TestMatchesSubscriptionCollectsEveryIdentifier covers the aggregate the
+// delivery path needs for MQTT 5.0 [MQTT-3.3.4-4]: the broker sends one copy of
+// a message that matched several subscriptions, and that copy has to name every
+// subscription it matched.
+//
+// The dedup case is the one that cannot be reached from an integration test
+// without the same identifier on two filters, and it is load-bearing: without
+// it N overlapping filters sharing an identifier would put N identical property
+// instances on every message, letting a client inflate its own deliveries.
+func TestMatchesSubscriptionCollectsEveryIdentifier(t *testing.T) {
+	mgr := NewManager(nil)
+	sess := mgr.CreateSession("ids-client", &protocol.ConnectPacket{
+		ProtocolVersion: protocol.Version50,
+		Flags:           protocol.ConnectFlags{CleanSession: true},
+		KeepAlive:       60,
+		ClientID:        "ids-client",
+	}, false)
+
+	// Every filter below genuinely matches the three-level topic "ids/a/b":
+	// "ids/#" (multi-level wildcard), "ids/+/b" (single-level wildcard) and the
+	// literal "ids/a/b". A filter such as "ids/a" would NOT match, because MQTT
+	// topic matching requires the level counts to agree.
+	//
+	// The identifiers are deliberately not in sorted order, so the assertion
+	// covers the sort rather than accidentally matching insertion order.
+	ids := map[string]uint32{"ids/#": 30, "ids/+/b": 10, "ids/a/b": 20}
+	for filter, id := range ids {
+		subID := id
+		sess.AddSubscriptionFilter(protocol.TopicFilter{
+			Topic: filter, QoS: 1, SubscriptionIdentifier: &subID,
+		})
+	}
+
+	matches, _, _, got := sess.MatchesSubscription("ids/a/b")
+	if !matches {
+		t.Fatal("expected all three filters to match ids/a/b")
+	}
+	if !slices.Equal(got, []uint32{10, 20, 30}) {
+		t.Errorf("identifiers = %v, want [10 20 30] (sorted, one per matching subscription)", got)
+	}
+
+	// A fourth, distinct filter that reuses an identifier already in the set
+	// must not add a duplicate element: the values name subscriptions, and a
+	// repeated value tells the client nothing while still costing packet bytes.
+	dup := uint32(20)
+	sess.AddSubscriptionFilter(protocol.TopicFilter{
+		Topic: "ids/a/+", QoS: 1, SubscriptionIdentifier: &dup,
+	})
+	matches, _, _, got = sess.MatchesSubscription("ids/a/b")
+	if !matches {
+		t.Fatal("expected the four filters to still match")
+	}
+	if !slices.Equal(got, []uint32{10, 20, 30}) {
+		t.Errorf("identifiers = %v, want [10 20 30]: a repeated identifier must appear once", got)
+	}
+
+	// A session with no identifiers at all must report an empty set rather than
+	// inventing one from the QoS or the filter list.
+	plain := mgr.CreateSession("plain-client", &protocol.ConnectPacket{
+		ProtocolVersion: protocol.Version50,
+		Flags:           protocol.ConnectFlags{CleanSession: true},
+		KeepAlive:       60,
+		ClientID:        "plain-client",
+	}, false)
+	plain.AddSubscription("plain/#", 0)
+	if _, _, _, got = plain.MatchesSubscription("plain/x"); len(got) != 0 {
+		t.Errorf("identifiers = %v, want none", got)
 	}
 }
 
@@ -259,7 +330,7 @@ func TestSessionOutboundBuffer(t *testing.T) {
 	pkt.Topic = "buf/topic"
 	pkt.Payload = []byte("data")
 
-	sess.BufferOutbound(pkt, 1, SubscriptionOptions{QoS: 1}, time.Time{})
+	sess.BufferOutbound(pkt, 1, SubscriptionOptions{QoS: 1}, nil, time.Time{})
 	if sess.OutboundQueueLen() != 1 {
 		t.Fatalf("expected 1 buffered message, got %d", sess.OutboundQueueLen())
 	}
@@ -294,14 +365,14 @@ func TestOutboundBufferBounded(t *testing.T) {
 	pkt.Payload = []byte("x")
 
 	for i := 0; i < maxBufferedOutbound; i++ {
-		if !sess.BufferOutbound(pkt, 1, SubscriptionOptions{QoS: 1}, time.Time{}) {
+		if !sess.BufferOutbound(pkt, 1, SubscriptionOptions{QoS: 1}, nil, time.Time{}) {
 			t.Fatalf("buffer should accept message %d", i)
 		}
 	}
 	if got := sess.OutboundQueueLen(); got != maxBufferedOutbound {
 		t.Fatalf("expected buffer at %d, got %d", maxBufferedOutbound, got)
 	}
-	if sess.BufferOutbound(pkt, 1, SubscriptionOptions{QoS: 1}, time.Time{}) {
+	if sess.BufferOutbound(pkt, 1, SubscriptionOptions{QoS: 1}, nil, time.Time{}) {
 		t.Error("buffer should reject messages beyond maxBufferedOutbound")
 	}
 	if got := sess.OutboundQueueLen(); got != maxBufferedOutbound {

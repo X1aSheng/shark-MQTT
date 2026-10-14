@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"slices"
 	"testing"
 	"time"
 
@@ -64,7 +65,7 @@ func TestForwardedPublishProperties(t *testing.T) {
 		if got.TopicAlias != nil {
 			t.Error("Topic Alias names the publisher's inbound alias mapping and must not be relayed")
 		}
-		if got.SubscriptionIdentifier != nil {
+		if len(got.SubscriptionIdentifier) != 0 {
 			t.Error("SubscriptionIdentifier must only be set from the matching subscription")
 		}
 		if got.MessageExpiryInterval != nil {
@@ -84,12 +85,12 @@ func TestForwardedPublishProperties(t *testing.T) {
 	t.Run("server additions combine with relayed properties", func(t *testing.T) {
 		subID := uint32(42)
 		expiresAt := time.Now().Add(30 * time.Second)
-		got := forwardedPublishProperties(publisher, &subID, expiresAt)
+		got := forwardedPublishProperties(publisher, []uint32{subID}, expiresAt)
 		if got == nil {
 			t.Fatal("expected a property set")
 		}
-		if got.SubscriptionIdentifier == nil || *got.SubscriptionIdentifier != subID {
-			t.Errorf("SubscriptionIdentifier = %v, want %d", got.SubscriptionIdentifier, subID)
+		if !slices.Equal(got.SubscriptionIdentifier, []uint32{subID}) {
+			t.Errorf("SubscriptionIdentifier = %v, want [%d]", got.SubscriptionIdentifier, subID)
 		}
 		if got.MessageExpiryInterval == nil {
 			t.Fatal("expected the remaining Message Expiry Interval to be advertised")
@@ -169,7 +170,7 @@ func TestRepublishKeepsForwardedProperties(t *testing.T) {
 			ResponseTopic:          "reply/here",
 			CorrelationData:        []byte{0x01, 0x02},
 			UserProperties:         []protocol.UserProperty{{Key: "trace", Value: "abc"}},
-			SubscriptionIdentifier: &subID,
+			SubscriptionIdentifier: []uint32{subID},
 		},
 	})
 
@@ -218,8 +219,8 @@ func TestRepublishKeepsForwardedProperties(t *testing.T) {
 		if len(props.UserProperties) != 1 || props.UserProperties[0].Key != "trace" {
 			t.Errorf("UserProperties = %+v, want the publisher's single trace pair", props.UserProperties)
 		}
-		if props.SubscriptionIdentifier == nil || *props.SubscriptionIdentifier != subID {
-			t.Errorf("SubscriptionIdentifier = %v, want %d", props.SubscriptionIdentifier, subID)
+		if !slices.Equal(props.SubscriptionIdentifier, []uint32{subID}) {
+			t.Errorf("SubscriptionIdentifier = %v, want [%d]", props.SubscriptionIdentifier, subID)
 		}
 		if props.MessageExpiryInterval == nil || *props.MessageExpiryInterval < 25 {
 			t.Errorf("MessageExpiryInterval = %v, want the recomputed remaining ~30s",
@@ -269,7 +270,7 @@ func TestSessionRestoreKeepsForwardedProperties(t *testing.T) {
 			ResponseTopic:          "reply/after-restart",
 			CorrelationData:        []byte{0x01, 0x02},
 			UserProperties:         []protocol.UserProperty{{Key: "trace", Value: "restart"}},
-			SubscriptionIdentifier: &subID,
+			SubscriptionIdentifier: []uint32{subID},
 		},
 	})
 	if err := sess.Save(ctx, sessStore); err != nil {
@@ -304,8 +305,8 @@ func TestSessionRestoreKeepsForwardedProperties(t *testing.T) {
 	if len(msg.Properties.UserProperties) != 1 || msg.Properties.UserProperties[0].Value != "restart" {
 		t.Errorf("UserProperties = %+v, want the single trace pair", msg.Properties.UserProperties)
 	}
-	if msg.Properties.SubscriptionIdentifier == nil || *msg.Properties.SubscriptionIdentifier != subID {
-		t.Errorf("SubscriptionIdentifier = %v, want %d", msg.Properties.SubscriptionIdentifier, subID)
+	if !slices.Equal(msg.Properties.SubscriptionIdentifier, []uint32{subID}) {
+		t.Errorf("SubscriptionIdentifier = %v, want [%d]", msg.Properties.SubscriptionIdentifier, subID)
 	}
 	// The interval itself is not persisted: the absolute deadline is, and
 	// republish derives the remaining time from it so the retry advertises the
@@ -492,7 +493,7 @@ func TestDoDeliverStillDropsExpiryBeforeTheFirstAttempt(t *testing.T) {
 		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 1},
 		Topic:       "props/never-sent",
 		Payload:     []byte("too late"),
-	}, 1, time.Now().Add(-time.Minute), SubscriptionOptions{}, false)
+	}, 1, time.Now().Add(-time.Minute), SubscriptionOptions{}, nil, false)
 
 	if got := drainPackets(out); len(got) != 0 {
 		t.Errorf("wrote %v, want nothing: onward delivery never started, so the copy "+

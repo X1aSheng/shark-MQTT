@@ -63,8 +63,8 @@ func copyMessageProperties(p store.MessageProperties) store.MessageProperties {
 		out.UserProperties = up
 	}
 	if p.SubscriptionIdentifier != nil {
-		sid := *p.SubscriptionIdentifier
-		out.SubscriptionIdentifier = &sid
+		out.SubscriptionIdentifier = make([]uint32, len(p.SubscriptionIdentifier))
+		copy(out.SubscriptionIdentifier, p.SubscriptionIdentifier)
 	}
 	return out
 }

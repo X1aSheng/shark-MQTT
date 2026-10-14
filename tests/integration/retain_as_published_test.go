@@ -2,6 +2,7 @@ package integration
 
 import (
 	"net"
+	"slices"
 	"testing"
 	"time"
 
@@ -203,16 +204,16 @@ func TestSubscriptionIdentifier_QoS0Subscription(t *testing.T) {
 	subID := uint32(42)
 	subscribeWithFilterOptions(t, sub, subCodec,
 		protocol.TopicFilter{Topic: "subid/qos0", QoS: 0},
-		&protocol.Properties{SubscriptionIdentifier: &subID}, 1)
+		&protocol.Properties{SubscriptionIdentifier: []uint32{subID}}, 1)
 
 	publishQoS1(t, brk, "subid-qos0-pub", "subid/qos0", "hello", false)
 
 	got := receivePublish(t, sub, subCodec)
-	if got.Properties == nil || got.Properties.SubscriptionIdentifier == nil {
+	if got.Properties == nil {
 		t.Fatal("expected SubscriptionIdentifier in the delivered PUBLISH")
 	}
-	if *got.Properties.SubscriptionIdentifier != subID {
-		t.Errorf("SubscriptionIdentifier = %d, want %d", *got.Properties.SubscriptionIdentifier, subID)
+	if !slices.Equal(got.Properties.SubscriptionIdentifier, []uint32{subID}) {
+		t.Errorf("SubscriptionIdentifier = %v, want [%d]", got.Properties.SubscriptionIdentifier, subID)
 	}
 	sub.Close()
 }

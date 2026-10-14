@@ -41,11 +41,15 @@ func (c *Codec) decodeSubscribe(r io.Reader, fh FixedHeader) (*SubscribePacket, 
 		}
 	}
 
-	// Extract SubscriptionIdentifier from packet-level properties (MQTT 5.0 3.8.2.1.2).
-	// When present, it applies to ALL topic filters in this SUBSCRIBE.
+	// Extract SubscriptionIdentifier from packet-level properties (MQTT 5.0
+	// §3.8.2.1.2). When present it applies to ALL topic filters in this
+	// SUBSCRIBE, which is why the property may appear at most once here: the
+	// decodeProperties repeat check rejects a second instance as a Protocol
+	// Error, so the slice holds at most one element and copying it onto every
+	// filter cannot lose or conflate anything.
 	var subID *uint32
-	if props != nil && props.SubscriptionIdentifier != nil {
-		subID = props.SubscriptionIdentifier
+	if props != nil && len(props.SubscriptionIdentifier) > 0 {
+		subID = &props.SubscriptionIdentifier[0]
 	}
 
 	var topics []TopicFilter

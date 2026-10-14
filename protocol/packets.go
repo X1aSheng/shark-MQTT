@@ -96,8 +96,13 @@ type TopicFilter struct {
 	NoLocal           bool  // MQTT 5.0: don't forward to own subscriptions
 	RetainAsPublished bool  // MQTT 5.0: preserve retain flag
 	RetainHandling    uint8 // MQTT 5.0: 0=send retained, 1=send if new, 2=don't send
-	// SubscriptionIdentifier is set from the SUBSCRIBE packet-level properties
+	// SubscriptionIdentifier is set from the SUBSCRIBE packet-level property
 	// and propagated to each topic filter during decode (MQTT 5.0 §3.8.2.1.2).
+	// It stays a single value here because §3.8.2.1.2 makes a second instance
+	// in one SUBSCRIBE a Protocol Error: the packet-level identifier applies to
+	// the whole filter list, so there is never more than one to carry. A
+	// delivered PUBLISH is the packet that can carry several
+	// (protocol.Properties.SubscriptionIdentifier).
 	SubscriptionIdentifier *uint32
 }
 

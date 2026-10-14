@@ -22,16 +22,20 @@ import (
 // properties, which are CONNECT/AUTH scope.
 //
 // Two properties belong to the Server rather than the publisher:
-//   - the Subscription Identifier of the matching subscription, and
+//   - the Subscription Identifiers of the matching subscriptions, and
 //   - the remaining Message Expiry Interval, which §3.3.2.3.3 requires to be
 //     sent decremented by the time the message was held in the Server.
+//
+// subIDs is the whole matching set, not one identifier: the Server delivers a
+// single copy to a client whose filters overlapped, and [MQTT-3.3.4-4] requires
+// that copy to carry the identifier of every subscription it matched.
 //
 // The UserProperties slice is shared with the incoming packet instead of being
 // copied: it is read-only on every delivery path, and copying it would allocate
 // once per subscriber per message. The returned set is nil when the publisher
 // sent nothing forwardable and the Server has nothing of its own to add, which
 // keeps the encoded packet identical to the pre-existing behaviour.
-func forwardedPublishProperties(in *protocol.Properties, subID *uint32, expiresAt time.Time) *protocol.Properties {
+func forwardedPublishProperties(in *protocol.Properties, subIDs []uint32, expiresAt time.Time) *protocol.Properties {
 	var out *protocol.Properties
 	if in != nil && (in.PayloadFormat != nil || in.ContentType != "" ||
 		in.ResponseTopic != "" || in.CorrelationData != nil || len(in.UserProperties) > 0) {
@@ -43,13 +47,13 @@ func forwardedPublishProperties(in *protocol.Properties, subID *uint32, expiresA
 			UserProperties:  in.UserProperties,
 		}
 	}
-	if subID == nil && expiresAt.IsZero() {
+	if len(subIDs) == 0 && expiresAt.IsZero() {
 		return out
 	}
 	if out == nil {
 		out = &protocol.Properties{}
 	}
-	out.SubscriptionIdentifier = subID
+	out.SubscriptionIdentifier = subIDs
 	if !expiresAt.IsZero() {
 		out.MessageExpiryInterval = remainingExpiry(expiresAt)
 	}
@@ -127,7 +131,7 @@ func storeProperties(p *protocol.Properties) store.MessageProperties {
 func protocolProperties(sp store.MessageProperties) *protocol.Properties {
 	if sp.PayloadFormat == nil && sp.ContentType == "" && sp.ResponseTopic == "" &&
 		sp.CorrelationData == nil && len(sp.UserProperties) == 0 &&
-		sp.SubscriptionIdentifier == nil {
+		len(sp.SubscriptionIdentifier) == 0 {
 		return nil
 	}
 	p := &protocol.Properties{

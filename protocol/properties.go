@@ -9,33 +9,46 @@ import (
 
 // Properties represents MQTT 5.0 properties.
 type Properties struct {
-	PayloadFormat          *byte
-	MessageExpiryInterval  *uint32
-	ContentType            string
-	ResponseTopic          string
-	CorrelationData        []byte
-	SubscriptionIdentifier *uint32
-	SessionExpiryInterval  *uint32
-	AssignedClientID       string
-	ServerKeepAlive        *uint16
-	AuthenticationMethod   string
-	AuthenticationData     []byte
-	RequestProblemInfo     *byte
-	WillDelayInterval      *uint32
-	RequestResponseInfo    *byte  // MQTT 5.0: 0=don't send ResponseInfo, 1=request ResponseInfo
-	ResponseInfo           string // MQTT 5.0: used as basis for creating response topic
-	ServerReference        string // MQTT 5.0: redirect target for reason 0x9C/0x9D
-	ReceiveMaximum         *uint16
-	TopicAliasMaximum      *uint16
-	TopicAlias             *uint16
-	MaximumQoS             *byte
-	RetainAvailable        *byte
-	UserProperties         []UserProperty
-	MaximumPacketSize      *uint32
-	WildcardSubAvailable   *byte
-	SubIDAvailable         *byte
-	SharedSubAvailable     *byte
-	ReasonString           string
+	PayloadFormat         *byte
+	MessageExpiryInterval *uint32
+	ContentType           string
+	ResponseTopic         string
+	CorrelationData       []byte
+
+	// SubscriptionIdentifier carries the SUBSCRIBE's packet-level identifier on
+	// the way in, and the identifiers of every matching subscription on the way
+	// out.
+	//
+	// It is a slice because Table 2-4 makes the Identifier the one property
+	// that is repeatable in some packet types and not in others: §3.3.2.3.8
+	// uses repetition in a PUBLISH to report that a single publication matched
+	// more than one subscription, so the Server sends one element per
+	// identifier and [MQTT-3.3.4-4] obliges it to include them all when it
+	// sends a single copy; §3.8.2.1.2 makes a repeat in a SUBSCRIBE a Protocol
+	// Error, so that locus carries at most one element.
+	SubscriptionIdentifier []uint32
+
+	SessionExpiryInterval *uint32
+	AssignedClientID      string
+	ServerKeepAlive       *uint16
+	AuthenticationMethod  string
+	AuthenticationData    []byte
+	RequestProblemInfo    *byte
+	WillDelayInterval     *uint32
+	RequestResponseInfo   *byte  // MQTT 5.0: 0=don't send ResponseInfo, 1=request ResponseInfo
+	ResponseInfo          string // MQTT 5.0: used as basis for creating response topic
+	ServerReference       string // MQTT 5.0: redirect target for reason 0x9C/0x9D
+	ReceiveMaximum        *uint16
+	TopicAliasMaximum     *uint16
+	TopicAlias            *uint16
+	MaximumQoS            *byte
+	RetainAvailable       *byte
+	UserProperties        []UserProperty
+	MaximumPacketSize     *uint32
+	WildcardSubAvailable  *byte
+	SubIDAvailable        *byte
+	SharedSubAvailable    *byte
+	ReasonString          string
 }
 
 // UserProperty represents a user-defined key-value pair.
@@ -151,7 +164,9 @@ var propertyProbes = []propertyProbe{
 	{PropContentType, func(p *Properties) bool { return p.ContentType != "" }},
 	{PropResponseTopic, func(p *Properties) bool { return p.ResponseTopic != "" }},
 	{PropCorrelationData, func(p *Properties) bool { return p.CorrelationData != nil }},
-	{PropSubscriptionIdentifier, func(p *Properties) bool { return p.SubscriptionIdentifier != nil }},
+	// A slice is present only when it has at least one element: an empty
+	// SubscriptionIdentifier slice must not make the property appear.
+	{PropSubscriptionIdentifier, func(p *Properties) bool { return len(p.SubscriptionIdentifier) > 0 }},
 	{PropSessionExpiryInterval, func(p *Properties) bool { return p.SessionExpiryInterval != nil }},
 	{PropAssignedClientID, func(p *Properties) bool { return p.AssignedClientID != "" }},
 	{PropServerKeepAlive, func(p *Properties) bool { return p.ServerKeepAlive != nil }},
@@ -368,7 +383,12 @@ func (c *Codec) decodeProperties(r io.Reader, locus propertyLocus) (*Properties,
 			if v == 0 {
 				return nil, ErrMalformedPacket
 			}
-			props.SubscriptionIdentifier = &v
+			// Appended rather than overwritten: the repeat is legal in a
+			// PUBLISH (propertyMayRepeat) and is exactly how §3.3.2.3.8 says a
+			// matched-more-than-once publication is reported. In a SUBSCRIBE
+			// the repeat never reaches here -- the seen/propertyMayRepeat check
+			// above rejects it as a Protocol Error first, per §3.8.2.1.2.
+			props.SubscriptionIdentifier = append(props.SubscriptionIdentifier, v)
 		case PropSessionExpiryInterval:
 			v, err := readUint32FromReader(reader)
 			if err != nil {
@@ -638,11 +658,14 @@ func (c *Codec) encodeProperties(w io.Writer, props *Properties, locus propertyL
 			return err
 		}
 	}
-	if props.SubscriptionIdentifier != nil {
+	// One property instance per element, in slice order. §3.3.2.3.8 says the
+	// relative order of multiple identifiers is not significant, so the
+	// producer is free to sort them (the broker does, for reproducible bytes).
+	for _, id := range props.SubscriptionIdentifier {
 		if err := buf.WriteByte(PropSubscriptionIdentifier); err != nil {
 			return err
 		}
-		if err := writeVarInt(&buf, *props.SubscriptionIdentifier); err != nil {
+		if err := writeVarInt(&buf, id); err != nil {
 			return err
 		}
 	}
@@ -842,8 +865,12 @@ func validateProperties(props *Properties, locus propertyLocus) error {
 	if props.PayloadFormat != nil && *props.PayloadFormat > 1 {
 		return ErrMalformedPacket
 	}
-	if props.SubscriptionIdentifier != nil && *props.SubscriptionIdentifier == 0 {
-		return ErrMalformedPacket
+	// Every element is checked, not just the first: a Subscription Identifier
+	// of 0 is invalid (§3.3.2.3.8) wherever it appears in the slice.
+	for _, id := range props.SubscriptionIdentifier {
+		if id == 0 {
+			return ErrMalformedPacket
+		}
 	}
 	if props.RequestProblemInfo != nil && *props.RequestProblemInfo > 1 {
 		return ErrMalformedPacket

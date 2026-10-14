@@ -2061,16 +2061,24 @@ func (b *Broker) deliverToClient(clientID, sourceClientID string, pkt *protocol.
 	}
 
 	// Look up subscription options for the matching subscription to get
-	// the SubscriptionIdentifier (MQTT 5.0) for the delivered PUBLISH.
-	matches, subQoS, subOpts := sess.MatchesSubscription(pkt.Topic)
+	// the SubscriptionIdentifiers (MQTT 5.0) for the delivered PUBLISH.
+	matches, subQoS, subOpts, subIDs := sess.MatchesSubscription(pkt.Topic)
 	if !matches {
 		return
 	}
-	b.deliverWithQoS(sess, pkt, subQoS, subOpts)
+	b.deliverWithQoS(sess, pkt, subQoS, subOpts, subIDs)
 }
 
 // deliverToSharedClient delivers a PUBLISH to a shared subscription member.
 // MatchesSubscription is skipped — the match was already done by MatchShared.
+//
+// subIDs stays nil here, preserving the pre-existing behaviour: a shared
+// subscription's own Subscription Identifier is not currently forwarded to the
+// member that receives the message. That is a separate gap in the shared
+// delivery path (the identifier would have to travel with the MatchShared
+// result, since re-matching by topic would also pick up the session's ordinary
+// filters, and this copy did not match those), so it is deliberately not
+// guessed at here.
 func (b *Broker) deliverToSharedClient(clientID, sourceClientID string, pkt *protocol.PublishPacket, subQoS uint8) {
 	sess, ok := b.sessions.GetSession(clientID)
 	if !ok {
@@ -2079,18 +2087,18 @@ func (b *Broker) deliverToSharedClient(clientID, sourceClientID string, pkt *pro
 	if sourceClientID != "" && clientID == sourceClientID && !sess.AllowsLocalPublish(pkt.Topic) {
 		return
 	}
-	b.deliverWithQoS(sess, pkt, subQoS, SubscriptionOptions{QoS: subQoS})
+	b.deliverWithQoS(sess, pkt, subQoS, SubscriptionOptions{QoS: subQoS}, nil)
 }
 
 // deliverWithQoS is the shared delivery core of deliverToClient and
 // deliverToSharedClient: it applies the subscription QoS downgrade rule
 // (deliver at min(publish QoS, subscription QoS)) and performs the delivery.
-func (b *Broker) deliverWithQoS(sess *Session, pkt *protocol.PublishPacket, subQoS uint8, subOpts SubscriptionOptions) {
+func (b *Broker) deliverWithQoS(sess *Session, pkt *protocol.PublishPacket, subQoS uint8, subOpts SubscriptionOptions, subIDs []uint32) {
 	deliverQoS := pkt.FixedHeader.QoS
 	if subQoS < deliverQoS {
 		deliverQoS = subQoS
 	}
-	b.doDeliver(sess.ClientID, pkt, deliverQoS, messageExpiresAt(pkt), subOpts, false)
+	b.doDeliver(sess.ClientID, pkt, deliverQoS, messageExpiresAt(pkt), subOpts, subIDs, false)
 }
 
 // queueOfflineMessage stores a QoS 1/2 message for an offline persistent
@@ -2200,7 +2208,7 @@ func (b *Broker) deliverQueuedMessages(clientID string, sess *Session) {
 			}
 			continue
 		}
-		matches, subQoS, subOpts := sess.MatchesSubscription(msg.Topic)
+		matches, subQoS, subOpts, subIDs := sess.MatchesSubscription(msg.Topic)
 		if !matches {
 			// The subscription that caused this message to be queued no longer
 			// exists; previously the message was skipped forever and leaked
@@ -2235,7 +2243,7 @@ func (b *Broker) deliverQueuedMessages(clientID string, sess *Session) {
 		if sess.Spec().Properties && !msg.ExpiresAt.IsZero() {
 			pubPkt.Properties = &protocol.Properties{MessageExpiryInterval: remainingExpiry(msg.ExpiresAt)}
 		}
-		b.doDeliver(clientID, pubPkt, deliverQoS, msg.ExpiresAt, subOpts, false)
+		b.doDeliver(clientID, pubPkt, deliverQoS, msg.ExpiresAt, subOpts, subIDs, false)
 		if err := b.messageStore.DeleteMessage(b.ctx, clientID, msg.ID); err != nil {
 			b.logger.Warn("failed to delete queued message", "clientID", clientID, "error", err)
 		} else {
@@ -2254,7 +2262,7 @@ func (b *Broker) deliverQueuedMessages(clientID string, sess *Session) {
 // live forward the RETAIN flag follows Retain As Published (MQTT 5.0 3.8.3.1):
 // it is cleared unless the matching subscription set RAP=1, in which case the
 // flag the publisher used is preserved.
-func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliverQoS uint8, expiresAt time.Time, subOpts SubscriptionOptions, retainedDelivery bool) {
+func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliverQoS uint8, expiresAt time.Time, subOpts SubscriptionOptions, subIDs []uint32, retainedDelivery bool) {
 	sess, ok := b.sessions.GetSession(clientID)
 	if !ok {
 		return
@@ -2273,7 +2281,7 @@ func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliver
 	// The buffer is bounded (R6): if a client never acknowledges and the buffer
 	// is full, the new message is dropped rather than exhausting memory.
 	if deliverQoS > 0 && !sess.CanSendOutbound() {
-		if !sess.BufferOutbound(pkt, deliverQoS, subOpts, expiresAt) {
+		if !sess.BufferOutbound(pkt, deliverQoS, subOpts, subIDs, expiresAt) {
 			b.metrics.IncMessagesDropped("receive_max_buffered_overflow")
 			b.metrics.IncErrors("flow_control")
 			b.logger.Debug("outbound flow-control buffer full, dropping message",
@@ -2301,8 +2309,8 @@ func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliver
 	// MQTT 5.0 §3.3.2.3: the Server MUST relay the publisher's per-message
 	// properties unaltered (Payload Format Indicator, Content Type, Response
 	// Topic, Correlation Data and every User Property, order preserved) and adds
-	// the matching subscription's Subscription Identifier plus the decremented
-	// Message Expiry Interval. See forwardedPublishProperties.
+	// the Subscription Identifiers of every matching subscription plus the
+	// decremented Message Expiry Interval. See forwardedPublishProperties.
 	//
 	// This is gated on the *subscriber's* negotiated version: properties exist
 	// only in the MQTT 5 wire format, and emitting them to a v3.1.1 subscriber
@@ -2310,7 +2318,7 @@ func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliver
 	// (audit). The expiry deadline is enforced for bookkeeping regardless; only
 	// its advertisement is version-gated.
 	if sess.Spec().Properties {
-		pubPkt.Properties = forwardedPublishProperties(pkt.Properties, subOpts.SubscriptionIdentifier, expiresAt)
+		pubPkt.Properties = forwardedPublishProperties(pkt.Properties, subIDs, expiresAt)
 	}
 
 	if deliverQoS > 0 {
@@ -2357,7 +2365,7 @@ func (b *Broker) flushBufferedOutbound(clientID string, sess *Session) {
 			return
 		}
 		msg, _ := sess.PopOutbound()
-		b.doDeliver(clientID, msg.pkt, msg.deliverQoS, msg.expiresAt, msg.subOpts, false)
+		b.doDeliver(clientID, msg.pkt, msg.deliverQoS, msg.expiresAt, msg.subOpts, msg.subIDs, false)
 	}
 }
 
@@ -2433,7 +2441,7 @@ func (b *Broker) deliverRetainedMessages(clientID string, sess *Session, topicFi
 	for _, msg := range retained {
 		// Use the sys-topic-protected matcher so a $SYS retained message is
 		// never delivered to a bare '#' or '+' subscription (P3-4).
-		matches, subQoS, subOpts := sess.MatchesRetainedSubscription(msg.Topic)
+		matches, subQoS, subOpts, subIDs := sess.MatchesRetainedSubscription(msg.Topic)
 		if !matches {
 			continue
 		}
@@ -2462,7 +2470,7 @@ func (b *Broker) deliverRetainedMessages(clientID string, sess *Session, topicFi
 		// assigns the packet ID, and tracks the delivery (NEW-4). The operator's
 		// retained TTL is policy rather than a publisher-set lifetime, so it is
 		// not advertised as a Message Expiry Interval here.
-		b.doDeliver(clientID, pubPkt, deliverQoS, msg.ExpiresAt, subOpts, true)
+		b.doDeliver(clientID, pubPkt, deliverQoS, msg.ExpiresAt, subOpts, subIDs, true)
 	}
 }
 

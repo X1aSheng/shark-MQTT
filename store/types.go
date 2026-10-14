@@ -85,12 +85,24 @@ type InflightMessage struct {
 // struct would make every future protocol field part of the store schema by
 // accident. Subscription.SubscriptionIdentifier set the same precedent.
 type MessageProperties struct {
-	PayloadFormat          *byte
-	ContentType            string
-	ResponseTopic          string
-	CorrelationData        []byte
-	UserProperties         []UserProperty
-	SubscriptionIdentifier *uint32
+	PayloadFormat   *byte
+	ContentType     string
+	ResponseTopic   string
+	CorrelationData []byte
+	UserProperties  []UserProperty
+
+	// SubscriptionIdentifier carries the identifiers of every subscription a
+	// stored message matched, so a retransmission after a restart still reports
+	// them all ([MQTT-3.3.4-4]). It is a slice because a single published
+	// message can match several of the subscriber's filters, and a single
+	// delivery has to name them all; an empty slice means none applied.
+	//
+	// Format note: this replaced a single *uint32, so a snapshot written by an
+	// earlier build holds a JSON number where this build reads an array. Such a
+	// record fails to unmarshal and is rejected as a corrupt entry rather than
+	// silently misread, which is the intended outcome of the deliberate
+	// no-compatibility change.
+	SubscriptionIdentifier []uint32
 }
 
 // UserProperty is a store-neutral MQTT 5 user-defined property pair. The order

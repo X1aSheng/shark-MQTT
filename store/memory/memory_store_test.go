@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -448,7 +449,7 @@ func TestSessionStore_InflightPropertiesRoundTrip(t *testing.T) {
 					ResponseTopic:          "props/reply",
 					CorrelationData:        correlation,
 					UserProperties:         userProps,
-					SubscriptionIdentifier: &subID,
+					SubscriptionIdentifier: []uint32{subID},
 				},
 			},
 		},
@@ -495,8 +496,8 @@ func TestSessionStore_InflightPropertiesRoundTrip(t *testing.T) {
 	if string(msg.Properties.CorrelationData) != string([]byte{0xDE, 0xAD}) {
 		t.Errorf("CorrelationData = %x, want dead", msg.Properties.CorrelationData)
 	}
-	if msg.Properties.SubscriptionIdentifier == nil || *msg.Properties.SubscriptionIdentifier != 9 {
-		t.Errorf("SubscriptionIdentifier = %v, want 9", msg.Properties.SubscriptionIdentifier)
+	if !slices.Equal(msg.Properties.SubscriptionIdentifier, []uint32{9}) {
+		t.Errorf("SubscriptionIdentifier = %v, want [9]", msg.Properties.SubscriptionIdentifier)
 	}
 	if !msg.PendingPubRel {
 		t.Error("PendingPubRel lost in the round trip")
@@ -567,7 +568,7 @@ func TestRetainedStore_PropertiesAreDeepCopied(t *testing.T) {
 			ContentType:            "text/plain",
 			CorrelationData:        corr,
 			UserProperties:         ups,
-			SubscriptionIdentifier: &sid,
+			SubscriptionIdentifier: []uint32{sid},
 		},
 	}
 	if err := r.SaveRetained(ctx, msg); err != nil {
@@ -597,8 +598,8 @@ func TestRetainedStore_PropertiesAreDeepCopied(t *testing.T) {
 	if got.Properties.PayloadFormat == nil || *got.Properties.PayloadFormat != 1 {
 		t.Errorf("stored PayloadFormat = %v, want pointer to 1", got.Properties.PayloadFormat)
 	}
-	if got.Properties.SubscriptionIdentifier == nil || *got.Properties.SubscriptionIdentifier != 9 {
-		t.Errorf("stored SubscriptionIdentifier = %v, want pointer to 9", got.Properties.SubscriptionIdentifier)
+	if !slices.Equal(got.Properties.SubscriptionIdentifier, []uint32{9}) {
+		t.Errorf("stored SubscriptionIdentifier = %v, want [9]", got.Properties.SubscriptionIdentifier)
 	}
 
 	// The reverse direction: a caller that mutates what it was handed must not

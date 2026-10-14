@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -37,7 +38,7 @@ func TestInflightMessagePropertiesJSONRoundTrip(t *testing.T) {
 						{Key: "trace", Value: "def"}, // order and repetition are significant
 						{Key: "tenant", Value: "acme"},
 					},
-					SubscriptionIdentifier: &subscriptionID,
+					SubscriptionIdentifier: []uint32{subscriptionID},
 				},
 				ExpiresAt:     deadline,
 				PendingPubRel: true,
@@ -107,8 +108,8 @@ func TestInflightMessagePropertiesJSONRoundTrip(t *testing.T) {
 				i, out.Properties.UserProperties[i], want)
 		}
 	}
-	if out.Properties.SubscriptionIdentifier == nil || *out.Properties.SubscriptionIdentifier != 7 {
-		t.Errorf("SubscriptionIdentifier = %v, want pointer to 7", out.Properties.SubscriptionIdentifier)
+	if !slices.Equal(out.Properties.SubscriptionIdentifier, []uint32{7}) {
+		t.Errorf("SubscriptionIdentifier = %v, want [7]", out.Properties.SubscriptionIdentifier)
 	}
 	if !out.PendingPubRel {
 		// The handshake stage decides what a resume resends -- a PUBREL, not
@@ -150,7 +151,7 @@ func TestInflightMessageLegacyJSONStillLoads(t *testing.T) {
 	// the same way the broker's zero test (protocolProperties) has to.
 	if got.Properties.PayloadFormat != nil || got.Properties.ContentType != "" ||
 		got.Properties.ResponseTopic != "" || got.Properties.CorrelationData != nil ||
-		got.Properties.UserProperties != nil || got.Properties.SubscriptionIdentifier != nil {
+		got.Properties.UserProperties != nil || len(got.Properties.SubscriptionIdentifier) != 0 {
 		t.Errorf("Properties = %+v, want the zero value", got.Properties)
 	}
 	if !got.ExpiresAt.IsZero() {

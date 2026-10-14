@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -27,7 +28,7 @@ func TestPublishPropertiesRelayedToV50Subscriber(t *testing.T) {
 	subID := uint32(7)
 	subscribeWithFilterOptions(t, sub, subCodec,
 		protocol.TopicFilter{Topic: "props/relay", QoS: 1},
-		&protocol.Properties{SubscriptionIdentifier: &subID}, 1)
+		&protocol.Properties{SubscriptionIdentifier: []uint32{subID}}, 1)
 
 	pub := dialTestBroker(t, brk)
 	defer pub.Close()
@@ -106,8 +107,8 @@ func TestPublishPropertiesRelayedToV50Subscriber(t *testing.T) {
 	// Server-owned additions: the matching subscription's identifier and the
 	// Message Expiry Interval decremented by the time held in the Server
 	// (§3.3.2.3.3 / §3.3.2.3.7).
-	if props.SubscriptionIdentifier == nil || *props.SubscriptionIdentifier != subID {
-		t.Errorf("SubscriptionIdentifier = %v, want %d", props.SubscriptionIdentifier, subID)
+	if !slices.Equal(props.SubscriptionIdentifier, []uint32{subID}) {
+		t.Errorf("SubscriptionIdentifier = %v, want [%d]", props.SubscriptionIdentifier, subID)
 	}
 	if props.MessageExpiryInterval == nil {
 		t.Error("MessageExpiryInterval missing: the publisher's 30s deadline must be relayed")

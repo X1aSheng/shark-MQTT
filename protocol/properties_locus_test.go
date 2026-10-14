@@ -214,7 +214,7 @@ func minimalPropertiesFor(id byte) *Properties {
 	case PropCorrelationData:
 		return &Properties{CorrelationData: binary}
 	case PropSubscriptionIdentifier:
-		return &Properties{SubscriptionIdentifier: &one32}
+		return &Properties{SubscriptionIdentifier: []uint32{one32}}
 	case PropSessionExpiryInterval:
 		return &Properties{SessionExpiryInterval: &one32}
 	case PropAssignedClientID:

@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 	"time"
 )
@@ -30,7 +31,7 @@ func TestRetainedMessageJSONRoundTrip(t *testing.T) {
 				{Key: "trace", Value: "x"},
 				{Key: "trace", Value: "y"},
 			},
-			SubscriptionIdentifier: &sid,
+			SubscriptionIdentifier: []uint32{sid},
 		},
 		ExpiresAt: deadline,
 	}
@@ -72,8 +73,8 @@ func TestRetainedMessageJSONRoundTrip(t *testing.T) {
 		got.Properties.UserProperties[1] != (UserProperty{Key: "trace", Value: "y"}) {
 		t.Errorf("UserProperties = %+v, want trace=x then trace=y in order", got.Properties.UserProperties)
 	}
-	if got.Properties.SubscriptionIdentifier == nil || *got.Properties.SubscriptionIdentifier != 11 {
-		t.Errorf("SubscriptionIdentifier = %v, want pointer to 11", got.Properties.SubscriptionIdentifier)
+	if !slices.Equal(got.Properties.SubscriptionIdentifier, []uint32{11}) {
+		t.Errorf("SubscriptionIdentifier = %v, want [11]", got.Properties.SubscriptionIdentifier)
 	}
 }
 
@@ -91,7 +92,7 @@ func TestRetainedMessageLegacyJSONStillLoads(t *testing.T) {
 	}
 	if got.Properties.PayloadFormat != nil || got.Properties.ContentType != "" ||
 		got.Properties.ResponseTopic != "" || got.Properties.CorrelationData != nil ||
-		got.Properties.UserProperties != nil || got.Properties.SubscriptionIdentifier != nil {
+		got.Properties.UserProperties != nil || len(got.Properties.SubscriptionIdentifier) != 0 {
 		t.Errorf("Properties = %+v, want the zero value", got.Properties)
 	}
 	if !got.ExpiresAt.IsZero() {

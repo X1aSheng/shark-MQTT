@@ -3,6 +3,7 @@ package protocol
 import (
 	"bytes"
 	"errors"
+	"slices"
 	"testing"
 )
 
@@ -185,7 +186,7 @@ func TestDecodeAcceptsRepeatedSubscriptionIdentifierOnlyInPublish(t *testing.T) 
 		PropSubscriptionIdentifier, 0x2B,
 	)
 
-	t.Run("PUBLISH accepts them", func(t *testing.T) {
+	t.Run("PUBLISH keeps them all", func(t *testing.T) {
 		raw := v5Packet(0x30, publishBody(repeated)...)
 		pkt, err := mqtt5Codec().Decode(bytes.NewReader(raw))
 		if err != nil {
@@ -195,17 +196,33 @@ func TestDecodeAcceptsRepeatedSubscriptionIdentifierOnlyInPublish(t *testing.T) 
 		if !ok {
 			t.Fatalf("Decode() returned %T, want *PublishPacket", pkt)
 		}
-		if pub.Properties == nil || pub.Properties.SubscriptionIdentifier == nil {
-			t.Fatal("expected a Subscription Identifier to survive")
+		if pub.Properties == nil {
+			t.Fatal("expected the properties to survive")
 		}
-		// Properties.SubscriptionIdentifier is a single *uint32, so a legal
-		// repetition is collapsed to the last identifier instead of being
-		// retained as a list. This is a known lossy limitation, recorded on the
-		// field: no broker path can observe the loss, because the only way the
-		// broker puts a Subscription Identifier on the wire is
-		// forwardedPublishProperties, which sets exactly one.
-		if got := *pub.Properties.SubscriptionIdentifier; got != 0x2B {
-			t.Errorf("SubscriptionIdentifier = %d, want %d (the last one)", got, 0x2B)
+		// §3.3.2.3.8: the repetition is how the Server names every subscription
+		// a publication matched, so both identifiers have to be kept. Retaining
+		// only the last one silently dropped the correlation the client asked
+		// for; the order is explicitly not significant.
+		want := []uint32{0x2A, 0x2B}
+		if !slices.Equal(pub.Properties.SubscriptionIdentifier, want) {
+			t.Errorf("SubscriptionIdentifier = %v, want %v", pub.Properties.SubscriptionIdentifier, want)
+		}
+
+		// The set must survive a re-encode too, otherwise a relayed PUBLISH
+		// would put only one identifier back on the wire. The round trip is the
+		// assertion that catches a decode that collects and an encode that does
+		// not (or vice versa).
+		var buf bytes.Buffer
+		if err := mqtt5Codec().Encode(&buf, pub); err != nil {
+			t.Fatalf("Encode() error = %v", err)
+		}
+		relayed, err := mqtt5Codec().Decode(bytes.NewReader(buf.Bytes()))
+		if err != nil {
+			t.Fatalf("re-Decode() error = %v", err)
+		}
+		got := relayed.(*PublishPacket).Properties.SubscriptionIdentifier
+		if !slices.Equal(got, want) {
+			t.Errorf("round-tripped SubscriptionIdentifier = %v, want %v", got, want)
 		}
 	})
 
