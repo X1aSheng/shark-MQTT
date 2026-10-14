@@ -306,6 +306,17 @@ func (c *MQTTClient) Publish(ctx context.Context, topic string, qos byte, retain
 			}
 			return nil
 		case *protocol.PubRecPacket:
+			// Defensive reason-code guard, the mirror of the broker's
+			// handlePubRec/dropRejectedDelivery: a PUBREC that declines the
+			// delivery ends the QoS 2 exchange right there -- no PUBREL may
+			// follow it ([MQTT-4.3.3-4], [MQTT-4.4.0-2]). Today the client
+			// only ever negotiates 3.1.1 (Connect pins protocol.Version311)
+			// and a 3.1.1 codec rejects any PUBREC longer than two bytes, so
+			// this is unreachable on the wire until the client learns MQTT
+			// 5.0 -- the same defensive status as the PUBACK guard above.
+			if r.ReasonCode >= protocol.ReasonCodeFailureBase {
+				return fmt.Errorf("PUBREC rejected: reason code 0x%02x", r.ReasonCode)
+			}
 			// QoS 2: send PUBREL
 			pubrel := &protocol.PubRelPacket{
 				PacketID: pkt.PacketID,
@@ -323,8 +334,16 @@ func (c *MQTTClient) Publish(ctx context.Context, topic string, qos byte, retain
 			case <-ctx.Done():
 				return ctx.Err()
 			case compResp := <-respCh:
-				if _, ok := compResp.(*protocol.PubCompPacket); !ok {
+				comp, ok := compResp.(*protocol.PubCompPacket)
+				if !ok {
 					return fmt.Errorf("expected PUBCOMP, got %T", compResp)
+				}
+				// A PUBCOMP can itself carry a failure code (e.g. 0x92 Packet
+				// Identifier not found): the exchange then completed without
+				// the message being accepted, so returning nil would report
+				// success for a delivery the peer refused.
+				if comp.ReasonCode != protocol.ReasonCodeSuccess {
+					return fmt.Errorf("PUBCOMP rejected: reason code 0x%02x", comp.ReasonCode)
 				}
 				return nil
 			}
@@ -436,8 +455,21 @@ func (c *MQTTClient) Unsubscribe(ctx context.Context, topics []string) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case resp := <-respCh:
-		if _, ok := resp.(*protocol.UnsubAckPacket); !ok {
+		unsuback, ok := resp.(*protocol.UnsubAckPacket)
+		if !ok {
 			return fmt.Errorf("expected UNSUBACK, got %T", resp)
+		}
+		// MQTT 5.0 carries one reason code per topic filter; 3.1.1 carries
+		// none (nil slice). 0x11 "No subscription existed" stays a success --
+		// it is exactly the state unsubscribe asks for -- but >= 0x80 means
+		// the peer refused, and dropping that on the floor would report a
+		// failed unsubscribe as a successful one. Subscribe deliberately
+		// hands its codes back to the caller instead, so its contract is
+		// unchanged.
+		for i, rc := range unsuback.ReasonCodes {
+			if rc >= protocol.ReasonCodeFailureBase {
+				return fmt.Errorf("UNSUBACK rejected topic filter %d: reason code 0x%02x", i, rc)
+			}
 		}
 		return nil
 	case <-connCtx.Done():
