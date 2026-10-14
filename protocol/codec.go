@@ -335,6 +335,18 @@ func (c *Codec) encodeFixedHeader(w io.Writer, fh *FixedHeader) error {
 // --- UTF-8 string encoding/decoding ---
 
 func readString(r io.Reader, pool *bufferpool.Pool) (string, error) {
+	return readStringBounded(r, pool, math.MaxUint16)
+}
+
+// readStringBounded is readString with an upper bound on the length prefix.
+// The bound lets a caller reject a prefix that cannot possibly fit in the bytes
+// left in the current packet *before* any of the string is read off the wire:
+// reading the prefix from an unbounded reader and only then comparing it with
+// Remaining Length consumes bytes that belong to the next packet, which both
+// desynchronizes the stream and makes the reader wait for (and allocate) a
+// length the peer never sent. PUBLISH passes its remaining Remaining Length
+// here for exactly that reason.
+func readStringBounded(r io.Reader, pool *bufferpool.Pool, maxLen int) (string, error) {
 	var lenBuf [2]byte
 	if _, err := io.ReadFull(r, lenBuf[:]); err != nil {
 		return "", err
@@ -342,6 +354,9 @@ func readString(r io.Reader, pool *bufferpool.Pool) (string, error) {
 	length := int(binary.BigEndian.Uint16(lenBuf[:]))
 	if length == 0 {
 		return "", nil
+	}
+	if length > maxLen {
+		return "", ErrMalformedPacket
 	}
 	var buf []byte
 	if pool != nil {

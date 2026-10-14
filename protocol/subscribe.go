@@ -6,6 +6,13 @@ import (
 )
 
 func (c *Codec) decodeSubscribe(r io.Reader, fh FixedHeader) (*SubscribePacket, error) {
+	// A SUBSCRIBE always carries a 2-byte packet identifier. The length check
+	// has to come first: reading the identifier and only then noticing that
+	// Remaining Length cannot hold it consumes bytes from the next packet (the
+	// same guard decodeSubAck carries).
+	if fh.RemainingLength < 2 {
+		return nil, ErrMalformedPacket
+	}
 	packetID, err := readUint16(r)
 	if err != nil {
 		return nil, err
@@ -215,6 +222,12 @@ func (c *Codec) encodeSubAck(w io.Writer, pkt *SubAckPacket) error {
 }
 
 func (c *Codec) decodeUnsubscribe(r io.Reader, fh FixedHeader) (*UnsubscribePacket, error) {
+	// Same guard as decodeSubscribe: the 2-byte packet identifier must fit in
+	// Remaining Length before it is read, or the rejection eats into the next
+	// packet.
+	if fh.RemainingLength < 2 {
+		return nil, ErrMalformedPacket
+	}
 	packetID, err := readUint16(r)
 	if err != nil {
 		return nil, err

@@ -542,3 +542,61 @@ func TestEncodeAcceptsSpecCompliantFixedHeaderFlags(t *testing.T) {
 		}
 	}
 }
+
+// TestDecodeRejectedPacketDoesNotOverConsumeTheStream pins the invariant that a
+// packet rejected by Decode consumes at most its own Remaining Length. The bytes
+// of the following packet have to stay in the reader, otherwise a caller that
+// resynchronizes instead of tearing the connection down loses the next packet --
+// and, for PUBLISH, an attacker-controlled topic length makes the reader wait
+// for (and allocate) up to 64 KiB that belong to somebody else. decodeSubAck and
+// decodeUnsubAck already carried this guard; SUBSCRIBE, UNSUBSCRIBE and PUBLISH
+// read their first body field straight off the wire before noticing that
+// Remaining Length cannot hold it.
+func TestDecodeRejectedPacketDoesNotOverConsumeTheStream(t *testing.T) {
+	ping := []byte{0xC0, 0x00} // PINGREQ
+
+	tests := []struct {
+		name string
+		head []byte // a packet whose Remaining Length cannot hold its own body
+	}{
+		{"SUBSCRIBE Remaining Length 0", []byte{0x82, 0x00}},
+		{"UNSUBSCRIBE Remaining Length 0", []byte{0xA2, 0x00}},
+		{"PUBLISH Remaining Length 0", []byte{0x30, 0x00}},
+		{"SUBSCRIBE Remaining Length 1", []byte{0x82, 0x01, 0x00}},
+		{"UNSUBSCRIBE Remaining Length 1", []byte{0xA2, 0x01, 0x00}},
+		{"PUBLISH Remaining Length 1", []byte{0x30, 0x01, 0x00}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := make([]byte, 0, len(tt.head)+len(ping))
+			raw = append(raw, tt.head...)
+			raw = append(raw, ping...)
+			r := bytes.NewReader(raw)
+			codec := NewCodec(256 * 1024)
+
+			if _, err := codec.Decode(r); err == nil {
+				t.Fatal("expected the malformed packet to be rejected")
+			}
+			if r.Len() < len(ping) {
+				t.Fatalf("Decode consumed %d bytes past the malformed packet: only %d of the following %d-byte PINGREQ survive",
+					len(ping)-r.Len(), r.Len(), len(ping))
+			}
+
+			// A Remaining Length of 0 leaves no body, so the reader must sit
+			// exactly on the next packet and that packet must still decode.
+			if len(tt.head) == 2 {
+				if r.Len() != len(ping) {
+					t.Fatalf("r.Len() = %d after the rejection, want %d", r.Len(), len(ping))
+				}
+				pkt, err := codec.Decode(r)
+				if err != nil {
+					t.Fatalf("Decode() of the packet after the rejected one = %v, want nil", err)
+				}
+				if _, ok := pkt.(*PingReqPacket); !ok {
+					t.Fatalf("Decode() of the packet after the rejected one = %T, want *PingReqPacket", pkt)
+				}
+			}
+		})
+	}
+}

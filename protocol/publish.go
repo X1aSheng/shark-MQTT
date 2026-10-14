@@ -9,13 +9,29 @@ import (
 )
 
 func (c *Codec) decodePublish(r io.Reader, fh FixedHeader) (*PublishPacket, error) {
-	topic, err := readString(r, c.pool)
+	// Remaining Length has to cover at least the 2-byte Topic Name length
+	// prefix, and the topic the prefix declares has to fit in what is left.
+	// Both are checked before the field is read off the wire: reading first and
+	// comparing afterwards consumes bytes belonging to the next packet (the
+	// same guard decodeSubAck carries).
+	if fh.RemainingLength < 2 {
+		return nil, ErrMalformedPacket
+	}
+	topic, err := readStringBounded(r, c.pool, fh.RemainingLength-2)
 	if err != nil {
 		return nil, err
 	}
 
+	// remaining = body bytes after the topic (and packet ID).
+	headerBytes := 2 + len(topic) // topic length prefix + topic string
+
 	var packetID uint16
 	if fh.QoS > 0 {
+		// The packet identifier is the next field on the wire, so its two bytes
+		// have to be accounted for before it is read.
+		if headerBytes+2 > fh.RemainingLength {
+			return nil, ErrMalformedPacket
+		}
 		packetID, err = readUint16(r)
 		if err != nil {
 			return nil, err
@@ -23,13 +39,9 @@ func (c *Codec) decodePublish(r io.Reader, fh FixedHeader) (*PublishPacket, erro
 		if packetID == 0 {
 			return nil, ErrMalformedPacket
 		}
-	}
-
-	// remaining = body bytes after the topic (and packet ID).
-	headerBytes := 2 + len(topic) // topic length prefix + topic string
-	if fh.QoS > 0 {
 		headerBytes += 2 // packet ID
 	}
+
 	remaining := fh.RemainingLength - headerBytes
 	if remaining < 0 {
 		return nil, ErrMalformedPacket
