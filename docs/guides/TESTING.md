@@ -1,6 +1,6 @@
 # Testing Guide
 
-Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。当前基线为 **461 个单元测试**、**147 个集成测试**、**61 个基准测试**（口径：源码中声明的顶层 `Test*` / `Benchmark*` 函数数，复现方式见 [测试统计](#测试统计)）。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
+Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。当前基线为 **461 个单元测试**、**159 个集成测试**、**61 个基准测试**（口径：源码中声明的顶层 `Test*` / `Benchmark*` 函数数，复现方式见 [测试统计](#测试统计)）。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
 
 ---
 
@@ -31,8 +31,8 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 |  +-- data_delivery_bench_test.go - E2E 数据验证基准 (12)   |
 |  +-- micro_bench_test.go         - 组件级微基准 (27)       |
 +------------------------------------------------------------+
-|  Integration Tests (147 declared)                          |
-|  tests/integration/  (27 files)                            |
+|  Integration Tests (159 declared)                          |
+|  tests/integration/  (31 files)                            |
 |  +-- connect / pubsub / qos / persistent_session           |
 |  +-- delivery / retained / will / topic_wildcard           |
 |  +-- session_expiry / message_expiry / outbound_retry      |
@@ -40,6 +40,8 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 |  +-- websocket / wss / request_response                    |
 |  +-- deploy / observability / graceful_shutdown            |
 |  +-- retain_as_published / lifecycle_regression            |
+|  +-- protocol_violation_disconnect / keepalive_disconnect  |
+|  +-- decode_error_disconnect / connect_reject_connack      |
 |  (完整文件清单见「集成测试」章)                            |
 +------------------------------------------------------------+
 |  Defect Regression Tests (tests/defects + package tests)   |
@@ -66,7 +68,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 | 类型 | 数量 | 位置 |
 |------|------|------|
 | 单元测试 | 461 | 各包 `*_test.go`（含 `tests/defects/`） |
-| 集成测试 | 147 | `tests/integration/` |
+| 集成测试 | 159 | `tests/integration/` |
 | 缺陷回归测试 | `tests/defects/` 7 个文件 / 8 个用例 + 包内回归 | `tests/defects/`、`broker/`、`client/`、`protocol/` |
 | 基准测试 | 61（Windows 本地实际执行 58） | `tests/bench/`、`plugin/`、`pkg/metrics/` |
 
@@ -96,8 +98,8 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 
 | 包 | 测试数 | 基准测试数 | 说明 |
 |----|--------|-----------|------|
-| broker/ | 196 | 0 | 核心逻辑：TopicTree、QoS 引擎、会话、遗嘱、认证、服务器、retained metrics、MQTT 5.0 属性中继与过期边界、重连重传、按协议版本门控的连接内重传、插件钩子上下文 |
-| protocol/ | 90 | 0 | MQTT 3.1 / 3.1.1 / 5.0 编解码、属性、报文 flags 校验（解码与编码对称）、流对齐不变量、属性出现次数与所属报文类型校验（Table 2-4，解码与编码双向）、协议适配层（15 种报文） |
+| broker/ | 196 | 0 | 核心逻辑：TopicTree、QoS 引擎、会话、遗嘱、认证、服务器、retained metrics、MQTT 5.0 属性中继与过期边界、重连重传、按协议版本门控的连接内重传、解码失败与 keepalive 超时的原因码回执、插件钩子上下文 |
+| protocol/ | 90 | 0 | MQTT 3.1 / 3.1.1 / 5.0 编解码、属性、报文 flags 校验（解码与编码对称）、流对齐不变量、属性出现次数与所属报文类型校验（Table 2-4，解码与编码双向）、协议适配层（15 种报文；握手失败仍返回 codec，供服务端回 CONNACK） |
 | client/ | 40 | 0 | MQTT 客户端连接、发布、订阅、断开清理、QoS 2 入站 ack（PUBREC 保留 flags）与对端 reason-code 守卫 |
 | config/ | 24 | 0 | 配置解析与校验 |
 | store/memory/ | 23 | 0 | 内存存储：会话、消息、保留消息 |
@@ -110,7 +112,7 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 | errs/ | 4 | 0 | 错误定义 |
 | tests/defects/ | 8 | 0 | 审查发现缺陷的最小复现和回归测试 |
 | **单元测试合计** | **461** | **4** | |
-| tests/integration/ | 147 | 0 | 端到端集成测试（含部署验证） |
+| tests/integration/ | 159 | 0 | 端到端集成测试（含部署验证） |
 | tests/bench/ | 0 | 57 | 全栈 TCP、E2E 数据验证、微基准 |
 | **基准测试合计** | | **61** | |
 | store/redis/（`store_redis`） | 18 | 9 | Redis 存储：消息、保留、会话（默认不编译） |
@@ -125,13 +127,13 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 
 | 指标 | 数量 |
 |------|------|
-| `.go` 文件 | 164（67 非测试 / 97 测试） |
-| 非测试代码行数 | 16,326 |
-| 测试代码行数 | 27,220 |
+| `.go` 文件 | 168（67 非测试 / 101 测试） |
+| 非测试代码行数 | 16,567 |
+| 测试代码行数 | 27,896 |
 
-主要模块的非测试行数：`broker` 6,811（17 文件）· `protocol` 3,720（13）· `store` 1,447（10）·
+主要模块的非测试行数：`broker` 7,047（17 文件）· `protocol` 3,727（13）· `store` 1,447（10）·
 `client` 916（2）· `api` 532（2）· `pkg` 466（7）· `config` 366（2）· `plugin` 200（1）·
-`cmd` 160（1）· `errs` 42（1）；其余分布在 `examples/`、`scripts/`、`tests/`。
+`cmd` 160（1）· `errs` 43（1）；其余分布在 `examples/`、`scripts/`、`tests/`。
 
 ```bash
 # 全部 .go 文件数
@@ -200,7 +202,7 @@ func TestTopicTree_Subscribe(t *testing.T) {
 ### 测试清单
 
 集成测试按文件组织，每个文件覆盖一个语义域。下表由源码直接统计
-（`grep -c '^func Test' tests/integration/*_test.go`），合计 **147 个**：
+（`grep -c '^func Test' tests/integration/*_test.go`），合计 **159 个**：
 
 | 文件 | 测试数 | 覆盖重点 |
 |------|--------|----------|
@@ -213,6 +215,7 @@ func TestTopicTree_Subscribe(t *testing.T) {
 | `persistent_session_test.go` | 5 | CleanSession=false 会话保持、重连恢复、重复 ClientID 接管 |
 | `retain_as_published_test.go` | 5 | Retain As Published 对出站 RETAIN 的影响（本轮修复回归） |
 | `topic_wildcard_test.go` | 5 | `+` / `#` 通配符匹配（含根级 `#` 与混合形式） |
+| `decode_error_disconnect_test.go` | 5 | 解码失败的拆链回执：重复属性 0x82、畸形 Remaining Length / 保留位 / 属性归属 0x81、超长报文 0x95，以及传输层失败必须保持静默（本轮新增） |
 | `graceful_shutdown_test.go` | 4 | 优雅停机：抑制遗嘱风暴、MQTT 5.0 DISCONNECT 0x8B（本轮修复回归） |
 | `mqtt31_test.go` | 4 | MQTT 3.1 连接、版本协商与字节级兼容 |
 | `will_test.go` | 4 | 遗嘱触发、优雅断开不触发、遗嘱 QoS |
@@ -220,10 +223,13 @@ func TestTopicTree_Subscribe(t *testing.T) {
 | `pubsub_test.go` | 3 | 基础发布-订阅、自发布投递、MQTT 5.0 No Local |
 | `qos_test.go` | 3 | QoS 0 / 1 / 2 完整流程 |
 | `session_expiry_test.go` | 3 | 会话过期与清理 |
+| `protocol_violation_disconnect_test.go` | 3 | 拆链前确定性发出 DISCONNECT：二次 CONNECT 0x82、未映射 Topic Alias 0x82，以及二次 CONNECT 与 will 语义共存（本轮修复回归） |
 | `lifecycle_regression_test.go` | 2 | 服务生命周期回归 |
 | `message_expiry_test.go` | 2 | 消息过期（Message Expiry Interval） |
 | `publish_properties_test.go` | 3 | MQTT 5.0 PUBLISH 属性中继：在线投递、QoS 2 中转与版本门控（本轮新增） |
 | `qos1_regression_test.go` | 2 | QoS 1 回归 |
+| `keepalive_disconnect_test.go` | 2 | keepalive 超时回执 0x8D 且 will 仍触发；3.1.1 无服务端 DISCONNECT 的反向对照（本轮新增） |
+| `connect_reject_connack_test.go` | 2 | pre-CONNECT CONNACK：解码失败的 v5 CONNECT 回 0x82/0x81；版本未知或非 5.0 时必须保持静默（本轮新增） |
 | `websocket_test.go` | 2 | WebSocket 传输 |
 | `wss_test.go` | 2 | WSS（WebSocket over TLS） |
 | `connect_test.go` | 1 | CONNECT / CONNACK 握手完整流程 |
@@ -231,7 +237,7 @@ func TestTopicTree_Subscribe(t *testing.T) {
 | `request_response_test.go` | 1 | 请求 / 响应模式（Response Topic） |
 | `subscription_id_test.go` | 1 | MQTT 5.0 Subscription Identifier |
 | `write_queue_test.go` | 1 | 写队列与背压 |
-| **合计** | **147** | |
+| **合计** | **159** | |
 
 具体测试函数名可用 `go test -list '.*' ./tests/integration/...` 列出。本表**不逐条维护函数名**，
 以免每次新增用例都要同步文档、产生漂移；只维护"文件 -> 数量 -> 语义域"这一层。
@@ -462,7 +468,7 @@ make ci                # CI 完整流水线
 
 ## 缺陷回归测试
 
-审查过程中确认的缺陷必须先在 `tests/defects/` 中添加最小复现，再修复代码。当前回归项（8 个在 `tests/defects/`，另 21 个在所属包内）：
+审查过程中确认的缺陷必须先在 `tests/defects/` 中添加最小复现，再修复代码。当前回归项（8 个在 `tests/defects/`，另 22 个在所属包内）：
 
 | 位置 | 测试函数 | 覆盖缺陷 |
 |------|----------|----------|
@@ -495,6 +501,7 @@ make ci                # CI 完整流水线
 | `protocol/` | `protocol.TestPropertyLegalityMatchesTable24`、`protocol.TestDecodeRejectsPropertyNotValidForPacketType`、`protocol.TestDecodeRoundTripsServerReference` | 解码器只认属性 ID 的数据类型、从不校验它是否属于该报文类型，违反 §2.2.2.2（此错误是 0x81 Malformed Packet，与重复属性的 0x82 分属不同 reason code）。该检查当场抓出 broker 把 CONNECT 专有的 `Request Response Information`（0x19）写进 CONNACK：合规客户端必须判其为 Malformed Packet 并断连，而本地单测因共用同一个宽松解码器而全绿。另补上 `Server Reference`（0x1C，CONNACK / DISCONNECT）—— 它在常量、类型表、结构、解码 switch 四处全缺，使重定向流程整包解码失败 |
 | `tests/integration/` | `integration.TestRequestResponseInformation` | 该测试原先断言 CONNACK 回显 `Request Response Information`（0x19），而 Table 2-4 把 0x19 归为 CONNECT 专有 —— 等于把违规行为钉成了预期契约。现改为断言合规契约：CONNACK 带 `Response Information`（0x1A）且不带 0x19 |
 | `protocol/` | `protocol.TestEncodeLocusMatchesTable24`、`protocol.TestPropertyProbesCoverPropertyLoci`、`protocol.TestEncodeRejectsConnectOnlyPropertyOnConnAck` | 编码端从不校验属性归属，是上一行 0x19 缺陷逃过全部单测的根因：`encodeProperties` 只写调用方给的字段，只有真实对端才会拒绝。现与解码端共用同一张 `propertyLoci` 表，在写出前按 `locus` 校验并返回 `ErrMalformedPacket`（与解码端同分类，§2.2.2.2），使两侧对称；`TestPropertyProbesCoverPropertyLoci` 锁定探针表与 Table 2-4 成员完全一致，防止新增属性静默绕过校验。顺带修正 `TestPropertySectionVersionGatedAcrossPackets` 的 fixture —— 它原先拿 PUBLISH 专有的 Content Type 当全部 9 种报文的属性，等于把非法组合钉成了脚手架 |
+| `tests/integration/` | `integration.TestSecondConnectReceivesDisconnectBeforeClose`、`integration.TestUnknownTopicAliasReceivesDisconnectBeforeClose` | 服务端 DISCONNECT 与随后的拆链互相竞争：两条路径都是先 `writePacket` 把报文投进写队列、再立刻关连接（`closeProtocolViolation` 直接 `cs.conn.Close()`，二次 CONNECT 走 `abnormalDisconnect` 关闭 `cs.stopWrites`），而写循环的 `select` 在「队列里有报文」与「拆链信号已就绪」之间随机选择，报文只有约一半概率真正上线缆。探针实测：把 `sendDisconnectBeforeClose` 换回 `writePacket` 后 `-count=30` 出现 59 次 `expected a DISCONNECT 0x82, got EOF`。现由写协程同步交接（`clientState.syncWrites` + `writeFinal`），确认写完才拆链，且不引入新锁、不让报文与队列中的其他报文在线缆上交错 |
 
 运行方式：
 

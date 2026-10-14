@@ -444,9 +444,13 @@ func (r *Registry) Select(conn PeekConn, bound string) (Adapter, error)
 | 14 | KeepAlive 处理 | 1.5× deadline | 同 3.1 | 同 + `Server Keep Alive` 属性 | **已实现** | `broker/broker.go:1069-1077`（1.5×）；5.0 属性 `broker/broker.go:465-471` |
 | 15 | Topic 长度与通配符语义 | 受 RemainingLength 约束；`+`/`#` 同 | 明确 UTF-8；过滤语义同 | 同 + Shared / Subscription Identifier / Topic Alias | **已实现** | `protocol/codec.go:308-327`（≤65535）；`protocol/topic.go`；`broker/broker.go:1231-1259` |
 | 16 | UTF-8 字符串校验 | 未强制（**待查证规范**） | 强制 UTF-8 | 强制 UTF-8 | **已实现**（对 3.1 更严） | `protocol/codec.go:293-306` |
-| 17 | 服务端 → 客户端 DISCONNECT | 3.1 允许（无 reason，**待查证规范**是否定义） | **3.1.1 无**服务端 DISCONNECT | 有（可带 reason/properties） | **半实现**（仅 5.0 发 DISCONNECT；3.1/3.1.1 直接关闭——对 3.1.1 正确，对 3.1 保守） | `broker/broker.go:1187`、`:1431`、`:1169-1176` |
+| 17 | 服务端 → 客户端 DISCONNECT | 3.1 允许（无 reason，**待查证规范**是否定义） | **3.1.1 无**服务端 DISCONNECT | 有（可带 reason/properties） | **已实现**（`Spec.ServerDisconnect` 门控 4 条拆链路径，各带规范要求的原因码；3.1.1 保持裸关闭） | `broker/broker.go:1305`（keepalive 超时 0x8D）、`:1327`（解码失败 0x81/0x82/0x95）、`:1451`（二次 CONNECT 0x82）、`:1709`（`closeProtocolViolation` 0x82） |
 | 18 | 服务端分配 ClientID 上报 | 无 | 无（隐式分配） | `Assigned Client Identifier` 属性 | **已实现** | `broker/broker.go:402-404`、`:2252-2254` |
 | 19 | 属性 / Reason Code / Topic Alias / AUTH | 无 | 无 | 有 | **已实现** | `protocol/codec.go:55-121`、`protocol/publish.go:41`、`protocol/subscribe.go:30` 等按 `protocolVersion` 门控 |
+
+> **拆链回执的补齐（本轮）**：上表 #17 的 `Spec.ServerDisconnect` 门控此前只覆盖 2 条显式路径，另有两条路径是「有原因码却没告诉对端」——解码失败（§4.13.1 对 CONNECT 之后的任意报文 SHOULD 发 DISCONNECT 带原因码）与 keepalive 超时（§3.1.2.10 与 [MQTT-3.1.2-22]：关闭是 MUST，回执是 MAY）。现在 4 条路径全部经由 `sendDisconnectBeforeClose` 确认写完再拆链（否则写队列与紧随的 close 竞争，报文只有约一半概率真正上线缆），原因码分别为 0x8D / 0x81·0x82·0x95 / 0x82 / 0x82；四条都仍走 `abnormalDisconnect`，will 照常触发。
+>
+> CONNECT **本身**的解码错误是另一条独立路径：它产生不了会话，之后的任何报文都无从承载诊断信息，因此由 `broker/server.go` 的 `rejectConnect` 回一个 pre-CONNECT CONNACK（§4.13.1 的 MAY），门控相应换成 `Spec.ConnAckHasReasonCode`。门控必须是能力查询而不是版本值比较——`encodeConnAck` 无条件把 `ReasonCode` 写到第 2 字节，用 3.1.1 的 codec 编 0x82 会写出该版本并未定义的返回码；而失败发生在版本字节之前时 codec 仍是 3.1.1 默认值，于是自动保持静默。
 
 ### 3.5 差异矩阵结论
 
