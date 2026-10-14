@@ -623,11 +623,8 @@ func (c *MQTTClient) handlePublish(conn net.Conn, pkt *protocol.PublishPacket) {
 			c.mu.Unlock()
 			// Duplicate detected; still send PUBREC but skip onMessage delivery
 			c.ackOnGen(conn, &protocol.PubRecPacket{
-				FixedHeader: protocol.FixedHeader{
-					PacketType: protocol.PacketTypePubRec,
-					QoS:        1,
-				},
-				PacketID: pkt.PacketID,
+				FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePubRec},
+				PacketID:    pkt.PacketID,
 			})
 			return
 		}
@@ -651,14 +648,17 @@ func (c *MQTTClient) handlePublish(conn net.Conn, pkt *protocol.PublishPacket) {
 		})
 	}
 
-	// Send PUBREC for QoS 2
+	// Send PUBREC for QoS 2. PUBREC's fixed-header flags are reserved 0b0000
+	// (MQTT 3.1.1 Table 2.2 / MQTT 5.0 Table 2-2) -- only PUBREL, SUBSCRIBE
+	// and UNSUBSCRIBE carry 0b0010. Asking for QoS 1 here flipped that
+	// reserved bit, so every peer that validates the fixed header
+	// (protocol.validateFixedHeaderFlags -- including our own broker) answered
+	// with ErrInvalidPacket and dropped the connection, which silently killed
+	// the subscription right after the first QoS 2 delivery.
 	if pkt.FixedHeader.QoS == 2 {
 		c.ackOnGen(conn, &protocol.PubRecPacket{
-			FixedHeader: protocol.FixedHeader{
-				PacketType: protocol.PacketTypePubRec,
-				QoS:        1,
-			},
-			PacketID: pkt.PacketID,
+			FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePubRec},
+			PacketID:    pkt.PacketID,
 		})
 	}
 }
