@@ -24,6 +24,7 @@ type Properties struct {
 	WillDelayInterval      *uint32
 	RequestResponseInfo    *byte  // MQTT 5.0: 0=don't send ResponseInfo, 1=request ResponseInfo
 	ResponseInfo           string // MQTT 5.0: used as basis for creating response topic
+	ServerReference        string // MQTT 5.0: redirect target for reason 0x9C/0x9D
 	ReceiveMaximum         *uint16
 	TopicAliasMaximum      *uint16
 	TopicAlias             *uint16
@@ -60,6 +61,7 @@ const (
 	PropWillDelayInterval      byte = 0x18
 	PropRequestResponseInfo    byte = 0x19 // MQTT 5.0 §3.1.2.11.6
 	PropResponseInfo           byte = 0x1A // MQTT 5.0 §3.2.2.3.3
+	PropServerReference        byte = 0x1C // MQTT 5.0: CONNACK / DISCONNECT redirect
 	PropReceiveMaximum         byte = 0x21
 	PropTopicAliasMax          byte = 0x22
 	PropTopicAlias             byte = 0x23
@@ -73,47 +75,58 @@ const (
 	PropReasonString           byte = 0x1F
 )
 
-// propertyType maps property ID to its data type size for skipping unknowns.
-// MQTT 5.0 spec Table 2-6: Property data types.
-type propType int
+// propertyLocusSet is a bit set over the locus values, recording which property
+// sections one Identifier is permitted in.
+type propertyLocusSet uint16
 
-const (
-	propTypeByte           propType = iota // 1 byte
-	propTypeUInt16                         // 2 bytes big-endian
-	propTypeUInt32                         // 4 bytes big-endian
-	propTypeVarInt                         // variable byte integer
-	propTypeUTF8String                     // 2-byte length + string
-	propTypeBinaryData                     // 2-byte length + data
-	propTypeUTF8StringPair                 // 2-byte length + string, twice
-)
+func locusBit(l propertyLocus) propertyLocusSet { return 1 << l }
 
-var propTypeMap = map[byte]propType{
-	PropPayloadFormat:          propTypeByte,
-	PropMessageExpiryInterval:  propTypeUInt32,
-	PropContentType:            propTypeUTF8String,
-	PropResponseTopic:          propTypeUTF8String,
-	PropCorrelationData:        propTypeBinaryData,
-	PropSubscriptionIdentifier: propTypeVarInt,
-	PropSessionExpiryInterval:  propTypeUInt32,
-	PropAssignedClientID:       propTypeUTF8String,
-	PropServerKeepAlive:        propTypeUInt16,
-	PropAuthMethod:             propTypeUTF8String,
-	PropAuthData:               propTypeBinaryData,
-	PropRequestProblemInfo:     propTypeByte,
-	PropWillDelayInterval:      propTypeUInt32,
-	PropRequestResponseInfo:    propTypeByte,
-	PropResponseInfo:           propTypeUTF8String,
-	PropReceiveMaximum:         propTypeUInt16,
-	PropTopicAliasMax:          propTypeUInt16,
-	PropTopicAlias:             propTypeUInt16,
-	PropMaximumQoS:             propTypeByte,
-	PropRetainAvailable:        propTypeByte,
-	PropUserProperty:           propTypeUTF8StringPair,
-	PropMaximumPacketSize:      propTypeUInt32,
-	PropWildcardSubAvailable:   propTypeByte,
-	PropSubIDAvailable:         propTypeByte,
-	PropSharedSubAvailable:     propTypeByte,
-	PropReasonString:           propTypeUTF8String,
+// allLoci is every locus. Table 2-4 lists User Property for all fourteen packet
+// types that carry a property section; the eleven loci are those fourteen with
+// the four-member acknowledgement family collapsed into locusAck.
+const allLoci = propertyLocusSet(1)<<(locusAuth+1) - 1
+
+// propertyLoci records, per Table 2-4, which property sections each Identifier
+// is valid in.
+//
+// This is the rule §2.2.2.2 states in one sentence for the whole protocol: "A
+// Control Packet which contains an Identifier which is not valid for its packet
+// type, or contains a value not of the specified data type, is a Malformed
+// Packet. If received, use a CONNACK or DISCONNECT packet with Reason Code 0x81
+// (Malformed Packet)". An Identifier absent from this table is not valid for any
+// packet type and takes the same answer, which is why the table doubles as the
+// "is this Identifier defined at all" test: MQTT 5.0 defines no property a peer
+// may send in any packet type, so an unknown Identifier is not something to skip
+// for forward compatibility.
+var propertyLoci = map[byte]propertyLocusSet{
+	PropPayloadFormat:          locusBit(locusPublish) | locusBit(locusWill),
+	PropMessageExpiryInterval:  locusBit(locusPublish) | locusBit(locusWill),
+	PropContentType:            locusBit(locusPublish) | locusBit(locusWill),
+	PropResponseTopic:          locusBit(locusPublish) | locusBit(locusWill),
+	PropCorrelationData:        locusBit(locusPublish) | locusBit(locusWill),
+	PropSubscriptionIdentifier: locusBit(locusPublish) | locusBit(locusSubscribe),
+	PropSessionExpiryInterval:  locusBit(locusConnect) | locusBit(locusConnAck) | locusBit(locusDisconnect),
+	PropAssignedClientID:       locusBit(locusConnAck),
+	PropServerKeepAlive:        locusBit(locusConnAck),
+	PropAuthMethod:             locusBit(locusConnect) | locusBit(locusConnAck) | locusBit(locusAuth),
+	PropAuthData:               locusBit(locusConnect) | locusBit(locusConnAck) | locusBit(locusAuth),
+	PropRequestProblemInfo:     locusBit(locusConnect),
+	PropWillDelayInterval:      locusBit(locusWill),
+	PropRequestResponseInfo:    locusBit(locusConnect),
+	PropResponseInfo:           locusBit(locusConnAck),
+	PropServerReference:        locusBit(locusConnAck) | locusBit(locusDisconnect),
+	PropReasonString: locusBit(locusConnAck) | locusBit(locusAck) | locusBit(locusSubAck) |
+		locusBit(locusUnsubAck) | locusBit(locusDisconnect) | locusBit(locusAuth),
+	PropReceiveMaximum:       locusBit(locusConnect) | locusBit(locusConnAck),
+	PropTopicAliasMax:        locusBit(locusConnect) | locusBit(locusConnAck),
+	PropTopicAlias:           locusBit(locusPublish),
+	PropMaximumQoS:           locusBit(locusConnAck),
+	PropRetainAvailable:      locusBit(locusConnAck),
+	PropUserProperty:         allLoci,
+	PropMaximumPacketSize:    locusBit(locusConnect) | locusBit(locusConnAck),
+	PropWildcardSubAvailable: locusBit(locusConnAck),
+	PropSubIDAvailable:       locusBit(locusConnAck),
+	PropSharedSubAvailable:   locusBit(locusConnAck),
 }
 
 // propertyLocus names the packet (or the CONNECT Will) whose property section
@@ -145,8 +158,8 @@ const (
 // maxPropertyID bounds every Identifier Table 2-4 defines, which is also the
 // largest Identifier this version of the protocol uses: "all of the Property
 // Identifiers are one byte long" (non-normative comment on §2.2.2.2). It sizes
-// the occurrence bitmap in decodeProperties and lets an out-of-range Identifier
-// be told apart from a defined one before that bitmap is indexed.
+// the occurrence bitmap in decodeProperties; the propertyLoci lookup rejects an
+// Identifier outside the table before that bitmap is indexed.
 const maxPropertyID = 0x2A
 
 // propertyMayRepeat reports whether propID may appear more than once in the
@@ -207,17 +220,26 @@ func (c *Codec) decodeProperties(r io.Reader, locus propertyLocus) (*Properties,
 
 	props := &Properties{}
 	// seen records the Identifiers already consumed in this section so a repeat
-	// can be rejected. A plain array indexed by Identifier is enough: the range
-	// test below is what makes the index safe, and it keeps the whole check
-	// allocation-free and local to one decodeProperties call.
+	// can be rejected. A plain array indexed by Identifier is enough: the
+	// propertyLoci lookup below is what makes the index safe, and it keeps the
+	// whole check allocation-free and local to one decodeProperties call.
 	var seen [maxPropertyID + 1]bool
 	for reader.Len() > 0 {
 		propType, err := reader.ReadByte()
 		if err != nil {
 			return nil, err
 		}
-		if propType > maxPropertyID {
+		// §2.2.2.2: an Identifier that is not valid for its packet type is a
+		// Malformed Packet, answered with 0x81. An Identifier outside Table 2-4
+		// is not valid for any packet type and gets the same answer -- MQTT 5.0
+		// defines no property a peer may send in every packet type, so there is
+		// nothing that has to be skipped for forward compatibility.
+		allowed, defined := propertyLoci[propType]
+		if !defined {
 			return nil, fmt.Errorf("%w: unknown property ID 0x%02X", ErrMalformedPacket, propType)
+		}
+		if allowed&locusBit(locus) == 0 {
+			return nil, fmt.Errorf("%w: property 0x%02X is not valid in this packet type", ErrMalformedPacket, propType)
 		}
 		// Repeating a property Table 2-4 allows only once is a Protocol Error,
 		// not a malformed packet: the bytes parse and the field is well typed,
@@ -334,6 +356,12 @@ func (c *Codec) decodeProperties(r io.Reader, locus propertyLocus) (*Properties,
 				return nil, err
 			}
 			props.ResponseInfo = v
+		case PropServerReference:
+			v, err := readStringFromReader(reader)
+			if err != nil {
+				return nil, err
+			}
+			props.ServerReference = v
 		case PropReceiveMaximum:
 			v, err := readUint16FromReader(reader)
 			if err != nil {
@@ -434,46 +462,15 @@ func (c *Codec) decodeProperties(r io.Reader, locus propertyLocus) (*Properties,
 			}
 			props.ReasonString = v
 		default:
-			// Unknown property — skip per MQTT-1.5.5-1
-			if err := skipPropertyValue(reader, propType); err != nil {
-				return nil, err
-			}
+			// Unreachable: propertyLoci lists exactly the Identifiers the cases
+			// above handle, and an Identifier outside that table is rejected
+			// before the switch is reached. Kept as an error rather than a
+			// silent skip so that adding an Identifier to the table without a
+			// matching case fails loudly instead of dropping its value.
+			return nil, fmt.Errorf("%w: property 0x%02X has no decoder", ErrMalformedPacket, propType)
 		}
 	}
 	return props, nil
-}
-
-// skipPropertyValue skips an unknown property's value based on its type.
-// Returns an error for completely unrecognized property IDs.
-func skipPropertyValue(r *bytes.Reader, propID byte) error {
-	pt, ok := propTypeMap[propID]
-	if !ok {
-		return fmt.Errorf("protocol: unknown property ID 0x%02X with unrecognized data type", propID)
-	}
-	switch pt {
-	case propTypeByte:
-		_, err := r.ReadByte()
-		return err
-	case propTypeUInt16:
-		_, err := r.Seek(2, 1)
-		return err
-	case propTypeUInt32:
-		_, err := r.Seek(4, 1)
-		return err
-	case propTypeVarInt:
-		_, err := readVarIntFromReader(r)
-		return err
-	case propTypeUTF8String, propTypeBinaryData:
-		_, err := readBinaryDataFromReader(r) // same format: 2-byte len + data
-		return err
-	case propTypeUTF8StringPair:
-		if _, err := readBinaryDataFromReader(r); err != nil {
-			return err
-		}
-		_, err := readBinaryDataFromReader(r)
-		return err
-	}
-	return nil
 }
 
 // writePropertySection writes the MQTT 5 property section of a packet whose
@@ -636,6 +633,14 @@ func (c *Codec) encodeProperties(w io.Writer, props *Properties) error {
 			return err
 		}
 		if err := writeString(&buf, props.ResponseInfo); err != nil {
+			return err
+		}
+	}
+	if props.ServerReference != "" {
+		if err := buf.WriteByte(PropServerReference); err != nil {
+			return err
+		}
+		if err := writeString(&buf, props.ServerReference); err != nil {
 			return err
 		}
 	}

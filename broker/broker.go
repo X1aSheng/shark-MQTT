@@ -2449,13 +2449,6 @@ func (b *Broker) buildConnAckProperties(sess *Session) *protocol.Properties {
 		receiveMax = 65535
 	}
 	maxPktSize := uint32(b.opts.maxPacketSize)
-	// MQTT 5.0 §3.2.2.3.8: only advertise Response Information when the client
-	// requested it, and return the client ID as the basis for building a
-	// response topic (§3.2.2.3.9).
-	requestResponseInfo := byte(0)
-	if sess.RequestResponseInfo {
-		requestResponseInfo = 1
-	}
 
 	props := &protocol.Properties{
 		SessionExpiryInterval: &sess.ExpiryInterval,
@@ -2465,8 +2458,17 @@ func (b *Broker) buildConnAckProperties(sess *Session) *protocol.Properties {
 		WildcardSubAvailable:  &wildcardAvailable,
 		SubIDAvailable:        &subIDAvailable,
 		SharedSubAvailable:    &sharedSubAvailable,
-		RequestResponseInfo:   &requestResponseInfo,
 	}
+	// Response Information: the Server may send it only when the client asked
+	// for it with a Request Response Information of 1, and the client ID is the
+	// basis for building a response topic.
+	//
+	// The request itself must NOT be echoed back. Table 2-4 lists Request
+	// Response Information (0x19) for CONNECT only and Response Information
+	// (0x1A) for CONNACK, so a CONNACK carrying 0x19 is a Malformed Packet
+	// (§2.2.2.2) that a conformant client has to reject -- and its content is
+	// redundant anyway, since the presence of Response Information is what
+	// conveys the answer.
 	if sess.RequestResponseInfo {
 		props.ResponseInfo = sess.ClientID
 	}

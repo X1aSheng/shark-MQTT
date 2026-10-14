@@ -7,14 +7,20 @@ import (
 	"github.com/X1aSheng/shark-mqtt/protocol"
 )
 
-// TestRequestResponseInformation verifies the CONNACK honors the client's
-// RequestResponseInformation request (MQTT 5.0 §3.2.2.3.8/.9): when requested,
-// it advertises RequestResponseInfo=1 and returns the client ID as the
-// Response Information base; when not requested, neither is sent.
+// TestRequestResponseInformation verifies the CONNACK answers the client's
+// request for Response Information: when requested, the CONNACK carries
+// Response Information built from the client ID; when not requested, it carries
+// none.
+//
+// The request property itself must never be echoed: Table 2-4 defines Request
+// Response Information (0x19) for CONNECT only and Response Information (0x1A)
+// for CONNACK, so a CONNACK carrying 0x19 is a Malformed Packet (§2.2.2.2) that
+// a conformant client has to reject. This test used to assert the echo, which
+// pinned a CONNACK no conformant peer would accept.
 func TestRequestResponseInformation(t *testing.T) {
 	broker := testBroker(t)
 
-	// Requested -> CONNACK carries RequestResponseInfo=1 and ResponseInfo.
+	// Requested -> CONNACK carries ResponseInfo.
 	req := byte(1)
 	conn := dialTestBroker(t, broker)
 	codec := protocol.NewCodec(0)
@@ -44,11 +50,12 @@ func TestRequestResponseInformation(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected CONNACK, got %T", pkt)
 	}
-	if ca.Properties == nil || ca.Properties.RequestResponseInfo == nil || *ca.Properties.RequestResponseInfo != 1 {
-		t.Error("expected RequestResponseInfo=1 in CONNACK when requested")
+	if ca.Properties == nil || ca.Properties.ResponseInfo != "rr-client" {
+		t.Errorf("expected ResponseInfo %q, got %+v", "rr-client", ca.Properties)
 	}
-	if ca.Properties.ResponseInfo != "rr-client" {
-		t.Errorf("expected ResponseInfo %q, got %q", "rr-client", ca.Properties.ResponseInfo)
+	if ca.Properties != nil && ca.Properties.RequestResponseInfo != nil {
+		t.Errorf("CONNACK must not carry Request Response Information (0x19), got %d",
+			*ca.Properties.RequestResponseInfo)
 	}
 	conn.Close()
 
