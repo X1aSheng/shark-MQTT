@@ -7,6 +7,60 @@ This project uses semantic versioning. Pre-release tags use the form
 
 ## Unreleased
 
+### Shutdown drain correctness (2026-10-15)
+
+- **In-flight messages are drained BEFORE the sockets close.** `Stop` used to
+  close every client connection and only then poll the in-flight QoS 1/2 count
+  down to zero. Those acknowledgments (PUBACK/PUBREC) can only arrive on a live
+  connection, so the wait could never succeed: it always ran to its deadline.
+  `api.Broker.Stop` was worse -- it called `srv.Stop` (closing all sockets) and
+  only afterwards `broker.Stop`, leaving the drain no window at all. Every
+  rolling restart paid the full timeout for nothing. The order is now
+  `BeginShutdown` -> drain -> close sockets, so a well-behaved client can finish
+  its handshake and the count can genuinely reach zero.
+- **`drain_timeout` is configurable.** The 5s bound was hard-coded. Added
+  `broker.WithDrainTimeout` (default 5s; `0` closes without waiting; negative
+  skips the wait) plus `config.drain_timeout` / `MQTT_DRAIN_TIMEOUT`. Timing out
+  with messages still in flight is logged and counted, never fatal: a client
+  that stops acknowledging must not be able to hold shutdown open.
+- **`broker.DrainInflight` is exported** for embedders that own the network
+  server and must drain before closing sockets themselves. An internal flag
+  keeps `Stop` from waiting a second time, and `Start` resets it so a
+  `Stop` -> `Start` cycle gets a fresh window.
+- **Sockets are closed outside `b.mu`.** `Stop` held the broker mutex while
+  calling `conn.Close()` on every client, so N syscalls ran back to back under
+  the lock and serialized every concurrent connect/registration path behind the
+  slowest close. The connection map is now detached under the lock and closed
+  outside it.
+- Two regression tests in `tests/integration/drain_test.go`: the subscriber's
+  socket must still accept a PUBACK while the drain is in progress (this is what
+  distinguishes the old and new order), and a silent client must still be cut
+  off within the configured timeout.
+
+### Error visibility & context discipline (2026-10-15)
+
+- **Outbound QoS tracking failures are reported.** `doDeliver` discarded the
+  error from `TrackOutboundQoS1/2` with `_ =`. A failure means the delivery is
+  not registered for retry, so a lost PUBACK would silently drop the message.
+  The delivery still goes out, but the condition now increments
+  `errors_total{component="qos_track"}` and logs a warning.
+- **`flushBufferedOutbound` respects `PopOutbound`'s ok result.** It ignored the
+  flag and passed the zero-value message to `doDeliver` if a concurrent drain
+  won the race.
+- **Store calls on the CONNECT path use the connection context.** The Clean
+  Start branch mixed the per-connection `ctx` with the broker-wide `b.ctx` in the
+  same function, so those store calls could not be cancelled with the
+  connection. `b.ctx` now stays with the background loops that own it.
+
+### API surface (2026-10-15)
+
+- **`api.Broker.Broker()` replaced by `Core()`.** It returned the concrete
+  `*broker.Broker`, letting callers bypass the lifecycle this wrapper owns
+  (shutdown order, drain, health server) and mutate core state behind its back.
+  `Core()` returns a narrow read-only interface (`IsStarted`, `Metrics`,
+  `BeginShutdown`, `DrainInflight`); extend it when a capability genuinely needs
+  exposing.
+
 ### Lifecycle & race fixes (2026-10-13)
 
 - **Health/metrics listener is closed by Stop, not merely shut down.**

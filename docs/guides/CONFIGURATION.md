@@ -63,6 +63,7 @@ export MQTT_CONNECT_TIMEOUT="15s"
 | `max_packet_size` | int | `262144` | Maximum packet size in bytes |
 | `keep_alive` | uint16 | `60` | Keep-alive interval in seconds |
 | `write_queue_size` | int | `256` | Per-connection write queue size |
+| `drain_timeout` | duration | `5s` | How long shutdown waits for in-flight QoS 1/2 messages to be acknowledged before closing sockets anyway. `0` closes immediately |
 | `ws_listen_addr` | string | - | MQTT-over-WebSocket listen address (empty disables, R5) |
 | `wss_listen_addr` | string | - | MQTT-over-TLS-WebSocket (WSS) listen address; requires `tls_enabled` |
 
@@ -237,6 +238,7 @@ All configuration options can be set via environment variables with the `MQTT_` 
 | `MQTT_TLS_CERT_FILE` | `tls_cert_file` |
 | `MQTT_TLS_KEY_FILE` | `tls_key_file` |
 | `MQTT_CONNECT_TIMEOUT` | `connect_timeout` |
+| `MQTT_DRAIN_TIMEOUT` | `drain_timeout` |
 | `MQTT_MAX_CONNECTIONS` | `max_connections` |
 | `MQTT_MAX_PACKET_SIZE` | `max_packet_size` |
 | `MQTT_KEEP_ALIVE` | `keep_alive` |

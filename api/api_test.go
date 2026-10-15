@@ -202,11 +202,19 @@ func TestWithMaxConnections(t *testing.T) {
 	}
 }
 
-func TestBrokerMethod(t *testing.T) {
+func TestCoreMethod(t *testing.T) {
 	b := NewBroker()
-	brk := b.Broker()
-	if brk == nil {
-		t.Error("Broker() returned nil")
+	core := b.Core()
+	if core == nil {
+		t.Fatal("Core() returned nil")
+	}
+	// Core is an interface: the point of the narrow return type is that a
+	// caller cannot reach past this wrapper into core internals.
+	if core.IsStarted() {
+		t.Error("IsStarted() = true on a broker that was never started")
+	}
+	if core.Metrics() == nil {
+		t.Error("Metrics() = nil, want a recorder")
 	}
 }
 
