@@ -50,6 +50,7 @@ type config struct {
 	topic       string
 	pid         int
 	jsonOut     bool
+	latency     bool
 }
 
 var cfg config
@@ -67,6 +68,8 @@ func init() {
 	flag.StringVar(&cfg.topic, "topic", "loadgen/topic", "topic to publish and subscribe")
 	flag.IntVar(&cfg.pid, "pid", 0, "broker PID for resource sampling; 0 finds it automatically")
 	flag.BoolVar(&cfg.jsonOut, "json", false, "emit JSON instead of a table")
+	flag.BoolVar(&cfg.latency, "latency", true, "record end-to-end latency samples; "+
+		"disable at very high subscriber counts, where the recording itself becomes load")
 }
 
 // stats aggregates counters across all connections.
@@ -112,35 +115,61 @@ func main() {
 	subs := make([]*client.MQTTClient, cfg.subscribers)
 
 	// Subscribers first: publishing before anyone listens measures nothing.
+	//
+	// They are established in parallel. At the 2000-connection scale this file
+	// exists to reach, connecting one at a time costs several seconds of TCP
+	// handshake and CONNECT before any load starts, and that setup time is not
+	// what is being measured.
+	var subWG sync.WaitGroup
+	subErr := make(chan error, cfg.subscribers)
+	sem := make(chan struct{}, 256)
 	for i := 0; i < cfg.subscribers; i++ {
-		c, err := dial(fmt.Sprintf("loadgen-sub-%d", i))
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "subscriber %d: %v\n", i, err)
-			os.Exit(1)
-		}
-		subs[i] = c
-		capacity := cfg.rate * int(cfg.duration.Seconds()) / cfg.subscribers / 10
-		if capacity < 1000 {
-			capacity = 1000
-		}
-		latency[i] = make([]int64, 0, capacity)
+		subWG.Add(1)
+		go func(i int) {
+			defer subWG.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 
-		idx := i
-		c.SetOnMessage(func(_ string, _ byte, payload []byte) {
-			st.received.Add(1)
-			if len(payload) < 8 {
+			c, err := dial(fmt.Sprintf("loadgen-sub-%d", i))
+			if err != nil {
+				subErr <- fmt.Errorf("subscriber %d: %w", i, err)
 				return
 			}
-			sent := int64(binary.BigEndian.Uint64(payload[:8]))
-			latency[idx] = append(latency[idx], time.Now().UnixNano()-sent)
-		})
-		if _, err := c.Subscribe(ctx, []client.TopicSubscription{
-			{Topic: cfg.topic, QoS: byte(cfg.qos)},
-		}); err != nil {
-			fmt.Fprintf(os.Stderr, "subscriber %d subscribe: %v\n", i, err)
-			os.Exit(1)
-		}
-		st.connected.Add(1)
+			subs[i] = c
+
+			idx := i
+			c.SetOnMessage(func(_ string, _ byte, payload []byte) {
+				st.received.Add(1)
+				if !cfg.latency || len(payload) < 8 {
+					return
+				}
+				sent := int64(binary.BigEndian.Uint64(payload[:8]))
+				latency[idx] = append(latency[idx], time.Now().UnixNano()-sent)
+			})
+			if _, err := c.Subscribe(ctx, []client.TopicSubscription{
+				{Topic: cfg.topic, QoS: byte(cfg.qos)},
+			}); err != nil {
+				subErr <- fmt.Errorf("subscriber %d subscribe: %w", i, err)
+				return
+			}
+			st.connected.Add(1)
+		}(i)
+	}
+	subWG.Wait()
+	close(subErr)
+	if err := <-subErr; err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	// Latency buffers are sized after connections exist, because a subscriber
+	// count in the thousands makes the per-connection estimate matter.
+	perSub := cfg.rate * int(cfg.duration.Seconds()) / cfg.subscribers / 4
+	if perSub < 512 {
+		perSub = 512
+	}
+	for i := range latency {
+		latency[i] = make([]int64, 0, perSub)
 	}
 
 	// Resource sampling starts before load so the ramp is captured.

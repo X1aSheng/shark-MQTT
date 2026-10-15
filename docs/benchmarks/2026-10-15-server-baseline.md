@@ -197,6 +197,12 @@ The link carries **0.7 - 1.05 MB/s**. The MQTT run above moved exactly
 **1.00 MB/s** of round-trip traffic. The test saturated the link, and every
 throughput figure is a measurement of the WAN path rather than of the broker.
 
+The cause is now confirmed rather than inferred: the ECS instances are
+provisioned with **5 Mbps peak public bandwidth**, which is 0.625 MB/s. The
+measured 0.7-1.05 MB/s sits just above that because a small response benefits
+from the burst allowance; sustained transfer settles at the 0.625 MB/s ceiling,
+and the MQTT run at 1.00 MB/s of round-trip traffic was over it in aggregate.
+
 This also explains why the SSH tunnel and the direct connection land in the same
 place: encryption was never the limitation, the link was. A 4.4 MB payload at
 1 MB/s simply cannot arrive faster than the wire permits.
@@ -209,10 +215,17 @@ Two supporting observations:
   client was not the constraint either.
 
 **A cross-host test needs either the private network or a link that exceeds what
-the broker can produce.** At 1 MB/s the wire tops out near 4,000 messages per
-second of round-trip traffic, which is three orders of magnitude below the
-broker's same-host ceiling. The numbers above are retained as a record of the
-attempt and as a caution, not as broker measurements.
+the broker can produce.** At 0.625 MB/s (5 Mbps) the wire tops out near 2,400
+messages per second of round-trip traffic at 256-byte payloads, which is two
+orders of magnitude below the broker's same-host ceiling. The numbers above are
+retained as a record of the attempt and as a caution, not as broker measurements.
+
+Sizing the link for a real cross-host run: the broker delivers 280,000
+messages/second at 256 bytes, which is roughly 70 MB/s of outbound traffic, or
+about 560 Mbps. At 128 bytes and 275,000 deliveries/second it is still around
+35 MB/s. **Testing this broker across a public link needs at least several
+hundred Mbps, and realistically the private network.** A 5 Mbps link can carry
+about 0.2% of what the broker produces.
 
 ## Broker scaling, and the ceiling this host cannot reach
 

@@ -27,6 +27,14 @@ so a result without it cannot be compared against another run.
 | `C1_tunnel_qos0.json` | 4 | 8 | 0 | 20,000 | 256 B | cross-host, SSH tunnel |
 | `C2_tunnel_qos1.json` | 4 | 8 | 1 | 20,000 | 256 B | cross-host, SSH tunnel |
 | `D1_direct_qos0.json` | 2 | 4 | 0 | 10,000 | 256 B | cross-host, direct 18000 |
+| `P1_sub200.json` | 200 | 10 | 0 | 1,000 | 128 B | same-host, upstream-shaped |
+| `P2_sub2000.json` | 2000 | 10 | 0 | 1,000 | 128 B | same-host, upstream-shaped |
+| `P3_sub2000_5k.json` | 2000 | 10 | 0 | 5,000 | 128 B | same-host, upstream-shaped |
+| `Q1_sub200_5k.json` | 200 | 10 | 0 | 5,000 | 128 B | same-host, upstream-shaped |
+| `P1_sub200.json` | 200 | 10 | 0 | 1,000 | 128 B | same-host, upstream-shaped |
+| `P2_sub2000.json` | 2000 | 10 | 0 | 1,000 | 128 B | same-host, upstream-shaped |
+| `P3_sub2000_5k.json` | 2000 | 10 | 0 | 5,000 | 128 B | same-host, upstream-shaped |
+| `Q1_sub200_5k.json` | 200 | 10 | 0 | 5,000 | 128 B | same-host, upstream-shaped |
 
 "pinned 4/4" means the broker ran on cores 0-3 and the load generator on 4-7.
 "pinned 6/2" means the broker got six cores and the generator two, which turned
@@ -39,6 +47,16 @@ they are kept as a record of that limit. See the baseline document for the
 measurement that establishes it.
 
 Host: 8 vCPU / 16 GB, Ubuntu 26.04, Go 1.26.1. Commit `d5e37f8f9`.
+
+The `P*` and `Q*` files reproduce the scenario shape upstream smart-mqtt
+publishes (128-byte payload, 2000 connections, QoS 0). Their interpretation,
+including why the upstream headline figure could not be matched, is in
+[`../2026-10-15-upstream-comparison.md`](../2026-10-15-upstream-comparison.md).
+
+The `P*` and `Q*` files reproduce the scenario shape upstream smart-mqtt
+publishes (128-byte payload, 2000 connections, QoS 0). Their interpretation,
+including why the upstream headline figure could not be matched, is in
+[`../2026-10-15-upstream-comparison.md`](../2026-10-15-upstream-comparison.md).
 
 Findings and interpretation are in
 [`../2026-10-15-server-baseline.md`](../2026-10-15-server-baseline.md).

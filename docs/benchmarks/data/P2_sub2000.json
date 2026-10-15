@@ -1,0 +1,36 @@
+{
+  "_meta": {
+    "description": "2000 \u8ba2\u9605\u8005 / 10 \u53d1\u5e03\u8005 / 128B / rate 1000\uff08\u4e0a\u6e38\u540c\u89c4\u6a21\uff09",
+    "host": "8 vCPU/16GB same-host",
+    "latency_recording": false,
+    "tool": "tools/loadgen"
+  },
+  "broker_cpu_cores": 4.700288379991785,
+  "broker_pid": 8951,
+  "broker_rss_avg_mb": 105.67001793032787,
+  "broker_rss_peak_mb": 107.609375,
+  "broker_threads_peak": 25,
+  "config": {
+    "addr": "127.0.0.1:18000",
+    "duration_s": 15,
+    "payload": 128,
+    "publishers": 10,
+    "qos": 0,
+    "rate_target": 1000,
+    "subscribers": 2000
+  },
+  "deliver_rate_msg_s": 277113.14462929766,
+  "delivery_ratio": 277.3127791480568,
+  "elapsed_s": 15.01180684,
+  "errors": 0,
+  "latency_max_us": 0,
+  "latency_mean_us": 0,
+  "latency_p50_us": 0,
+  "latency_p90_us": 0,
+  "latency_p999_us": 0,
+  "latency_p99_us": 0,
+  "latency_samples": 0,
+  "received": 4159969,
+  "send_rate_msg_s": 999.2801106412318,
+  "sent": 15001
+}
