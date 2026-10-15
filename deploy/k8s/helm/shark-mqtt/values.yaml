@@ -78,11 +78,41 @@ config:
 # usernames and topic filters.
 management:
   enabled: false
-  # Required whenever the metrics Service is not loopback-only. Put it in a
-  # Secret rather than inline.
+  # Required whenever the metrics Service is not loopback-only.
+  #
+  # An inline token is placed into a chart-managed Secret rather than into the
+  # ConfigMap, so it does not show up in `kubectl describe pod` or in a
+  # `get configmap -o yaml`. For anything beyond a single-cluster smoke test,
+  # prefer existingSecret and let an external secret manager own the value --
+  # a token in values.yaml is a token in your git history.
   token: ""
+  # existingSecret: shark-mqtt-management
   existingSecret: ""
   existingSecretKey: "token"
+
+# Plugins are configured through the environment: the broker reads every config
+# key from env as well as from the config file, so a plugin needs no special
+# chart support beyond passing its variables through.
+#
+# Each entry may set `config` (a ConfigMap named after the plugin, read from
+# its "config" key) and any number of extra environment variables:
+#
+# plugins:
+#   - name: MQTT_AUDIT_PLUGIN
+#     config: true                     # expects ConfigMap "MQTT_AUDIT_PLUGIN"
+#     env:
+#       - name: MQTT_AUDIT_SINK
+#         value: "tcp://audit.internal:9000"
+#   - name: MQTT_BRIDGE_PLUGIN
+#     env:
+#       - name: MQTT_BRIDGE_TARGET
+#         value: "redis://redis:6379"
+plugins: []
+
+# Arbitrary extra environment variables, for settings the chart does not model.
+# For secrets prefer a Secret and use envFrom in a fork of this chart, or add
+# them under a plugin entry above.
+extraEnv: []
 
 # Authentication credentials. Leave empty when config.allowAllAuth is true
 # (development only). For production, create a Secret holding the same YAML

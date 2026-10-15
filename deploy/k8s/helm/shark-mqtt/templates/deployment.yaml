@@ -78,6 +78,49 @@ spec:
               value: {{ .Values.config.logFormat | quote }}
             - name: MQTT_METRICS_ENABLED
               value: {{ .Values.config.metricsEnabled | default true | quote }}
+            {{- if .Values.management.enabled }}
+            # Passed as env so the token never lands in the ConfigMap, where
+            # it would be readable by anyone who can read ConfigMaps in the
+            # namespace and would show up in `kubectl describe pod` output.
+            - name: MQTT_MANAGEMENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "shark-mqtt.fullname" . }}-management
+                  key: token
+                  optional: true
+            {{- else if .Values.management.token }}
+            - name: MQTT_MANAGEMENT_TOKEN
+              value: {{ .Values.management.token | quote }}
+            {{- end }}
+            {{- if and .Values.management.enabled .Values.management.existingSecret }}
+            - name: MQTT_MANAGEMENT_ENABLED
+              value: "true"
+            {{- end }}
+            {{- range .Values.plugins }}
+            {{- /*
+              The env var name is conventionally uppercase (MQTT_AUDIT), but a
+              ConfigMap name must be an RFC 1123 subdomain, so it is lowercased
+              here. Passing the plugin name through verbatim makes the API
+              server reject the Deployment with "a lowercase RFC 1123 subdomain
+              must consist of...", which reads like a values problem rather
+              than a template one.
+            */}}
+            {{- if .config }}
+            - name: {{ .name | quote }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .name | lower | replace "_" "-" | trunc 63 | trimSuffix "-" }}
+                  key: config
+            {{- end }}
+            {{- range .env }}
+            - name: {{ .name | quote }}
+              value: {{ .value | quote }}
+            {{- end }}
+            {{- end }}
+            {{- range .Values.extraEnv }}
+            - name: {{ .name | quote }}
+              value: {{ .value | quote }}
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           securityContext:

@@ -22,7 +22,15 @@ spec:
     - name: mqtt
       protocol: TCP
       port: {{ (index .Values.config.listenAddrs 0) | replace ":" "" | trimPrefix "0.0.0.0" | trimPrefix ":" | int }}
-      targetPort: mqtt-extra-{{ index .Values.config.listenAddrs 0 | replace ":" "-" | replace "." "-" | replace "[" "" | replace "]" "" | trunc 12 | trimSuffix "-" | trimPrefix "-" }}
+      {{- /*
+        targetPort is the NAME "mqtt", not a computed "mqtt-extra-...": the
+        Deployment declares the first listenAddrs entry under the name "mqtt"
+        (see deployment.yaml), so a computed name here points at a port that
+        does not exist. Kubernetes accepts the Service and every endpoint
+        resolves, yet connections are refused -- the pod looks healthy while
+        nothing can reach it.
+      */}}
+      targetPort: mqtt
     {{- else }}
     - name: mqtt
       protocol: TCP

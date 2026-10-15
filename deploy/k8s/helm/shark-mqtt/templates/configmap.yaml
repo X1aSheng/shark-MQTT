@@ -56,11 +56,11 @@ data:
     {{- end }}
     {{- if .Values.management.enabled }}
     management_enabled: true
-    {{- if .Values.management.token }}
-    # Inline token: prefer management.existingSecret in production.
-    management_token: {{ .Values.management.token | quote }}
     {{- end }}
-    {{- end }}
+    {{- /* The token is deliberately NOT written here: a ConfigMap is readable
+         by anyone who can read ConfigMaps in the namespace and is dumped in
+         plain text by `kubectl get cm -o yaml`. It is delivered through a
+         Secret as MQTT_MANAGEMENT_TOKEN instead. */ -}}
     {{- if .Values.auth.existingSecret }}
     auth_file: {{ printf "/etc/shark-mqtt/auth/%s" .Values.auth.fileKey | quote }}
     {{- end }}
