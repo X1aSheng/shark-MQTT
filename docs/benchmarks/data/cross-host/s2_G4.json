@@ -1,0 +1,37 @@
+{
+  "broker_cpu_cores": 4.367915349432619,
+  "broker_pid": 34283,
+  "broker_rss_avg_mb": 30.427131558641975,
+  "broker_rss_peak_mb": 58.5078125,
+  "broker_threads_peak": 25,
+  "config": {
+    "addr": "127.0.0.1:18000",
+    "duration_s": 20,
+    "payload": 32,
+    "publishers": 8,
+    "qos": 0,
+    "rate_target": 40000,
+    "subscribers": 20
+  },
+  "deliver_rate_msg_s": 317570.0950394908,
+  "delivery_ratio": 7.953556588549459,
+  "elapsed_s": 20.004903167,
+  "errors": 0,
+  "latency_max_us": 0,
+  "latency_mean_us": 0,
+  "latency_p50_us": 0,
+  "latency_p90_us": 0,
+  "latency_p999_us": 0,
+  "latency_p99_us": 0,
+  "latency_samples": 0,
+  "received": 6352959,
+  "send_rate_msg_s": 39928.061302372415,
+  "sent": 798757,
+  "_meta": {
+    "run": "G4",
+    "topology": "s2",
+    "loadgen_host": "loadgen and broker both on s2 (47.120.44.128)",
+    "network_path": "same-host loopback",
+    "source": "tools/loadgen -json"
+  }
+}

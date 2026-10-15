@@ -1,0 +1,38 @@
+{
+  "broker_cpu_cores": 0,
+  "broker_pid": 9405,
+  "broker_rss_avg_mb": 1.9453125,
+  "broker_rss_peak_mb": 1.9453125,
+  "broker_threads_peak": 1,
+  "config": {
+    "addr": "47.120.44.128:18000",
+    "duration_s": 20,
+    "payload": 32,
+    "publishers": 8,
+    "qos": 0,
+    "rate_target": 20000,
+    "subscribers": 20
+  },
+  "deliver_rate_msg_s": 237825.12981538018,
+  "delivery_ratio": 11.955780637378105,
+  "elapsed_s": 20.001948506,
+  "errors": 0,
+  "latency_max_us": 0,
+  "latency_mean_us": 0,
+  "latency_p50_us": 0,
+  "latency_p90_us": 0,
+  "latency_p999_us": 0,
+  "latency_p99_us": 0,
+  "latency_samples": 0,
+  "received": 4756966,
+  "send_rate_msg_s": 19892.062009891066,
+  "sent": 397880,
+  "_meta": {
+    "run": "H1",
+    "topology": "s3",
+    "loadgen_host": "loadgen on s3 (8.130.190.141), broker on s2 (47.120.44.128)",
+    "network_path": "cross-machine, public link, RTT 43.2 ms",
+    "note": "bracketed with per-second eth0 TX counters on s2; source of the wire-byte rate",
+    "source": "tools/loadgen -json"
+  }
+}
