@@ -26,8 +26,8 @@
 | **协议内核** | 上一版 T11-T15 全部关闭，本轮**零回归**（全量 `go test ./...` 通过） |
 | **平台化 P0** | 插件体系 / 管理面 / 集群 / 数据出口 —— **本轮仍零推进**（见 §2） |
 | **Go 视角新发现** | **12 项**，其中功能性缺陷 1 项（drain 顺序）、ctx 纪律 3 项、错误可见性 2 项、并发 2 项、API 设计 2 项、性能 1 项、工程债 1 项 |
-| **本轮已落地** | **5 项**（3 个提交），含 1 项此前**无人发现的功能性缺陷** |
-| **本轮遗留** | 7 项 Go 视角 + 上一版 20 项平台化缺口 |
+| **本轮已落地** | **11 项**（10 个提交），含 1 项此前**无人发现的功能性缺陷** |
+| **本轮遗留** | 3 项 Go 视角 + 上一版 16 项平台化缺口（多 listener、连接管理、Topic 统计、P0-3 只读部分本轮关闭） |
 
 **一句话**：本轮最有价值的发现不是任何 Java 对照项，而是 `Stop()` 里
 **"先关连接、再等 inflight 归零"** 的顺序倒置 —— PUBACK 必须走存活连接，
@@ -80,7 +80,7 @@
 | --- | --- | --- | --- | --- |
 | 1 | 插件生命周期与热插拔 | `plugin/spec/Plugin.java` 全套 19 个生命周期方法 | 仅 4 钩子（`plugin/manager.go:15-25`）+ Register/Unregister（`:88-117`） | 否（应补） |
 | 2 | 事件总线 / 消息总线 / Provider | `bus/EventType.java` 15 类事件；`provider/Providers.java` 4 个 Provider | 无（仅同步钩子） | 否（应补） |
-| 3 | HTTP 管理 API + Web 控制台 | `enterprise-plugin/.../openapi/controller/` 9 个 Controller | 仅 `/healthz` `api/api.go:410`、`/readyz` `:414`、`/metrics` `:432` | 部分（可选） |
+| 3 | HTTP 管理 API + Web 控制台 | `enterprise-plugin/.../openapi/controller/` 9 个 Controller | **只读部分已落地**（`8b7ebdd07`）：`/clients`、`/clients/{id}`、`/topics`，默认关闭 + token 保护。写操作与 Web 控制台仍缺 | 部分 |
 | 4 | 集群 | `cluster-plugin/.../Coordinator.java` | `cluster` 生产代码 0 命中；优雅停机 drain 已于本轮补齐（`1ada2b50f`），但节点发现 / delta 广播 / 跨节点路由仍全缺 | 是（已明确暂不做） |
 
 ### 2.3 P1 缺口（8 项，与上一版一致）
@@ -91,7 +91,7 @@
 | 6 | 数据出口：Kafka | `kafka` 0 命中 | 定位为不做 |
 | 7 | 认证：Redis / HTTP 认证器 | 6 种本地实现（Static/AllowAll/DenyAll/Chain/File/Noop），**无 Redis / HTTP backed**；`EnhancedAuthenticator` 仅接口定义、仓内零实现 | 部分 |
 | 8 | 连接防抖（Flapping） | `ConnAckBanned = 0x8A`（`protocol/constants.go:98`）常量全仓仅定义处 1 处引用；`rate_limit.go` 是**全局维度**限流（不分 IP / clientID），超限仅拒本次连接、无累计惩罚、无自动解封 | 否（应补） |
-| 9 | 多 listener 数组 | `ListenAddr` 为单 `string`（`config/config.go:21`）；`MQTTServer.listener` 单数（`broker/server.go:27`）；WS/WSS 各仅 1 个槽位 | 否（应补） |
+| 9 | 多 listener 数组 | **已落地**（`0bfafa040`）：`listen_addrs` / `ws_listen_addrs` / `wss_listen_addrs` 数组形式 + `Addrs()`；绑定失败回滚、Stop 关闭全部端口 | 已完成 |
 | 10 | 配置 UI 元数据 Schema | `config/` 内无 schema（仅 struct tag + `Validate()`） | 否 |
 | 11 | 插件市场 / 本地上传 | 无 | 否（可选） |
 | 12 | 插件运行时启停 / 配置热改 | 无；broker 配置亦无热重载 | 否 |
@@ -104,14 +104,14 @@
 | 15 | 版本检查 / 更新提示 | 无 | 否 |
 | 16 | 指标项丰富度 | 12 项（`pkg/metrics/prometheus.go:67-138`），已含 Histogram；JVM/CPU gauge 不适用 Go | 部分 |
 | 19 | 内置压测（运行期可启动） | `loadtest/stress` 0 命中；压测仅存在于离线 `tests/bench`（`go test -bench`） | 部分 |
-| 20 | 连接管理（列表 / 强制断开） | `Broker` 导出方法仅 7 个（本轮后为 10个）；`disconnect`/`gracefulDisconnect` 全为非导出，**无 `DisconnectClient(clientID)` 之类管理入口** | 否 |
-| 21 | Topic 统计 / 订阅关系查询 | 仅 `TopicTree.SubscriberCount()` 聚合计数，无按 topic 查询；`ListSessions`/`ListMessages` 在 api/cmd 层 0 调用 | 否 |
+| 20 | 连接管理（列表 / 强制断开） | **已落地**（`cb35845f9` `8b7ebdd07`）：`DisconnectClient` / `DisconnectAllClients` 导出并加入 `api.Core`；`GET /clients` 列表 | 已完成 |
+| 21 | Topic 统计 / 订阅关系查询 | **已落地**（`8b7ebdd07`）：`TopicTree.Stats()` + `GET /topics`，含共享订阅 group 拆分 | 已完成 |
 
 **已关闭**：`AI Agent / MCP`（不适用）、`License 授权`（不适用，MIT）、`License 连接数限制`（不适用）。
 
 ---
 
-## 3. 本轮已落地的修复（3 个提交）
+## 3. 本轮已落地的修复（10 个提交）
 
 ### 3.1 `f74afec87` — 错误可见性与 ctx 纪律
 
