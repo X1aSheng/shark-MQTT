@@ -132,9 +132,13 @@ type Broker struct {
 	// would flood every will topic ("will storm") even though the clients did
 	// not fail. Cleared again by Start so a Stop->Start cycle behaves normally.
 	shuttingDown atomic.Bool
-	ctx          context.Context
-	cancel       context.CancelFunc
-	opts         brokerOptions
+	// drained records that the in-flight drain already ran for this run, so an
+	// embedder that drains before closing its sockets does not pay the wait
+	// twice when Stop follows. Cleared by Start, alongside shuttingDown.
+	drained atomic.Bool
+	ctx     context.Context
+	cancel  context.CancelFunc
+	opts    brokerOptions
 
 	// loops tracks the background goroutines started by Start (session/retained
 	// cleanup and the $SYS status publisher). Stop waits on it before returning:
@@ -904,6 +908,7 @@ func (b *Broker) Start() error {
 	// cycle (Stop cancels the previous context).
 	b.ctx, b.cancel = context.WithCancel(context.Background())
 	b.shuttingDown.Store(false) // a Stop->Start cycle is not a shutdown any more
+	b.drained.Store(false)      // the next shutdown gets its own drain window
 	b.startedAt = time.Now()
 	b.qos.Start()
 	b.startLoop(b.sessionCleanupLoop)
@@ -1214,37 +1219,114 @@ func (b *Broker) Stop() {
 	// 1. Suppress wills and tell clients the server is going away.
 	b.BeginShutdown()
 
-	// 2. Close all client connections to stop readLoops so no new messages can
-	// arrive during the drain phase.
+	// 2. Drain in-flight messages BEFORE closing the sockets. Acknowledgments
+	// (PUBACK/PUBREC) can only arrive on a live connection, so closing first
+	// guaranteed the old wait below ran to its deadline no matter how much was
+	// in flight -- it was pure dead time. Draining first lets a well-behaved
+	// client finish its QoS 1/2 handshake and lets the count reach zero for
+	// real.
+	//
+	// b.shuttingDown is already set (step 1), so readLoops stop taking new work
+	// and wills stay suppressed throughout.
+	b.drainInflight(b.opts.drainTimeout)
+
+	// 3. Close all client connections to stop the readLoops for good.
+	//
+	// The map is detached under the lock and the sockets are closed outside it:
+	// conn.Close() is a syscall, and doing N of them while holding b.mu
+	// serializes every concurrent HandleConnection / registration path behind
+	// the slowest close. Detaching first also makes the shutdown state visible
+	// to new connections immediately, instead of after the last close returns.
+	type pendingClose struct {
+		id         string
+		conn       net.Conn
+		stopWrites chan struct{}
+		hasStop    bool
+	}
 	b.mu.Lock()
+	pending := make([]pendingClose, 0, len(b.connections))
 	for id, cs := range b.connections {
-		if err := cs.conn.Close(); err != nil {
-			b.logger.Debug("failed to close client connection", "clientID", id, "error", err)
-		}
-		if cs.out != nil {
-			close(cs.stopWrites)
-		}
+		p := pendingClose{id: id, conn: cs.conn, stopWrites: cs.stopWrites, hasStop: cs.out != nil}
+		pending = append(pending, p)
 		delete(b.connections, id)
 	}
 	b.mu.Unlock()
 
-	// 3. Drain remaining in-flight messages (they are already queued,
-	// no new ones can arrive since connections are closed).
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		total := 0
-		for _, clientID := range b.sessions.ListSessions() {
-			total += b.qos.InflightCount(clientID)
+	for _, p := range pending {
+		if err := p.conn.Close(); err != nil {
+			b.logger.Debug("failed to close client connection", "clientID", p.id, "error", err)
 		}
-		if total == 0 {
-			break
+		if p.hasStop {
+			close(p.stopWrites)
 		}
-		time.Sleep(100 * time.Millisecond)
 	}
 
 	b.qos.Stop()
 	b.will.Stop()
 	b.started.Store(false) // allow re-Start after Stop
+}
+
+// DrainInflight waits for every client's unacknowledged QoS 1/2 messages to be
+// settled, bounded by the configured drain timeout (see WithDrainTimeout).
+//
+// It must run while the client sockets are still open. Embedders that own the
+// network server call this before closing sockets, then call Stop; Stop is
+// idempotent about draining, so calling both does not wait twice.
+func (b *Broker) DrainInflight() {
+	b.drainInflight(b.opts.drainTimeout)
+}
+
+// drainInflight waits until no client has unacknowledged QoS 1/2 messages, or
+// until timeout elapses. It must be called while the client sockets are still
+// open, since the acknowledgments that clear the count travel over them.
+//
+// A negative timeout skips the wait entirely (close now). A timeout that
+// expires with messages still in flight is logged, not an error: a client that
+// never acknowledges must not be able to hold shutdown open indefinitely, and
+// an unacknowledged message is dropped by design rather than by failure.
+func (b *Broker) drainInflight(timeout time.Duration) {
+	if b.drained.Swap(true) {
+		return // already drained by an embedder-level call
+	}
+	if timeout < 0 {
+		return
+	}
+	if timeout == 0 {
+		// Still report what is being abandoned, then do not wait.
+		if n := b.totalInflight(); n > 0 {
+			b.logger.Warn("drain skipped, abandoning in-flight messages", "count", n)
+			b.metrics.IncErrors("drain_skipped")
+		}
+		return
+	}
+
+	// Poll rather than block on an event: the count is owned by the QoS engine
+	// and has no notification channel, and 100ms is far below the latency a
+	// shutdown budget is measured in.
+	const pollInterval = 100 * time.Millisecond
+	deadline := time.Now().Add(timeout)
+	for {
+		n := b.totalInflight()
+		if n == 0 {
+			return
+		}
+		if !time.Now().Before(deadline) {
+			b.logger.Warn("drain timeout, abandoning in-flight messages",
+				"count", n, "timeout", timeout)
+			b.metrics.IncErrors("drain_timeout")
+			return
+		}
+		time.Sleep(pollInterval)
+	}
+}
+
+// totalInflight sums unacknowledged messages across every live session.
+func (b *Broker) totalInflight() int {
+	total := 0
+	for _, clientID := range b.sessions.ListSessions() {
+		total += b.qos.InflightCount(clientID)
+	}
+	return total
 }
 
 func (b *Broker) dispatch(hook plugin.Hook, data *plugin.Context) {

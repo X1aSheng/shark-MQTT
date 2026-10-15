@@ -203,6 +203,13 @@ func NewBroker(opts ...Option) *Broker {
 	if o.cfg.ConnectTimeout > 0 {
 		bopts = append(bopts, broker.WithBrokerConnectTimeout(o.cfg.ConnectTimeout))
 	}
+	// Passed through as-is, including 0: "close without waiting" is a valid
+	// choice for a caller who set it. A zero-value Config built by hand (not via
+	// DefaultConfig) is indistinguishable from that intent, so only a
+	// non-zero value overrides the broker's own default.
+	if o.cfg.DrainTimeout != 0 {
+		bopts = append(bopts, broker.WithDrainTimeout(o.cfg.DrainTimeout))
+	}
 	if o.cfg.QoSMaxInflight > 0 || o.cfg.QoSRetryInterval > 0 || o.cfg.QoSMaxRetries > 0 {
 		var qosOpts []broker.QoSOption
 		if o.cfg.QoSMaxInflight > 0 {
@@ -304,16 +311,24 @@ func (b *Broker) Start() error {
 }
 
 // Stop gracefully shuts down both the server and broker.
+//
+// Order matters. The broker is asked to drain BEFORE the network server closes
+// the client sockets, because the acknowledgments that clear the in-flight
+// count travel over those sockets: srv.Stop() first would abort every
+// connection and leave broker.Stop() with nothing it could ever wait for.
+//
+// BeginShutdown still runs first of all: it suppresses wills for the whole
+// window and sends DISCONNECT 0x8B while the sockets are still open, so a
+// rolling restart neither floods will topics nor cuts clients off silently.
 func (b *Broker) Stop() {
-	// Mark the broker as shutting down BEFORE the network server closes the
-	// client sockets. Otherwise every socket close would look like a client
-	// failure and fire that client's will -- a rolling restart would flood
-	// every will topic. BeginShutdown also tells MQTT 5.0 clients the server
-	// is going away (DISCONNECT 0x8B) while their sockets are still open.
 	b.broker.BeginShutdown()
 
 	b.stopHealthServer()
 
+	// Drain in-flight QoS 1/2 deliveries while clients can still acknowledge.
+	b.broker.DrainInflight()
+
+	// Now cut the sockets for good, then release the broker subsystems.
 	b.srv.Stop()
 	b.broker.Stop()
 	b.logr.Info("Shark-MQTT stopped")
@@ -379,8 +394,29 @@ func (b *Broker) ConnCount() int64 {
 	return b.srv.ConnCount()
 }
 
-// Broker returns the underlying broker core for advanced usage.
-func (b *Broker) Broker() *broker.Broker {
+// Core is the read-only view of the broker core that this package exposes.
+// It is deliberately narrower than *broker.Broker: handing out the concrete
+// type would let a caller bypass the lifecycle this wrapper owns (Stop order,
+// drain, health server) and mutate core state behind its back. Add a method
+// here when a new capability genuinely needs exposing.
+type Core interface {
+	// IsStarted reports whether the broker is running.
+	IsStarted() bool
+	// Metrics returns the broker's metrics recorder, for a host that renders
+	// its own exposition format.
+	Metrics() metrics.Metrics
+	// BeginShutdown marks a broker-wide shutdown in progress and notifies
+	// connected MQTT 5.0 clients. Safe to call more than once.
+	BeginShutdown()
+	// DrainInflight waits for in-flight QoS 1/2 messages to be acknowledged,
+	// bounded by the configured drain timeout. Sockets must still be open.
+	DrainInflight()
+}
+
+// Core returns a narrow, read-only handle on the broker core for advanced use
+// (metrics scraping, embedding in a larger process). Prefer the methods on
+// Broker; reach for this only when the wrapper does not cover the need.
+func (b *Broker) Core() Core {
 	return b.broker
 }
 

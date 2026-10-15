@@ -49,6 +49,7 @@ type brokerOptions struct {
 	sysInterval             time.Duration // $SYS status topic publish interval (0 = off, R8)
 	version                 string        // broker version published to $SYS/broker/version
 	latencySampling         int           // observe publish latency every N messages (0 = off, 1 = every message)
+	drainTimeout            time.Duration // how long Stop waits for in-flight messages to be acknowledged
 }
 
 func defaultBrokerOptions() brokerOptions {
@@ -82,6 +83,7 @@ func defaultBrokerOptions() brokerOptions {
 		sysInterval:             30 * time.Second,
 		version:                 "dev",
 		latencySampling:         1,
+		drainTimeout:            5 * time.Second,
 	}
 }
 
@@ -203,6 +205,20 @@ func WithBrokerKeepAlive(seconds uint16) Option {
 func WithBrokerConnectTimeout(d time.Duration) Option {
 	return func(o *brokerOptions) {
 		o.connectTimeout = d
+	}
+}
+
+// WithDrainTimeout sets how long Stop waits for already-queued in-flight
+// messages to be acknowledged by their clients before it closes the sockets
+// anyway (MQTT 5.0 does not define a broker-side drain, so this is a
+// deployment-policy knob, not a protocol requirement).
+//
+// Stop drains BEFORE closing the connections: acknowledgments can only arrive
+// on a live socket, so closing first would make every wait time out. Default
+// 5s; a negative value skips draining and closes immediately.
+func WithDrainTimeout(d time.Duration) Option {
+	return func(o *brokerOptions) {
+		o.drainTimeout = d
 	}
 }
 

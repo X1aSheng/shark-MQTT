@@ -30,6 +30,11 @@ type Config struct {
 	TLSMutual      bool          `yaml:"tls_mutual" toml:"tls_mutual" env:"MQTT_TLS_MUTUAL"`
 	TLSCACertFile  string        `yaml:"tls_ca_cert_file" toml:"tls_ca_cert_file" env:"MQTT_TLS_CA_CERT_FILE"`
 	ConnectTimeout time.Duration `yaml:"connect_timeout" toml:"connect_timeout" env:"MQTT_CONNECT_TIMEOUT"`
+	// DrainTimeout bounds how long shutdown waits for in-flight QoS 1/2
+	// messages to be acknowledged before closing the sockets anyway.
+	// 0 closes immediately; the wait requires live sockets, so it happens
+	// before they close.
+	DrainTimeout time.Duration `yaml:"drain_timeout" toml:"drain_timeout" env:"MQTT_DRAIN_TIMEOUT"`
 	KeepAlive      uint16        `yaml:"keep_alive" toml:"keep_alive" env:"MQTT_KEEP_ALIVE"`
 	MaxPacketSize  int           `yaml:"max_packet_size" toml:"max_packet_size" env:"MQTT_MAX_PACKET_SIZE"`
 	MaxConnections int           `yaml:"max_connections" toml:"max_connections" env:"MQTT_MAX_CONNECTIONS"`
@@ -88,6 +93,7 @@ func DefaultConfig() *Config {
 		ListenAddr:            DefaultListenAddr,
 		TLSEnabled:            false,
 		ConnectTimeout:        10 * time.Second,
+		DrainTimeout:          5 * time.Second,
 		KeepAlive:             60,
 		MaxPacketSize:         256 * 1024,
 		MaxConnections:        10000,

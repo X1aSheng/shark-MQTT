@@ -44,6 +44,8 @@ var allowedMetricLabels = map[string]map[string]bool{
 	"IncErrors": {
 		"deadline":       true,
 		"decode":         true,
+		"drain_skipped":  true,
+		"drain_timeout":  true,
 		"flow_control":   true,
 		"message_store":  true,
 		"protocol":       true,
