@@ -253,6 +253,47 @@ badger_path: "/data/shark-mqtt"
 
 ---
 
+## Connection Flapping Protection
+
+A client that reconnects in a tight loop never holds many concurrent
+connections, so `max_connections` does not catch it. Each attempt still costs a
+goroutine, a file descriptor and a codec buffer, so a reconnect storm is a
+resource-exhaustion vector.
+
+| Key | Env | Default | Meaning |
+| --- | --- | --- | --- |
+| `flapping_enabled` | `MQTT_FLAPPING_ENABLED` | `false` | Turn detection on |
+| `flapping_max_connects` | `MQTT_FLAPPING_MAX_CONNECTS` | `10` | Connections allowed per window per client |
+| `flapping_window` | `MQTT_FLAPPING_WINDOW` | `10s` | Sliding window |
+| `flapping_penalty_duration` | `MQTT_FLAPPING_PENALTY_DURATION` | `60s` | How long a client stays blocked |
+| `flapping_max_tracked_clients` | `MQTT_FLAPPING_MAX_TRACKED_CLIENTS` | `10000` | Memory bound; oldest entries evicted |
+| `flapping_cleanup_interval` | `MQTT_FLAPPING_CLEANUP_INTERVAL` | window | How often expired entries are swept |
+
+```yaml
+flapping_enabled: true
+flapping_max_connects: 5
+flapping_window: 10s
+flapping_penalty_duration: 300s
+```
+
+**Off by default.** A limit that silently rejects clients is worse than no
+limit when the limit is wrong. Turn it on once you know your clients'
+reconnection behaviour -- a broker whose clients legitimately reconnect on a
+schedule can throttle healthy traffic.
+
+Two details worth knowing:
+
+- Clients are tracked by **both** remote IP and client ID. Either key alone is
+  evadable: a client that reconnects from a new ephemeral port defeats an
+  IP-only check, and one that changes its Client ID defeats an ID-only check.
+- The penalty does **not** extend on further attempts. Extending it would mean a
+  client stuck in a reconnect storm could never recover, since every attempt
+  would postpone its own release.
+
+A rejected client gets MQTT 5.0 `0x8A` (Banned) or MQTT 3.1.1 `0x03` (Server
+Unavailable), which is the closest code 3.1.1 has. Rejections are counted in
+`errors_total{component="flapping"}`.
+
 ## Environment Variables
 
 All configuration options can be set via environment variables with the `MQTT_` prefix.

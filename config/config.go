@@ -59,6 +59,20 @@ type Config struct {
 	// stay registered as an online connection before being reaped.
 	TCPKeepAlivePeriod Duration `yaml:"tcp_keepalive_period" toml:"tcp_keepalive_period" env:"MQTT_TCP_KEEPALIVE_PERIOD"`
 
+	// Connection flapping detection. A client that reconnects in a tight loop
+	// never holds many concurrent connections, so MaxConnections does not catch
+	// it; each attempt still costs a goroutine, a file descriptor and a codec
+	// buffer.
+	//
+	// Disabled by default: silently rejecting clients is worse than no limit
+	// when the limit is wrong.
+	FlappingEnabled           bool     `yaml:"flapping_enabled" toml:"flapping_enabled" env:"MQTT_FLAPPING_ENABLED"`
+	FlappingMaxConnects       int      `yaml:"flapping_max_connects" toml:"flapping_max_connects" env:"MQTT_FLAPPING_MAX_CONNECTS"`
+	FlappingWindow            Duration `yaml:"flapping_window" toml:"flapping_window" env:"MQTT_FLAPPING_WINDOW"`
+	FlappingPenaltyDuration   Duration `yaml:"flapping_penalty_duration" toml:"flapping_penalty_duration" env:"MQTT_FLAPPING_PENALTY_DURATION"`
+	FlappingMaxTrackedClients int      `yaml:"flapping_max_tracked_clients" toml:"flapping_max_tracked_clients" env:"MQTT_FLAPPING_MAX_TRACKED_CLIENTS"`
+	FlappingCleanupInterval   Duration `yaml:"flapping_cleanup_interval" toml:"flapping_cleanup_interval" env:"MQTT_FLAPPING_CLEANUP_INTERVAL"`
+
 	// QoS settings
 	QoSRetryInterval Duration `yaml:"qos_retry_interval" toml:"qos_retry_interval" env:"MQTT_QOS_RETRY_INTERVAL"`
 	QoSMaxRetries    int      `yaml:"qos_max_retries" toml:"qos_max_retries" env:"MQTT_QOS_MAX_RETRIES"`
@@ -114,25 +128,31 @@ type Config struct {
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
-		ListenAddr:            DefaultListenAddr,
-		TLSEnabled:            false,
-		ConnectTimeout:        Duration(10 * time.Second),
-		DrainTimeout:          Duration(5 * time.Second),
-		KeepAlive:             60,
-		MaxPacketSize:         256 * 1024,
-		MaxConnections:        10000,
-		WriteQueueSize:        256,
-		TCPKeepAlivePeriod:    Duration(60 * time.Second),
-		QoSRetryInterval:      Duration(10 * time.Second),
-		QoSMaxRetries:         3,
-		QoSMaxInflight:        100,
-		SessionExpiryInterval: Duration(24 * time.Hour),
-		SysInterval:           Duration(30 * time.Second),
-		StorageBackend:        "memory",
-		LogLevel:              "info",
-		LogFormat:             "text",
-		MetricsEnabled:        true,
-		MetricsAddr:           DefaultMetricsAddr,
+		ListenAddr:         DefaultListenAddr,
+		TLSEnabled:         false,
+		ConnectTimeout:     Duration(10 * time.Second),
+		DrainTimeout:       Duration(5 * time.Second),
+		KeepAlive:          60,
+		MaxPacketSize:      256 * 1024,
+		MaxConnections:     10000,
+		WriteQueueSize:     256,
+		TCPKeepAlivePeriod: Duration(60 * time.Second),
+
+		FlappingEnabled:           false,
+		FlappingMaxConnects:       10,
+		FlappingWindow:            Duration(10 * time.Second),
+		FlappingPenaltyDuration:   Duration(60 * time.Second),
+		FlappingMaxTrackedClients: 10000,
+		QoSRetryInterval:          Duration(10 * time.Second),
+		QoSMaxRetries:             3,
+		QoSMaxInflight:            100,
+		SessionExpiryInterval:     Duration(24 * time.Hour),
+		SysInterval:               Duration(30 * time.Second),
+		StorageBackend:            "memory",
+		LogLevel:                  "info",
+		LogFormat:                 "text",
+		MetricsEnabled:            true,
+		MetricsAddr:               DefaultMetricsAddr,
 	}
 }
 

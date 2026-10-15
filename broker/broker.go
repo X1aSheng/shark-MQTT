@@ -98,6 +98,9 @@ type Broker struct {
 	logger    logger.Logger
 	metrics   metrics.Metrics
 	pluginMgr *plugin.Manager
+	// flapping throttles clients that reconnect in a tight loop. A nil
+	// detector allows everything, so the feature costs nothing when disabled.
+	flapping *FlappingDetector
 
 	mu sync.RWMutex
 	// connections maps clientID -> clientState
@@ -158,6 +161,7 @@ type Broker struct {
 // New creates a new Broker with the given options.
 func New(opts ...Option) *Broker {
 	o := defaultBrokerOptions()
+
 	for _, opt := range opts {
 		opt(&o)
 	}
@@ -177,6 +181,7 @@ func New(opts ...Option) *Broker {
 		logger:              o.logger,
 		metrics:             o.metrics,
 		pluginMgr:           o.pluginManager,
+		flapping:            o.flapping,
 		connections:         make(map[string]*clientState),
 		offlineCount:        make(map[string]int),
 		connRate:            newConnRateLimiter(o.connectionRateWindow),
@@ -255,6 +260,17 @@ func connAckForConnectRejection(sp protocol.Spec, connectPkt *protocol.ConnectPa
 // b.ctx survives its client, and a teardown write issued with the connection ctx
 // is cancelled before it stores anything, losing session state that MQTT 5.0
 // 3.1.2.11.2 requires the server to keep.
+// FlappingEnabled reports whether connection-flap detection is active.
+//
+// Exposed so a status endpoint can show whether the protection is actually
+// running, rather than leaving an operator to infer it from the config file
+// they hoped was applied.
+func (b *Broker) FlappingEnabled() bool { return b.flapping != nil }
+
+// FlappingTracked reports how many client keys the detector is holding, so an
+// operator can see whether the memory bound is being approached.
+func (b *Broker) FlappingTracked() int { return b.flapping.Tracked() }
+
 func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 	conn := c.Raw
 	codec := c.Codec
@@ -325,6 +341,18 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 		b.metrics.IncErrors("protocol")
 		b.sendConnAckRaw(conn, codec, connAckForConnectRejection(sp, connectPkt), false)
 		return fmt.Errorf("broker: CONNECT validation failed: %w", err)
+	}
+
+	// Connection flapping check, after the CONNECT is known to be well formed
+	// but before the client is authenticated or registered.
+	//
+	// Position matters: doing it later would let a flapping client keep paying
+	// for bcrypt verification on every attempt, which is precisely the cost the
+	// limit exists to stop. Doing it before ValidateConnect would let a
+	// malformed packet from an unpenalised key consume a slot.
+	if d := b.flapping.Check(peerIP(conn.RemoteAddr().String()), connectPkt.ClientID); d != FlapAllow {
+		b.rejectFlapping(conn, codec, sp, connectPkt, d)
+		return fmt.Errorf("broker: connection flapping limit exceeded")
 	}
 
 	// Check client ID length limit to prevent resource exhaustion
@@ -814,6 +842,37 @@ func (b *Broker) rejectSessionOwnerMismatch(conn net.Conn, codec protocol.Packet
 	}
 	b.sendConnAckRaw(conn, codec, reason, false)
 	return fmt.Errorf("broker: client ID %q belongs to a different user", connectPkt.ClientID)
+}
+
+// rejectFlapping turns a flapping rejection into a CONNACK and the usual
+// rejection metrics and log.
+//
+// The reason code differs by protocol version because MQTT 3.1.1 has no code
+// for "you are connecting too often". Server Unavailable is the closest thing,
+// and an MQTT 5 client that gets 0x88 instead of Banned can misread a temporary
+// throttle as a server that is going away -- Banned (0x8A) tells it plainly to
+// back off.
+func (b *Broker) rejectFlapping(conn net.Conn, codec protocol.PacketCodec, sp protocol.Spec, connectPkt *protocol.ConnectPacket, d FlappingDecision) {
+	b.metrics.IncRejections("flapping")
+	b.metrics.IncErrors("flapping")
+
+	attrs := []any{
+		"clientID", connectPkt.ClientID,
+		"remote", conn.RemoteAddr().String(),
+		"decision", d.String(),
+	}
+	// Naming how long the client is blocked is what makes the log actionable:
+	// without it an operator sees a rejection and no idea whether to wait.
+	if remaining, penalized := b.flapping.PenaltyRemaining(connectPkt.ClientID); penalized {
+		attrs = append(attrs, "penaltyRemaining", remaining.String())
+	}
+
+	reason := byte(protocol.ConnAckServerUnavailable)
+	if sp.ConnAckHasReasonCode {
+		reason = protocol.ConnAckBanned
+	}
+	b.logger.Warn("connection rejected: flapping limit exceeded", attrs...)
+	b.sendConnAckRaw(conn, codec, reason, false)
 }
 
 // findEnhancedAuth returns the registered enhanced authenticator for a method
@@ -1307,6 +1366,11 @@ func (b *Broker) Stop() {
 
 	b.qos.Stop()
 	b.will.Stop()
+	// Stop the flapping cleanup goroutine before plugins, so it cannot outlive
+	// the broker or race with plugin teardown.
+	if b.flapping != nil {
+		b.flapping.Stop()
+	}
 
 	// Tear plugins down last, while the broker's subsystems are still usable:
 	// a plugin's Stop may need to read session state or talk to the client.

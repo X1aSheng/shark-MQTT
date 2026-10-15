@@ -13,13 +13,15 @@ import (
 type Option func(*brokerOptions)
 
 type brokerOptions struct {
-	sessionStore           store.SessionStore
-	messageStore           store.MessageStore
-	retainedStore          store.RetainedStore
-	authenticator          Authenticator
-	enhancedAuth           []EnhancedAuthenticator // MQTT 5.0 §4.12 (by AuthenticationMethod)
-	authorizer             Authorizer
-	pluginManager          *plugin.Manager
+	sessionStore  store.SessionStore
+	messageStore  store.MessageStore
+	retainedStore store.RetainedStore
+	authenticator Authenticator
+	enhancedAuth  []EnhancedAuthenticator // MQTT 5.0 §4.12 (by AuthenticationMethod)
+	authorizer    Authorizer
+	pluginManager *plugin.Manager
+	// flapping is optional; nil disables connection-flap throttling.
+	flapping               *FlappingDetector
 	logger                 logger.Logger
 	metrics                metrics.Metrics
 	qosOpts                []QoSOption
@@ -133,6 +135,20 @@ func WithAuthorizer(a Authorizer) Option {
 }
 
 // WithPluginManager sets the plugin manager.
+// WithFlappingDetection installs a connection-flapping detector.
+//
+// Passing a detector with Enabled false is equivalent to passing none, so a
+// caller can build one from config unconditionally.
+func WithFlappingDetection(d *FlappingDetector) Option {
+	return func(o *brokerOptions) {
+		if d != nil && d.cfg.Enabled {
+			o.flapping = d
+		} else {
+			o.flapping = nil
+		}
+	}
+}
+
 func WithPluginManager(m *plugin.Manager) Option {
 	return func(o *brokerOptions) {
 		o.pluginManager = m

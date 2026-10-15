@@ -7,6 +7,70 @@ This project uses semantic versioning. Pre-release tags use the form
 
 ## Unreleased
 
+### Connection flapping protection (2026-10-15)
+
+A client that reconnects in a tight loop never holds many concurrent
+connections, so `max_connections` never trips; every attempt still costs a
+goroutine, a file descriptor and a codec buffer. The existing connection-rate
+limiter is a token bucket over the whole broker, which one misbehaving client
+can exhaust for everyone.
+
+Clients are tracked under **two** keys, the remote IP and the client ID.
+Either alone is evadable: reconnecting from a fresh ephemeral port defeats an
+IP-only check, and changing the Client ID defeats an ID-only one. The remote
+address is reduced to its bare IP for exactly this reason -- comparing
+`ip:port` strings would let a client walk straight through the limit.
+
+Within `flapping_window`, a client may open `flapping_max_connects` connections;
+exceeding that rejects it for `flapping_penalty_duration`. Two decisions worth
+naming:
+
+- **The penalty does not extend on further attempts.** Extending it would mean a
+  client stuck in a reconnect storm could never recover -- every attempt would
+  postpone its own release, locking out exactly the clients the limit exists to
+  protect the broker from.
+- **It is off by default.** A limit that silently rejects clients is worse than
+  no limit when the limit is wrong.
+
+Rejected clients get MQTT 5.0 `0x8A` (Banned) or MQTT 3.1.1 `0x03` (Server
+Unavailable), the closest code 3.1.1 has; `0x04` would imply that retrying with
+different credentials might help. Rejections count in
+`errors_total{component="flapping"}`, and `GET /clients` now reports whether
+detection is running and how many clients it tracks -- an operator who just
+enabled it should not have to infer that from the absence of rejections.
+
+### Connection flapping protection (2026-10-15)
+
+A client that reconnects in a tight loop never holds many concurrent
+connections, so `max_connections` never trips; every attempt still costs a
+goroutine, a file descriptor and a codec buffer. The existing connection-rate
+limiter is a token bucket over the whole broker, which one misbehaving client
+can exhaust for everyone.
+
+Clients are tracked under **two** keys, the remote IP and the client ID.
+Either alone is evadable: reconnecting from a fresh ephemeral port defeats an
+IP-only check, and changing the Client ID defeats an ID-only one. The remote
+address is reduced to its bare IP for exactly this reason -- comparing
+`ip:port` strings would let a client walk straight through the limit.
+
+Within `flapping_window`, a client may open `flapping_max_connects` connections;
+exceeding that rejects it for `flapping_penalty_duration`. Two decisions worth
+naming:
+
+- **The penalty does not extend on further attempts.** Extending it would mean a
+  client stuck in a reconnect storm could never recover -- every attempt would
+  postpone its own release, locking out exactly the clients the limit exists to
+  protect the broker from.
+- **It is off by default.** A limit that silently rejects clients is worse than
+  no limit when the limit is wrong.
+
+Rejected clients get MQTT 5.0 `0x8A` (Banned) or MQTT 3.1.1 `0x03` (Server
+Unavailable), the closest code 3.1.1 has; `0x04` would imply that retrying with
+different credentials might help. Rejections count in
+`errors_total{component="flapping"}`, and `GET /clients` now reports whether
+detection is running and how many clients it tracks -- an operator who just
+enabled it should not have to infer that from the absence of rejections.
+
 ### Plugin lifecycle & event bus (2026-10-15)
 
 The last piece of the platform foundation, rebuilt from smart-mqtt's `Plugin`

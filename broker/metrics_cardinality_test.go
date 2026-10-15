@@ -18,6 +18,7 @@ var allowedMetricLabels = map[string]map[string]bool{
 	"IncRejections": {
 		"client_id_too_long":    true,
 		"decode_error":          true,
+		"flapping":              true,
 		"invalid_connect":       true,
 		"invalid_packet":        true,
 		"keepalive_timeout":     true,
@@ -48,6 +49,7 @@ var allowedMetricLabels = map[string]map[string]bool{
 		"drain_timeout":  true,
 		"flow_control":   true,
 		"message_store":  true,
+		"flapping":       true,
 		"plugin_event":   true,
 		"plugin_start":   true,
 		"plugin_stop":    true,

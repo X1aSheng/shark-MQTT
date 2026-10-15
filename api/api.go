@@ -183,6 +183,19 @@ func NewBroker(opts ...Option) *Broker {
 	if o.maxConnections >= 0 {
 		bopts = append(bopts, broker.WithMaxConnections(o.maxConnections))
 	}
+	if o.cfg != nil && o.cfg.FlappingEnabled {
+		// Wired only when explicitly enabled: WithFlappingDetection drops a
+		// disabled detector, so building one unconditionally would start a
+		// cleanup goroutine for a feature nobody asked for.
+		bopts = append(bopts, broker.WithFlappingDetection(broker.NewFlappingDetector(broker.FlappingConfig{
+			Enabled:           o.cfg.FlappingEnabled,
+			MaxConnects:       o.cfg.FlappingMaxConnects,
+			SlidingWindow:     o.cfg.FlappingWindow.Duration(),
+			PenaltyDuration:   o.cfg.FlappingPenaltyDuration.Duration(),
+			MaxTrackedClients: o.cfg.FlappingMaxTrackedClients,
+			CleanupInterval:   o.cfg.FlappingCleanupInterval.Duration(),
+		})))
+	}
 	if o.cfg.MaxPacketSize > 0 {
 		bopts = append(bopts, broker.WithBrokerMaxPacketSize(o.cfg.MaxPacketSize))
 	}
@@ -290,6 +303,10 @@ func NewBroker(opts ...Option) *Broker {
 		initErr: initErr,
 	}
 }
+
+// FlappingEnabled reports whether connection-flap detection is active. See
+// broker.Broker.FlappingEnabled.
+func (b *Broker) FlappingEnabled() bool { return b.broker.FlappingEnabled() }
 
 // Start starts both the network server and the broker core.
 func (b *Broker) Start() error {
@@ -497,10 +514,19 @@ func (b *Broker) registerManagementRoutes(mux *http.ServeMux) {
 		if clients == nil {
 			clients = []broker.ClientInfo{}
 		}
+		// Include the flapping detector's state. An operator who has just set
+		// flapping_enabled in the config needs to see that it is actually
+		// running; without this they would have to infer it from the absence of
+		// rejections, which is indistinguishable from "no client has tripped it".
+		flapping := map[string]any{"enabled": b.broker.FlappingEnabled()}
+		if b.broker.FlappingEnabled() {
+			flapping["trackedClients"] = b.broker.FlappingTracked()
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"count":   len(clients),
-			"online":  b.ConnCount(),
-			"clients": clients,
+			"count":    len(clients),
+			"online":   b.ConnCount(),
+			"clients":  clients,
+			"flapping": flapping,
 		})
 	}))
 
