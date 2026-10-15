@@ -413,6 +413,14 @@ func TestDisconnectUpdatesSessionExpiry(t *testing.T) {
 		t.Fatalf("DISCONNECT: %v", err)
 	}
 	conn.Close()
+	// Give the broker's read loop time to process the DISCONNECT and tear the
+	// session down before the reconnect below. Without this the new CONNECT
+	// can arrive while the old session is still registered, and a takeover of
+	// a live session legitimately reports SessionPresent=1 -- which is what
+	// made this test fail intermittently on the macOS runner. The sibling
+	// TestSessionExpiryZero_EndsSessionOnDisconnect already settles for the
+	// same reason.
+	time.Sleep(300 * time.Millisecond)
 
 	// Reconnect: the session must be gone.
 	ca := connectV5WithExpiry(t, broker, "expiry-disconnect", &hour)
