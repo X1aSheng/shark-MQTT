@@ -382,67 +382,441 @@ func TestBroker_SubscribeAndUnsubscribe(t *testing.T) {
 	}
 }
 
-// TestBroker_CleanSessionUnsubscribesOnDisconnect verifies a clean session
-// releases its topic-tree subscriptions on disconnect so entries do not leak
-// across reconnect cycles (P2-13). Persistent sessions keep theirs so offline
-// queueing can still match them.
+// TestBroker_CleanSessionUnsubscribesOnDisconnect pins what keeps a
+// session's topic-tree subscriptions across a disconnect, so entries do not
+// leak across reconnect cycles (P2-13) while persistent sessions keep theirs
+// for offline queueing.
+//
+// The discriminator is the negotiated Session Expiry Interval, not the Clean
+// Start bit -- §3.1.2.11.2 conditions the whole obligation on the interval
+// ("The Client and Server MUST store the Session State after the Network
+// Connection is closed if the Session Expiry Interval is greater than 0
+// [MQTT-3.1.2-23]") and Clean Start is about the session that existed before
+// the CONNECT. The table below is that decision rule in full, including the
+// two combinations that prove the two settings really are independent: a
+// clean start with an interval keeps its state, and a continuation with no
+// interval does not.
 func TestBroker_CleanSessionUnsubscribesOnDisconnect(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		clean   bool
+		expiry  uint32
+		wantSub int64
+	}{
+		{"clean-with-expiry-keeps", true, 3600, 1},
+		{"clean-without-expiry-drops", true, 0, 0},
+		{"persistent-with-expiry-keeps", false, 3600, 1},
+		{"persistent-without-expiry-drops", false, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := New(WithAuth(AllowAllAuth{}))
+			clientID := "leak-" + tc.name
+			sess := &Session{
+				ClientID:       clientID,
+				IsClean:        tc.clean,
+				ExpiryInterval: tc.expiry,
+				Subscriptions:  make(map[string]uint8),
+				SubOptions:     make(map[string]SubscriptionOptions),
+				Inflight:       make(map[uint16]*InflightMsg),
+			}
+			conn, _ := net.Pipe()
+			defer conn.Close()
+			b.mu.Lock()
+			b.connections[clientID] = &clientState{conn: conn, codec: protocol.NewCodec(0)}
+			b.mu.Unlock()
+			b.sessions.mu.Lock()
+			b.sessions.sessions[clientID] = sess
+			b.sessions.mu.Unlock()
+
+			b.handleSubscribe(clientID, sess, &protocol.SubscribePacket{
+				FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe},
+				Topics:      []protocol.TopicFilter{{Topic: "leak/topic", QoS: 1}},
+			})
+			if got := b.topics.SubscriberCount(); got != 1 {
+				t.Fatalf("expected 1 subscription after subscribe, got %d", got)
+			}
+
+			b.disconnect(clientID, conn)
+			if got := b.topics.SubscriberCount(); got != tc.wantSub {
+				t.Errorf("subscriptions after disconnect = %d, want %d", got, tc.wantSub)
+			}
+		})
+	}
+}
+
+// ─── Clean Start vs Session Expiry Interval ──────────────────────────────
+//
+// MQTT 5.0 gives these two settings separate jobs, and the broker used to
+// collapse them:
+//
+//   - Clean Start (§3.1.2.4) "specifies whether the Connection starts a new
+//     Session or is a continuation of an existing Session". It is a decision
+//     about the session that existed BEFORE this CONNECT, taken at connect
+//     time, and [MQTT-3.1.2-4] is the whole of its obligation: "the Client
+//     and Server MUST discard any existing Session and start a new Session".
+//   - Session Expiry Interval (§3.1.2.11.2) is about what happens AFTER this
+//     connection closes: "The Client and Server MUST store the Session State
+//     after the Network Connection is closed if the Session Expiry Interval
+//     is greater than 0 [MQTT-3.1.2-23]".
+//
+// Reading Clean Start = 1 as "expire now" zeroed the interval
+// unconditionally, which the spec's own non-normative note contradicts by its
+// wording: "Setting Clean Start to 1 and a Session Expiry Interval of 0, is
+// equivalent to setting CleanSession to 1 in the MQTT Specification Version
+// 3.1.1" -- an equivalence between TWO settings, not a rule that one implies
+// the other. A client that sends Clean Start = 1 with Session Expiry
+// Interval = 3600 asks to drop the old session now and keep the new one for
+// an hour after it disconnects; the broker answered that request by
+// advertising 0 in the CONNACK, publishing a delayed will immediately, and
+// discarding the session at disconnect.
+
+// TestCleanStartHonoursSessionExpiryInterval is the wire half: §3.2.2.3.2
+// makes the CONNACK's Session Expiry Interval the broker telling the client
+// "the value I am using, other than the one you sent", so a 0 there is a
+// statement that the session ends at disconnect -- the exact opposite of what
+// a client asking for 3600 requested.
+func TestCleanStartHonoursSessionExpiryInterval(t *testing.T) {
 	b := New(WithAuth(AllowAllAuth{}))
+	clientConn, cc := runRawClient(t, b)
 
-	// Clean session: subscribe, disconnect, expect the topic entry removed.
-	cleanSess := &Session{
-		ClientID:      "leak-clean",
-		IsClean:       true,
-		Subscriptions: make(map[string]uint8),
-		SubOptions:    make(map[string]SubscriptionOptions),
-		Inflight:      make(map[uint16]*InflightMsg),
+	hour := uint32(3600)
+	connect := &protocol.ConnectPacket{
+		FixedHeader:     protocol.FixedHeader{PacketType: protocol.PacketTypeConnect},
+		ProtocolName:    protocol.ProtocolNameMQTT,
+		ProtocolVersion: protocol.Version50,
+		Flags:           protocol.ConnectFlags{CleanSession: true},
+		KeepAlive:       60,
+		ClientID:        "clean-start-expiry",
+		Properties:      &protocol.Properties{SessionExpiryInterval: &hour},
 	}
-	cleanConn, _ := net.Pipe()
-	defer cleanConn.Close()
-	b.mu.Lock()
-	b.connections["leak-clean"] = &clientState{conn: cleanConn, codec: protocol.NewCodec(0)}
-	b.mu.Unlock()
-	b.sessions.mu.Lock()
-	b.sessions.sessions["leak-clean"] = cleanSess
-	b.sessions.mu.Unlock()
+	if err := cc.Encode(clientConn, connect); err != nil {
+		t.Fatalf("CONNECT: %v", err)
+	}
+	pkt, err := cc.Decode(clientConn)
+	if err != nil {
+		t.Fatalf("CONNACK: %v", err)
+	}
+	ca, ok := pkt.(*protocol.ConnAckPacket)
+	if !ok {
+		t.Fatalf("expected CONNACK, got %T", pkt)
+	}
+	if ca.Properties == nil || ca.Properties.SessionExpiryInterval == nil {
+		t.Fatalf("CONNACK carried no Session Expiry Interval: %+v", ca.Properties)
+	}
+	if got := *ca.Properties.SessionExpiryInterval; got != hour {
+		t.Errorf("CONNACK Session Expiry Interval = %d, want %d", got, hour)
+	}
+	sess, ok := b.sessions.GetSession("clean-start-expiry")
+	if !ok {
+		t.Fatal("session was not created")
+	}
+	if sess.ExpiryInterval != hour {
+		t.Errorf("session ExpiryInterval = %d, want %d", sess.ExpiryInterval, hour)
+	}
+}
 
-	b.handleSubscribe("leak-clean", cleanSess, &protocol.SubscribePacket{
-		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe},
-		Topics:      []protocol.TopicFilter{{Topic: "leak/topic", QoS: 1}},
-	})
-	if got := b.topics.SubscriberCount(); got != 1 {
-		t.Fatalf("expected 1 subscription after subscribe, got %d", got)
+// TestCleanStartWithoutExpiryPropertyEndsSession is the control for the test
+// above, and the case where zeroing the interval WAS correct: §3.1.2.11.2
+// says "If the Session Expiry Interval is absent the value 0 is used. If it
+// is set to 0, or is absent, the Session ends when the Network Connection is
+// closed", and a pre-v5 client has no way to send the property at all, so for
+// it the Clean Session bit is the whole story (MQTT 3.1.1 §3.1.2.7).
+// Honouring the property must not quietly turn a clean start persistent.
+func TestCleanStartWithoutExpiryPropertyEndsSession(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		version protocol.Version
+	}{
+		{"v50-absent-property", protocol.Version50},
+		{"v311", protocol.Version311},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := New(WithAuth(AllowAllAuth{}))
+			clientConn, cc := runRawClient(t, b)
+
+			connect := &protocol.ConnectPacket{
+				FixedHeader:     protocol.FixedHeader{PacketType: protocol.PacketTypeConnect},
+				ProtocolName:    protocol.ProtocolNameMQTT,
+				ProtocolVersion: tc.version,
+				Flags:           protocol.ConnectFlags{CleanSession: true},
+				KeepAlive:       60,
+				ClientID:        "clean-start-no-expiry",
+			}
+			if err := cc.Encode(clientConn, connect); err != nil {
+				t.Fatalf("CONNECT: %v", err)
+			}
+			pkt, err := cc.Decode(clientConn)
+			if err != nil {
+				t.Fatalf("CONNACK: %v", err)
+			}
+			ca, ok := pkt.(*protocol.ConnAckPacket)
+			if !ok {
+				t.Fatalf("expected CONNACK, got %T", pkt)
+			}
+			if tc.version == protocol.Version50 {
+				if ca.Properties == nil || ca.Properties.SessionExpiryInterval == nil {
+					t.Fatalf("CONNACK carried no Session Expiry Interval: %+v", ca.Properties)
+				}
+				if got := *ca.Properties.SessionExpiryInterval; got != 0 {
+					t.Errorf("CONNACK Session Expiry Interval = %d, want 0", got)
+				}
+			}
+			sess, ok := b.sessions.GetSession("clean-start-no-expiry")
+			if !ok {
+				t.Fatal("session was not created")
+			}
+			if sess.ExpiryInterval != 0 {
+				t.Errorf("session ExpiryInterval = %d, want 0", sess.ExpiryInterval)
+			}
+		})
+	}
+}
+
+// TestCleanStartWithExpiryKeepsSubscriptionsOnDisconnect is the storage half
+// of [MQTT-3.1.2-23], and it is the reason the fix could not stop at the
+// interval arithmetic: a session whose negotiated interval is greater than 0
+// outlives its Network Connection, so it keeps its topic-tree entries for
+// offline delivery, and disconnect() must persist rather than delete it. The
+// Clean Start bit is irrelevant to that decision -- it already did its job at
+// connect time, where the previous session was discarded.
+//
+// The zero case is asserted alongside as the control: with no interval to
+// honour the session still ends at disconnect and releases its entries, which
+// is what keeps a clean start from leaking subscriptions.
+func TestCleanStartWithExpiryKeepsSubscriptionsOnDisconnect(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		expiry  uint32
+		wantSub int64
+	}{
+		{"clean-start-with-expiry", 3600, 1},
+		{"clean-start-without-expiry", 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := New(WithAuth(AllowAllAuth{}))
+			clientID := "clean-start-keep-" + tc.name
+			sess := &Session{
+				ClientID:       clientID,
+				IsClean:        true,
+				ExpiryInterval: tc.expiry,
+				Subscriptions:  make(map[string]uint8),
+				SubOptions:     make(map[string]SubscriptionOptions),
+				Inflight:       make(map[uint16]*InflightMsg),
+			}
+			conn, _ := net.Pipe()
+			defer conn.Close()
+			b.mu.Lock()
+			b.connections[clientID] = &clientState{conn: conn, codec: protocol.NewCodec(0)}
+			b.mu.Unlock()
+			b.sessions.mu.Lock()
+			b.sessions.sessions[clientID] = sess
+			b.sessions.mu.Unlock()
+
+			b.handleSubscribe(clientID, sess, &protocol.SubscribePacket{
+				FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe},
+				Topics:      []protocol.TopicFilter{{Topic: "keep/topic", QoS: 1}},
+			})
+			b.disconnect(clientID, conn)
+			if got := b.topics.SubscriberCount(); got != tc.wantSub {
+				t.Errorf("subscriptions after disconnect = %d, want %d", got, tc.wantSub)
+			}
+		})
+	}
+}
+
+// TestCleanStartWillDelayBoundedBySessionExpiry covers the third place the
+// zeroed interval leaked out. §3.1.3.2.2 publishes the Will Message when "the
+// Will Delay Interval has passed or the Session ends, whichever happens
+// first", so the delay is folded against the session's own lifetime when the
+// will is registered. A session that was told to expire at disconnect made
+// every delayed will fire immediately, ignoring the delay the client asked
+// for -- here 60 seconds against a 300-second session.
+func TestCleanStartWillDelayBoundedBySessionExpiry(t *testing.T) {
+	b := New(WithAuth(AllowAllAuth{}))
+	clientConn, cc := runRawClient(t, b)
+
+	willDelaySecs := uint32(60)
+	expirySecs := uint32(300)
+	connect := &protocol.ConnectPacket{
+		FixedHeader:     protocol.FixedHeader{PacketType: protocol.PacketTypeConnect},
+		ProtocolName:    protocol.ProtocolNameMQTT,
+		ProtocolVersion: protocol.Version50,
+		Flags: protocol.ConnectFlags{
+			CleanSession: true,
+			WillFlag:     true,
+			WillQoS:      0,
+		},
+		KeepAlive:      60,
+		ClientID:       "clean-start-will",
+		WillTopic:      "will/topic",
+		WillMessage:    []byte("bye"),
+		WillProperties: &protocol.Properties{WillDelayInterval: &willDelaySecs},
+		Properties:     &protocol.Properties{SessionExpiryInterval: &expirySecs},
+	}
+	if err := cc.Encode(clientConn, connect); err != nil {
+		t.Fatalf("CONNECT: %v", err)
+	}
+	pkt, err := cc.Decode(clientConn)
+	if err != nil {
+		t.Fatalf("CONNACK: %v", err)
+	}
+	if _, ok := pkt.(*protocol.ConnAckPacket); !ok {
+		t.Fatalf("expected CONNACK, got %T", pkt)
 	}
 
-	b.disconnect("leak-clean", cleanConn)
-	if got := b.topics.SubscriberCount(); got != 0 {
-		t.Errorf("expected 0 subscriptions after clean-session disconnect, got %d (leak)", got)
+	b.will.mu.Lock()
+	registered, ok := b.will.wills["clean-start-will"]
+	b.will.mu.Unlock()
+	if !ok {
+		t.Fatal("will was not registered")
+	}
+	if registered.Delay != 60*time.Second {
+		t.Errorf("will delay = %v, want 1m0s (the client's Will Delay Interval)", registered.Delay)
+	}
+}
+
+// subscribeThenReconnect drives the two-connection cycle the clean-start
+// teardown tests need: a first connection subscribes to filter and closes, a
+// second one then connects with secondClean. It returns the broker plus the
+// second connection's client side and codec, so the caller can assert on what
+// survived the cycle.
+//
+// The settle delay lets the broker's read loop finish the first teardown
+// before the second CONNECT is read -- without it a takeover would
+// legitimately keep the session.
+func subscribeThenReconnect(t *testing.T, firstClean bool, expiry uint32, filter string, secondClean bool) (*Broker, net.Conn, *protocol.Codec) {
+	t.Helper()
+	b := New(
+		WithAuth(AllowAllAuth{}),
+		WithSessionStore(memory.NewSessionStore()),
+		WithMessageStore(memory.NewMessageStore()),
+	)
+	if err := b.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	t.Cleanup(b.Stop)
+
+	c1, cc := runRawClient(t, b)
+	first := &protocol.ConnectPacket{
+		FixedHeader:     protocol.FixedHeader{PacketType: protocol.PacketTypeConnect},
+		ProtocolName:    protocol.ProtocolNameMQTT,
+		ProtocolVersion: protocol.Version50,
+		Flags:           protocol.ConnectFlags{CleanSession: firstClean},
+		KeepAlive:       30,
+		ClientID:        "clean-teardown",
+		Properties:      &protocol.Properties{SessionExpiryInterval: &expiry},
+	}
+	if err := cc.Encode(c1, first); err != nil {
+		t.Fatalf("CONNECT: %v", err)
+	}
+	if _, err := cc.Decode(c1); err != nil {
+		t.Fatalf("CONNACK: %v", err)
+	}
+	if err := cc.Encode(c1, &protocol.SubscribePacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe, QoS: 1},
+		PacketID:    1,
+		Topics:      []protocol.TopicFilter{{Topic: filter, QoS: 1}},
+	}); err != nil {
+		t.Fatalf("SUBSCRIBE: %v", err)
+	}
+	if _, err := cc.Decode(c1); err != nil {
+		t.Fatalf("SUBACK: %v", err)
+	}
+	c1.Close()
+	time.Sleep(300 * time.Millisecond)
+
+	c2, cc2 := runRawClient(t, b)
+	second := &protocol.ConnectPacket{
+		FixedHeader:     protocol.FixedHeader{PacketType: protocol.PacketTypeConnect},
+		ProtocolName:    protocol.ProtocolNameMQTT,
+		ProtocolVersion: protocol.Version50,
+		Flags:           protocol.ConnectFlags{CleanSession: secondClean},
+		KeepAlive:       30,
+		ClientID:        "clean-teardown",
+	}
+	if err := cc2.Encode(c2, second); err != nil {
+		t.Fatalf("reconnect CONNECT: %v", err)
+	}
+	resp, err := cc2.Decode(c2)
+	if err != nil {
+		t.Fatalf("reconnect CONNACK: %v", err)
+	}
+	if _, ok := resp.(*protocol.ConnAckPacket); !ok {
+		t.Fatalf("expected CONNACK, got %T", resp)
+	}
+	return b, c2, cc2
+}
+
+// TestCleanConnectReleasesSharedSubscriptionEntry covers the sharp edge of a
+// topic-tree entry that outlives the session it belonged to. A regular filter
+// is re-checked against the session's own subscription list on delivery
+// (deliverToClient -> MatchesSubscription), so a stale entry there is only
+// untidy; a SHARED subscription is not, because the topic tree is the only
+// authority the shared delivery path consults (deliverToSharedClient). A
+// stale $share entry therefore routes PUBLISH packets to a client that has
+// not subscribed on this Network Connection at all.
+//
+// [MQTT-3.1.2-4] makes the clean connect discard the existing Session, and
+// the Session's filters are part of it.
+func TestCleanConnectReleasesSharedSubscriptionEntry(t *testing.T) {
+	b, conn, _ := subscribeThenReconnect(t, false, 3600, "$share/grp/clean/teardown", true)
+
+	pubConn, pubCodec := runRawClient(t, b)
+	if err := pubCodec.Encode(pubConn, &protocol.ConnectPacket{
+		FixedHeader:     protocol.FixedHeader{PacketType: protocol.PacketTypeConnect},
+		ProtocolName:    protocol.ProtocolNameMQTT,
+		ProtocolVersion: protocol.Version50,
+		Flags:           protocol.ConnectFlags{CleanSession: true},
+		KeepAlive:       30,
+		ClientID:        "clean-teardown-publisher",
+	}); err != nil {
+		t.Fatalf("publisher CONNECT: %v", err)
+	}
+	if _, err := pubCodec.Decode(pubConn); err != nil {
+		t.Fatalf("publisher CONNACK: %v", err)
+	}
+	if err := pubCodec.Encode(pubConn, &protocol.PublishPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 1},
+		PacketID:    1,
+		Topic:       "clean/teardown",
+		Payload:     []byte("stale"),
+	}); err != nil {
+		t.Fatalf("PUBLISH: %v", err)
 	}
 
-	// Persistent session: subscribe, disconnect, expect the entry KEPT.
-	persistSess := &Session{
-		ClientID:      "leak-persist",
-		IsClean:       false,
-		Subscriptions: make(map[string]uint8),
-		SubOptions:    make(map[string]SubscriptionOptions),
-		Inflight:      make(map[uint16]*InflightMsg),
+	conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	if n, err := conn.Read(make([]byte, 64)); n > 0 {
+		t.Errorf("clean-start client was handed %d bytes on a shared subscription it never made", n)
+	} else if err == nil {
+		t.Error("read returned no data and no error: expected a timeout")
 	}
-	persistConn, _ := net.Pipe()
-	defer persistConn.Close()
-	b.mu.Lock()
-	b.connections["leak-persist"] = &clientState{conn: persistConn, codec: protocol.NewCodec(0)}
-	b.mu.Unlock()
-	b.sessions.mu.Lock()
-	b.sessions.sessions["leak-persist"] = persistSess
-	b.sessions.mu.Unlock()
+}
 
-	b.handleSubscribe("leak-persist", persistSess, &protocol.SubscribePacket{
-		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe},
-		Topics:      []protocol.TopicFilter{{Topic: "persist/keep", QoS: 1}},
-	})
-	b.disconnect("leak-persist", persistConn)
-	if got := b.topics.SubscriberCount(); got != 1 {
-		t.Errorf("expected persistent session subscription to be kept, got count %d", got)
+// TestCleanConnectReleasesStaleTopicTreeEntries is the resource half of the
+// same defect. A filter that survives a clean reconnect keeps occupying the
+// topic tree and keeps counting towards the subscription metric, and it
+// accumulates without bound when a client changes its filter set between
+// clean reconnects: only the filters it re-subscribes to are overwritten, the
+// rest are never touched again.
+//
+// The continuation case is asserted alongside as the control -- a session
+// that legitimately outlives its connection must keep its entries, because
+// they are what lets an offline PUBLISH find its subscriber.
+func TestCleanConnectReleasesStaleTopicTreeEntries(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		secondClean bool
+		wantSubs    int64
+	}{
+		{"clean-reconnect-drops", true, 0},
+		{"continuation-reconnect-keeps", false, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b, _, _ := subscribeThenReconnect(t, false, 3600, "clean/teardown", tc.secondClean)
+			if got := b.topics.SubscriberCount(); got != tc.wantSubs {
+				t.Errorf("topic-tree subscriptions after reconnect = %d, want %d", got, tc.wantSubs)
+			}
+		})
 	}
 }
 

@@ -380,16 +380,29 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 	// authenticated user hijack another user's session state (or wipe it with
 	// a clean start), so the attempt is rejected with a not-authorized
 	// CONNACK and the original session is left untouched.
+	//
+	// The stored record is kept in storedSession for the clean-start teardown
+	// below, which needs its filters to release the topic-tree entries. This
+	// is the only read of it on the connect path: reading it a second time
+	// there would double the cost of the most common CONNECT there is.
+	var storedSession *store.SessionData
 	if connectPkt.ClientID != "" {
 		if existing, ok := b.sessions.GetSession(connectPkt.ClientID); ok && existing.Username != connectPkt.Username {
 			return b.rejectSessionOwnerMismatch(conn, codec, sp, connectPkt)
 		}
 		if b.sessionStore != nil {
 			data, err := b.sessionStore.GetSession(ctx, connectPkt.ClientID)
-			if err != nil && !errors.Is(err, store.ErrSessionNotFound) {
-				b.logger.Debug("session store check failed", "clientID", connectPkt.ClientID, "error", err)
-			} else if err == nil && data != nil && data.Username != connectPkt.Username {
+			switch {
+			case err != nil:
+				if !errors.Is(err, store.ErrSessionNotFound) {
+					b.logger.Debug("session store check failed", "clientID", connectPkt.ClientID, "error", err)
+				}
+			case data == nil:
+				// Nothing stored: no owner to mismatch, nothing to tear down.
+			case data.Username != connectPkt.Username:
 				return b.rejectSessionOwnerMismatch(conn, codec, sp, connectPkt)
+			default:
+				storedSession = data
 			}
 		}
 	}
@@ -447,8 +460,27 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 	// queued offline messages (MQTT session state is not carried over). Store
 	// failures here must not go unnoticed: a silently surviving old session
 	// could resurface on a later non-clean reconnect (audit).
+	//
+	// The client's topic-tree entries go with it, and this is a defect of its
+	// own rather than a courtesy: a filter that outlives the session it
+	// belonged to keeps matching PUBLISH packets for a client that has not
+	// subscribed on this Network Connection, which turns a fresh start into a
+	// silent continuation of the old one. Two places can hold them -- an
+	// in-memory session (the old connection is still registered, so
+	// CreateSession will kick it below) and the persisted one -- so both are
+	// released here, before the new session takes the ClientID over.
 	if connectPkt.Flags.CleanSession {
+		if sess, ok := b.sessions.GetSession(clientID); ok {
+			b.unsubscribeSessionTopics(sess)
+		}
 		if b.sessionStore != nil {
+			if storedSession != nil {
+				topics := make([]string, 0, len(storedSession.Subscriptions))
+				for _, sub := range storedSession.Subscriptions {
+					topics = append(topics, sub.Topic)
+				}
+				b.unsubscribeTopics(clientID, topics)
+			}
 			if err := b.sessionStore.DeleteSession(b.ctx, clientID); err != nil {
 				b.metrics.IncErrors("session_save")
 				b.logger.Warn("failed to delete old session on clean connect", "clientID", clientID, "error", err)
@@ -474,29 +506,64 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 		sess.publishRate.SetMaxRate(b.opts.maxPublishRate)
 	}
 
-	// Set session expiry interval (MQTT 5.0 §3.1.2.11.2). An explicit 0 from
-	// the client means "end the session when the network connection closes"
-	// and must be honored; an absent property defaults to the
-	// server-configured maximum (the server may extend the session), and
-	// values above the server maximum are capped.
-	if connectPkt.Flags.CleanSession {
-		sess.ExpiryInterval = 0
+	// Set the session expiry interval (MQTT 5.0 §3.1.2.11.2).
+	//
+	// Clean Start and Session Expiry Interval are two independent settings,
+	// and collapsing them into one was the defect this replaces:
+	//
+	//   - Clean Start (§3.1.2.4) "specifies whether the Connection starts a
+	//     new Session or is a continuation of an existing Session". It is a
+	//     decision about the session that existed BEFORE this CONNECT, taken
+	//     at connect time, and [MQTT-3.1.2-4] is the whole of its obligation:
+	//     "the Client and Server MUST discard any existing Session and start
+	//     a new Session". That discard happens above, against the stored
+	//     session and its queued messages.
+	//   - Session Expiry Interval (§3.1.2.11.2) is about what happens AFTER
+	//     this connection closes: "The Client and Server MUST store the
+	//     Session State after the Network Connection is closed if the Session
+	//     Expiry Interval is greater than 0 [MQTT-3.1.2-23]".
+	//
+	// The spec's non-normative note draws the line by its own wording:
+	// "Setting Clean Start to 1 and a Session Expiry Interval of 0, is
+	// equivalent to setting CleanSession to 1 in the MQTT Specification
+	// Version 3.1.1" -- an equivalence between TWO settings, not a rule that
+	// Clean Start implies a zero interval. A client that sends Clean Start = 1
+	// with Session Expiry Interval = 3600 is asking to drop the old session
+	// now and keep the new one for an hour after it disconnects, and it is
+	// owed that: this value is what the CONNACK advertises (§3.2.2.3.2: "The
+	// server uses this property to inform the Client that it is using a value
+	// other than that sent by the Client"), what bounds a delayed will
+	// (§3.1.3.2.2), and what decides whether disconnect() stores the state.
+	//
+	// So the interval is derived from the client's property alone, capped at
+	// the server maximum:
+	//
+	//   - explicit 0, or absent with Clean Start -> the session ends when the
+	//     Network Connection closes. §3.1.2.11.2: "If the Session Expiry
+	//     Interval is absent the value 0 is used." A pre-v5 client has no way
+	//     to send the property at all, and for it the Clean Session bit is the
+	//     whole story (MQTT 3.1.1 §3.1.2.7), so a clean 3.1.1 session still
+	//     negotiates 0 here.
+	//   - above the server maximum              -> capped to it. The server
+	//     may shorten the interval and reports the value it actually uses.
+	//   - otherwise                             -> the client's value.
+	//
+	// The absent-with-continuation case keeps the historical server default:
+	// "Setting Clean Start to 0 and no Session Expiry Interval, is equivalent
+	// to setting CleanSession to 0 in the MQTT Specification Version 3.1.1",
+	// i.e. a session that outlives the connection, which a server with no
+	// configured maximum would otherwise have to treat as "ends immediately".
+	serverMax := uint32(b.opts.sessionExpiry.Seconds())
+	if connectPkt.Properties != nil && connectPkt.Properties.SessionExpiryInterval != nil {
+		clientVal := *connectPkt.Properties.SessionExpiryInterval
+		if clientVal > serverMax {
+			clientVal = serverMax
+		}
+		sess.ExpiryInterval = clientVal
+	} else if connectPkt.Flags.CleanSession {
+		sess.ExpiryInterval = 0 // session ends when the connection closes
 	} else {
-		serverMax := uint32(b.opts.sessionExpiry.Seconds())
-		clientVal := uint32(0)
-		explicit := false
-		if connectPkt.Properties != nil && connectPkt.Properties.SessionExpiryInterval != nil {
-			clientVal = *connectPkt.Properties.SessionExpiryInterval
-			explicit = true
-		}
-		switch {
-		case explicit && clientVal == 0:
-			sess.ExpiryInterval = 0 // session ends when the connection closes
-		case clientVal > 0 && clientVal < serverMax:
-			sess.ExpiryInterval = clientVal
-		default:
-			sess.ExpiryInterval = serverMax // absent property or capped
-		}
+		sess.ExpiryInterval = serverMax // absent property: server default
 	}
 
 	// Negotiate Receive Maximum (MQTT 5.0 §3.1.2.11.6 / §3.2.2.3.3).
@@ -1221,7 +1288,18 @@ func (b *Broker) disconnect(clientID string, conn net.Conn) {
 	// with Session Expiry Interval 0 ends when the connection closes
 	// (MQTT 5.0 §3.1.2.11.2): it is not saved, and any previously stored
 	// state is removed.
-	if sess, ok := b.sessions.GetSession(clientID); ok && !sess.IsClean && b.sessionStore != nil {
+	//
+	// The condition is the negotiated interval, not the Clean Start bit.
+	// §3.1.2.11.2 conditions the obligation on the interval alone -- "The
+	// Client and Server MUST store the Session State after the Network
+	// Connection is closed if the Session Expiry Interval is greater than 0
+	// [MQTT-3.1.2-23]" -- and Clean Start is about the session that existed
+	// before the CONNECT, a decision already carried out at connect time.
+	// Gating on the bit here made a v5 client that asked for Clean Start = 1
+	// with Session Expiry Interval > 0 lose the state it had just asked the
+	// server to keep, and made the DISCONNECT-carried override
+	// (§3.14.2.2.2) a no-op for the same client.
+	if sess, ok := b.sessions.GetSession(clientID); ok && b.sessionStore != nil {
 		if sess.ExpiryInterval > 0 {
 			if err := sess.Save(b.ctx, b.sessionStore); err != nil {
 				b.logger.Warn("failed to save session", "clientID", clientID, "error", err)
@@ -1254,19 +1332,25 @@ func (b *Broker) disconnect(clientID string, conn net.Conn) {
 		return
 	}
 
-	// Reset flow control counter before removing session. A clean session
-	// also releases its topic-tree subscriptions so stale entries do not
-	// accumulate across disconnect/reconnect cycles (P2-13, NEW-3).
-	// Persistent sessions keep theirs for offline queueing and are
-	// re-subscribed on reconnect; any flow-control-buffered deliveries are
-	// persisted so they are not lost (P1-5 + P2-14).
+	// Reset flow control counter before removing session. A session whose
+	// expiry interval has run out also releases its topic-tree subscriptions
+	// so stale entries do not accumulate across disconnect/reconnect cycles
+	// (P2-13, NEW-3). Persistent sessions keep theirs for offline queueing
+	// and are re-subscribed on reconnect; any flow-control-buffered
+	// deliveries are persisted so they are not lost (P1-5 + P2-14).
+	//
+	// "Has the expiry interval run out" is the negotiated Session Expiry
+	// Interval being 0, not the Clean Start bit: a clean start with an
+	// interval > 0 keeps a session that must survive this disconnect, and a
+	// non-clean connect that negotiated 0 has nothing to keep. See
+	// [MQTT-3.1.2-23] and the expiry computation in HandleConnection.
 	var persistSess *Session
 	if sess, ok := b.sessions.GetSession(clientID); ok {
 		sess.ResetOutboundUnacked()
-		if sess.IsClean {
-			b.unsubscribeSessionTopics(sess)
-		} else {
+		if sess.ExpiryInterval > 0 {
 			persistSess = sess
+		} else {
+			b.unsubscribeSessionTopics(sess)
 		}
 	}
 
