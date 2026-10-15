@@ -760,8 +760,13 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 		}
 	}
 
-	// Plugin hook: OnConnected
-	b.dispatch(ctx, plugin.OnConnected, &plugin.Context{
+	// Plugin hook + event: the session is registered at this point, so a
+	// subscriber sees a client that is genuinely online.
+	b.publishEvent(ctx, plugin.EventClientConnected, plugin.EventData{
+		ClientID:   clientID,
+		Username:   connectPkt.Username,
+		RemoteAddr: conn.RemoteAddr().String(),
+	}, plugin.OnConnected, &plugin.Context{
 		ClientID: clientID,
 		Username: connectPkt.Username,
 	})
@@ -950,6 +955,18 @@ func (b *Broker) Start() error {
 	if b.opts.sysInterval > 0 {
 		b.startLoop(b.sysStatusLoop)
 	}
+
+	// Bring plugins up before announcing readiness: a plugin whose Start
+	// depends on the broker being fully initialized must not observe
+	// EventBrokerStarted first.
+	if err := b.pluginMgr.StartPlugins(b.ctx); err != nil {
+		// A failing plugin is reported but does not abort startup -- the broker
+		// itself is healthy and refusing to serve because an extension is
+		// broken would turn a small fault into an outage.
+		b.logger.Warn("some plugins failed to start", "error", err)
+		b.metrics.IncErrors("plugin_start")
+	}
+	b.publishEvent(b.ctx, plugin.EventBrokerStarted, plugin.EventData{}, "", nil)
 	return nil
 }
 
@@ -1290,6 +1307,15 @@ func (b *Broker) Stop() {
 
 	b.qos.Stop()
 	b.will.Stop()
+
+	// Tear plugins down last, while the broker's subsystems are still usable:
+	// a plugin's Stop may need to read session state or talk to the client.
+	b.publishEvent(b.ctx, plugin.EventBrokerStopped, plugin.EventData{}, "", nil)
+	if err := b.pluginMgr.StopPlugins(); err != nil {
+		b.logger.Warn("some plugins failed to stop cleanly", "error", err)
+		b.metrics.IncErrors("plugin_stop")
+	}
+
 	b.started.Store(false) // allow re-Start after Stop
 }
 
@@ -1364,6 +1390,31 @@ func (b *Broker) dispatch(ctx context.Context, hook plugin.Hook, data *plugin.Co
 		b.logger.Debug("plugin dispatch error", "hook", hook, "error", err)
 	}
 }
+
+// publishEvent reports an occurrence on the plugin event bus.
+//
+// It is best-effort by design: a subscriber that fails or times out is recorded
+// and logged, never propagated. An observer must not be able to fail the
+// publish path it is observing -- that is the whole reason events live on a
+// separate bus from the ordered hook dispatch.
+//
+// The optional hook argument lets an event also fire the legacy hook, so
+// plugins written against the four-hook API keep working unchanged.
+func (b *Broker) publishEvent(ctx context.Context, ev plugin.Event, data plugin.EventData, hook plugin.Hook, hookData *plugin.Context) {
+	if b.pluginMgr == nil {
+		return
+	}
+	if err := b.pluginMgr.Bus().Publish(ctx, ev, data); err != nil {
+		b.logger.Warn("event bus subscriber failed", "event", ev, "error", err)
+		b.metrics.IncErrors("plugin_event")
+	}
+	if hook != "" {
+		b.dispatch(ctx, hook, hookData)
+	}
+}
+
+// The bus stamps the event kind itself (Publish takes it as an argument), so a
+// dispatch site cannot forget to set it and silently deliver to nobody.
 
 // unsubscribeTopics removes a set of topic filters (regular or $share shared)
 // from the topic tree for a client.
@@ -1498,8 +1549,11 @@ func (b *Broker) disconnect(ctx context.Context, clientID string, conn net.Conn)
 	}
 
 	b.metrics.SetOnlineSessions(online)
-	// Plugin hook
-	b.dispatch(ctx, plugin.OnClose, &plugin.Context{ClientID: clientID})
+	// Plugin hook + event: fired after the session state settled, so a
+	// subscriber reading the store sees the final state, not a half-torn one.
+	b.publishEvent(ctx, plugin.EventClientDisconnected, plugin.EventData{
+		ClientID: clientID,
+	}, plugin.OnClose, &plugin.Context{ClientID: clientID})
 
 	// Metrics
 	b.metrics.OnDisconnect()
@@ -1634,7 +1688,26 @@ func (b *Broker) readLoop(ctx context.Context, clientID string, sess *Session, c
 				hookCtx.QoS = pub.QoS
 				hookCtx.Retain = pub.Retain
 			}
-			b.dispatch(ctx, plugin.OnMessage, hookCtx)
+			// OnMessage fires for every packet type, so the bus event is
+			// published only for PUBLISH: a subscriber of
+			// EventMessagePublished should not have to filter.
+			var ev plugin.Event
+			var payload plugin.EventData
+			if pub, ok := pkt.(*protocol.PublishPacket); ok {
+				ev = plugin.EventMessagePublished
+				payload = plugin.EventData{
+					ClientID: clientID,
+					Topic:    pub.Topic,
+					Payload:  pub.Payload,
+					QoS:      pub.QoS,
+					Retain:   pub.Retain,
+				}
+			}
+			if ev != "" {
+				b.publishEvent(ctx, ev, payload, plugin.OnMessage, hookCtx)
+			} else {
+				b.dispatch(ctx, plugin.OnMessage, hookCtx)
+			}
 		}
 
 		// Update activity and refresh the keep-alive deadline

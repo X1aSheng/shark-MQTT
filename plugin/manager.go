@@ -63,11 +63,30 @@ type Plugin interface {
 type Manager struct {
 	mu      sync.RWMutex
 	plugins map[Hook][]Plugin
+	// all holds every registered plugin regardless of which hooks it declared.
+	//
+	// It exists because a plugin may legitimately declare NO hooks and only
+	// implement Lifecycle (or only subscribe to the event bus). Deriving the
+	// plugin set from the hook map would silently drop those, and their
+	// Initialize would never run.
+	all []Plugin
 	// hookTimeout bounds a single plugin Execute call. Default 10s; 0 runs
 	// plugins synchronously without a timeout (audit: a blocking plugin used
 	// to stall the owning connection goroutine indefinitely and could hang
 	// broker shutdown).
 	hookTimeout time.Duration
+
+	// bus carries broker events to subscribers. It is separate from the hook
+	// dispatch above: hooks are ordered callbacks on the packet path, while bus
+	// events are unordered observations. See the package doc.
+	bus *Bus
+
+	// stages tracks per-plugin lifecycle progress so a stage is never run twice
+	// and teardown is correct after a partially failed startup. Guarded by
+	// stageMu rather than mu, so observing a stage never contends with hook
+	// dispatch.
+	stageMu sync.RWMutex
+	stages  map[string]stage
 }
 
 // NewManager creates a new plugin manager.
@@ -75,7 +94,24 @@ func NewManager() *Manager {
 	return &Manager{
 		plugins:     make(map[Hook][]Plugin),
 		hookTimeout: 10 * time.Second,
+		bus:         NewBus(),
+		stages:      make(map[string]stage),
 	}
+}
+
+// Bus returns the event bus for subscribing to broker occurrences.
+//
+// Never nil after NewManager.
+func (pm *Manager) Bus() *Bus {
+	if pm == nil {
+		return nil
+	}
+	if pm.bus == nil {
+		// Defensive: a Manager built as a zero value rather than by
+		// NewManager would otherwise panic on Subscribe.
+		pm.bus = NewBus()
+	}
+	return pm.bus
 }
 
 // SetHookTimeout sets the per-hook execution timeout. 0 disables it.
@@ -90,6 +126,7 @@ func (pm *Manager) Register(p Plugin) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
+	pm.all = append(pm.all, p)
 	for _, hook := range p.Hooks() {
 		pm.plugins[hook] = append(pm.plugins[hook], p)
 	}
@@ -99,6 +136,14 @@ func (pm *Manager) Register(p Plugin) {
 func (pm *Manager) Unregister(p Plugin) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
+
+	keptAll := pm.all[:0]
+	for _, registered := range pm.all {
+		if registered != p {
+			keptAll = append(keptAll, registered)
+		}
+	}
+	pm.all = keptAll
 
 	for hook, list := range pm.plugins {
 		kept := list[:0]
