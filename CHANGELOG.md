@@ -7,6 +7,58 @@ This project uses semantic versioning. Pre-release tags use the form
 
 ## Unreleased
 
+### Plugin lifecycle & event bus (2026-10-15)
+
+The last piece of the platform foundation, rebuilt from smart-mqtt's `Plugin`
+and `EventBus`/`MessageBus` split. The two mechanisms are deliberately kept
+apart: the lifecycle drives objects the broker owns (ordered, synchronous,
+once per transition), the bus reports things that happened (unordered,
+concurrent, and unable to affect the publish path).
+
+- **Lifecycle**: `Initialize -> Start -> Stop -> Uninstall`. Deterministic
+  startup order by name, reverse teardown order, per-stage 30s bound and panic
+  isolation. The Manager tracks stage progress, so plugins hold no state and a
+  `Stop -> Start` cycle is correct. A `Start` failure still runs `Uninstall` --
+  a half-finished startup must not leak what `Initialize` acquired.
+- **Event bus**: 13 events covering broker lifecycle, connections, messages,
+  subscriptions and retained changes. One failing subscriber cannot stop the
+  others, panics are contained, and a subscriber that ignores its context is
+  abandoned at the timeout so it cannot hold the publish path hostage.
+- `Publish(ctx, kind, ev)` takes the event kind as a **separate argument**.
+  Reading it from the payload let a call site omit it, and the bus then looked
+  up subscribers for the empty string and delivered nothing -- a no-op
+  indistinguishable from "nobody subscribed".
+- Two defects found while testing: plugins declaring no hooks were silently
+  dropped from the managed set (so their `Initialize` never ran), and errors
+  did not name the failing subscriber.
+- Wired into the broker: plugins start before `EventBrokerStarted` is announced
+  and stop after `EventBrokerStopped`, so a plugin's `Start` sees a ready broker
+  and its `Stop` still sees session state.
+
+### Image build without Docker (2026-10-15)
+
+`deploy/docker/build-image.py` assembles a minimal OCI archive straight from a
+release binary, for hosts where Docker is unavailable or would contend with a
+control plane for memory. Two failure modes are now caught at build time rather
+than at `CrashLoopBackOff`:
+
+- Built on Windows, the layer recorded mode 0666 for every file, so the image
+  imported cleanly and then failed with `exec: ... permission denied`.
+- A Windows PE binary packaged the same way, failing with `exec format error`.
+
+### Helm: plugin injection and token handling (2026-10-15)
+
+- `plugins[]` and `extraEnv[]` pass plugin configuration through the
+  environment, which the broker already reads alongside the config file.
+- **The management token no longer lands in the ConfigMap.** It was rendered
+  there in plain text -- readable by anyone who can read ConfigMaps in the
+  namespace and dumped by `kubectl get cm -o yaml`. It now goes through a
+  chart-managed Secret and a `secretKeyRef`.
+- A third port-mapping defect: with `listenAddrs` set, the Service pointed at a
+  computed target port name that the Deployment never declared. Kubernetes
+  accepted the Service and resolved every endpoint, yet all connections were
+  refused while the pod stayed healthy.
+
 ### Kubernetes runtime fixes (2026-10-15)
 
 Found by running the chart on a real k3s cluster. Both pass `helm lint` and
