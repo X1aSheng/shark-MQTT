@@ -411,6 +411,13 @@ type Core interface {
 	// DrainInflight waits for in-flight QoS 1/2 messages to be acknowledged,
 	// bounded by the configured drain timeout. Sockets must still be open.
 	DrainInflight()
+	// DisconnectClient closes one client by ClientID as a server-initiated
+	// disconnect (will suppressed, session kept per negotiated expiry).
+	// Reports false when that client is not connected.
+	DisconnectClient(clientID string) bool
+	// DisconnectAllClients does the same for every connected client and
+	// returns how many were closed.
+	DisconnectAllClients() int
 }
 
 // Core returns a narrow, read-only handle on the broker core for advanced use

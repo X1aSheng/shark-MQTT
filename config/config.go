@@ -4,6 +4,7 @@ package config
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -34,7 +35,7 @@ type Config struct {
 	// messages to be acknowledged before closing the sockets anyway.
 	// 0 closes immediately; the wait requires live sockets, so it happens
 	// before they close.
-	DrainTimeout time.Duration `yaml:"drain_timeout" toml:"drain_timeout" env:"MQTT_DRAIN_TIMEOUT"`
+	DrainTimeout   time.Duration `yaml:"drain_timeout" toml:"drain_timeout" env:"MQTT_DRAIN_TIMEOUT"`
 	KeepAlive      uint16        `yaml:"keep_alive" toml:"keep_alive" env:"MQTT_KEEP_ALIVE"`
 	MaxPacketSize  int           `yaml:"max_packet_size" toml:"max_packet_size" env:"MQTT_MAX_PACKET_SIZE"`
 	MaxConnections int           `yaml:"max_connections" toml:"max_connections" env:"MQTT_MAX_CONNECTIONS"`
@@ -114,64 +115,73 @@ func DefaultConfig() *Config {
 
 // Validate checks that configuration values are valid.
 func (c *Config) Validate() error {
+	// Every problem is collected, not just the first one. The old version
+	// returned on the first failure, so an operator with three bad fields had to
+	// fix, redeploy, and read the error log three times. errors.Join (Go 1.20+)
+	// keeps every cause intact and still satisfies errors.Is/errors.As.
+	var errs []error
+	add := func(format string, args ...any) {
+		errs = append(errs, fmt.Errorf(format, args...))
+	}
+
 	if c.ListenAddr == "" {
-		return fmt.Errorf("listen_addr must not be empty")
+		add("listen_addr must not be empty")
 	}
 	if c.MaxPacketSize <= 0 {
-		return fmt.Errorf("max_packet_size must be > 0, got %d", c.MaxPacketSize)
+		add("max_packet_size must be > 0, got %d", c.MaxPacketSize)
 	}
 	if c.MaxConnections < 0 {
-		return fmt.Errorf("max_connections must be >= 0, got %d", c.MaxConnections)
+		add("max_connections must be >= 0, got %d", c.MaxConnections)
 	}
 	if c.WriteQueueSize < 0 {
-		return fmt.Errorf("write_queue_size must be >= 0, got %d", c.WriteQueueSize)
+		add("write_queue_size must be >= 0, got %d", c.WriteQueueSize)
 	}
 	if c.TCPKeepAlivePeriod < 0 {
-		return fmt.Errorf("tcp_keepalive_period must be >= 0, got %v", c.TCPKeepAlivePeriod)
+		add("tcp_keepalive_period must be >= 0, got %v", c.TCPKeepAlivePeriod)
 	}
 	if c.SysInterval < 0 {
-		return fmt.Errorf("sys_interval must be >= 0, got %v", c.SysInterval)
+		add("sys_interval must be >= 0, got %v", c.SysInterval)
 	}
 	if c.QoSMaxRetries < 0 {
-		return fmt.Errorf("qos_max_retries must be >= 0, got %d", c.QoSMaxRetries)
+		add("qos_max_retries must be >= 0, got %d", c.QoSMaxRetries)
 	}
 	if c.QoSMaxInflight <= 0 {
-		return fmt.Errorf("qos_max_inflight must be > 0, got %d", c.QoSMaxInflight)
+		add("qos_max_inflight must be > 0, got %d", c.QoSMaxInflight)
 	}
 	if c.QoSRetryInterval <= 0 {
-		return fmt.Errorf("qos_retry_interval must be > 0, got %v", c.QoSRetryInterval)
+		add("qos_retry_interval must be > 0, got %v", c.QoSRetryInterval)
 	}
 	if c.TLSEnabled {
 		if c.TLSCertFile == "" {
-			return fmt.Errorf("tls_cert_file is required when TLS is enabled")
+			add("tls_cert_file is required when TLS is enabled")
 		}
 		if c.TLSKeyFile == "" {
-			return fmt.Errorf("tls_key_file is required when TLS is enabled")
+			add("tls_key_file is required when TLS is enabled")
 		}
 		if c.TLSMutual && c.TLSCACertFile == "" {
-			return fmt.Errorf("tls_ca_cert_file is required when tls_mutual is enabled")
+			add("tls_ca_cert_file is required when tls_mutual is enabled")
 		}
 	}
 	if c.StorageBackend == "badger" && c.BadgerPath == "" {
-		return fmt.Errorf("badger_path is required when storage_backend is badger")
+		add("badger_path is required when storage_backend is badger")
 	}
 	if c.TLSMinVersion > 0 && c.TLSMaxVersion > 0 && c.TLSMinVersion > c.TLSMaxVersion {
-		return fmt.Errorf("tls_min_version (%d) must be <= tls_max_version (%d)", c.TLSMinVersion, c.TLSMaxVersion)
+		add("tls_min_version (%d) must be <= tls_max_version (%d)", c.TLSMinVersion, c.TLSMaxVersion)
 	}
 	switch c.StorageBackend {
 	case "memory", "redis", "badger", "":
 	default:
-		return fmt.Errorf("unknown storage_backend: %q (must be memory, redis, or badger)", c.StorageBackend)
+		add("unknown storage_backend: %q (must be memory, redis, or badger)", c.StorageBackend)
 	}
 	if c.StorageBackend == "redis" && c.RedisAddr == "" {
-		return fmt.Errorf("redis_addr is required when storage_backend is redis")
+		add("redis_addr is required when storage_backend is redis")
 	}
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error", "":
 	default:
-		return fmt.Errorf("unknown log_level: %q (must be debug, info, warn, or error)", c.LogLevel)
+		add("unknown log_level: %q (must be debug, info, warn, or error)", c.LogLevel)
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // secureCipherSuites lists recommended TLS 1.2+ cipher suites that provide

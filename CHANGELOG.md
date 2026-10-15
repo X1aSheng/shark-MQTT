@@ -7,6 +7,54 @@ This project uses semantic versioning. Pre-release tags use the form
 
 ## Unreleased
 
+### Context scoping & management API (2026-10-15)
+
+- **Per-connection paths now carry the connection context.** `handlePublish`,
+  `handleSubscribe`, `handleRetainedMessage`, `queueOfflineMessage`,
+  `deliverQueuedMessages`, `deliverToClient`, `deliverToSharedClient`,
+  `routeSharedPublish`, `readLoop`, `handlePubRel`, `publishWill`,
+  `persistBufferedOutbound`, `deliverRetainedMessages` and `republish` all took
+  their store writes and authorization checks from the broker-wide `b.ctx`. A
+  connection ending no longer cancelled that work, and a shutdown cancelling
+  `b.ctx` could skip an authorization check rather than deny it. All sixteen now
+  take `ctx` as their first parameter and the body uses it.
+- **Not a blind replacement — four call sites keep `b.ctx` on purpose**, because
+  their work outlives the connection: the will publish callback (fired from the
+  will handler's own timer), the QoS retry `republish` (driven by the QoS
+  engine's scheduler), `$SYS` publishing (a background loop), and the connection
+  teardown writes (below).
+- **`disconnect` takes a context, and teardown writes deliberately use a
+  broker-scoped one.** Session persistence must survive the connection's death —
+  that is the entire point of Session Expiry Interval > 0 — so passing the dying
+  connection's context there would abort the store call and lose exactly the
+  state MQTT 5.0 §3.1.2.11.2 requires the server to keep. The new `teardownCtx`
+  derives from the broker lifetime instead, so a broker-wide shutdown still cuts
+  these writes off.
+- **The scoping rule is documented at the entry point.** `HandleConnection`'s doc
+  comment now states which context is the connection scope, which is the broker
+  scope, and why conflating them loses session state.
+- **`DisconnectClient` / `DisconnectAllClients` added** (also on the `api.Core`
+  interface). Management code, quota enforcers and test harnesses previously had
+  no way to evict a client — the teardown helpers were unexported. They behave
+  as a server-initiated disconnect: the Will is suppressed (an operator did not
+  observe a failure) and session state is kept per the negotiated expiry. Four
+  integration tests cover eviction, will suppression, the bulk variant, and
+  safety before `Start`; the will test was verified by sabotaging the suppression
+  and confirming it fails.
+- **`Config.Validate` reports every problem at once** via `errors.Join` instead of
+  returning on the first failure, which previously cost an operator one
+  fix-redeploy-read cycle per bad field.
+
+### Idiomatic Go cleanups (2026-10-15)
+
+- `StaticAuth.CanPublish` / `CanSubscribe` use `slices.ContainsFunc` instead of
+  hand-written `for ... if ... return true` loops — the intent is a search, not a
+  transformation.
+- `unsubscribeSessionTopics` uses `slices.Collect(maps.Keys(...))` instead of a
+  manual preallocated append loop.
+- Two tests added in `config`: one pins the aggregate-error behaviour, the other
+  guards that `errors.Join` over no errors returns nil.
+
 ### Shutdown drain correctness (2026-10-15)
 
 - **In-flight messages are drained BEFORE the sockets close.** `Stop` used to

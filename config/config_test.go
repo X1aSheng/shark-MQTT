@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -354,5 +355,45 @@ func TestValidate_TLSVersionRange(t *testing.T) {
 	cfg.TLSMaxVersion = 771 // TLS 1.2 - invalid range
 	if err := cfg.Validate(); err == nil {
 		t.Error("expected error when TLSMinVersion > TLSMaxVersion")
+	}
+}
+
+// TestValidate_ReportsEveryProblem pins the aggregate-error behaviour: a
+// config with several bad fields must report all of them at once. Returning on
+// the first failure (the old behaviour) made an operator fix, redeploy and read
+// the log once per field.
+func TestValidate_ReportsEveryProblem(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.ListenAddr = ""            // bad: required
+	cfg.MaxPacketSize = 0          // bad: must be > 0
+	cfg.MaxConnections = -1        // bad: must be >= 0
+	cfg.QoSMaxInflight = 0         // bad: must be > 0
+	cfg.StorageBackend = "unknown" // bad: not in the allowed set
+	cfg.LogLevel = "verbose"       // bad: not in the allowed set
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() = nil, want aggregated error")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"listen_addr must not be empty",
+		"max_packet_size must be > 0",
+		"max_connections must be >= 0",
+		"qos_max_inflight must be > 0",
+		"unknown storage_backend",
+		"unknown log_level",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("Validate() error missing %q\ngot: %s", want, msg)
+		}
+	}
+}
+
+// TestValidate_NilWhenValid guards the other half: errors.Join over an empty
+// slice must return nil, not a non-nil wrapper error.
+func TestValidate_NilWhenValid(t *testing.T) {
+	if err := DefaultConfig().Validate(); err != nil {
+		t.Errorf("Validate() on defaults = %v, want nil", err)
 	}
 }

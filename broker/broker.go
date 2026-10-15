@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -1381,10 +1383,9 @@ func (b *Broker) unsubscribeTopics(clientID string, topics []string) {
 // unsubscribeSessionTopics releases all of a session's topic-tree entries.
 func (b *Broker) unsubscribeSessionTopics(sess *Session) {
 	sess.mu.RLock()
-	topics := make([]string, 0, len(sess.Subscriptions))
-	for topic := range sess.Subscriptions {
-		topics = append(topics, topic)
-	}
+	// maps.Keys returns an iterator over the keys (Go 1.23+); slices.Collect
+	// drains it into a slice in one pass, replacing the manual preallocation loop.
+	topics := slices.Collect(maps.Keys(sess.Subscriptions))
 	sess.mu.RUnlock()
 	b.unsubscribeTopics(sess.ClientID, topics)
 }
@@ -3570,6 +3571,66 @@ func (b *Broker) abnormalDisconnect(clientID string, conn net.Conn) {
 	ctx, cancel := b.teardownCtx()
 	defer cancel()
 	b.disconnect(ctx, clientID, conn)
+}
+
+// DisconnectClient forcibly closes a client connection by ClientID. It is the
+// operator-facing counterpart of the internal teardown paths: it is what an
+// admin API, a quota enforcer or a test harness needs, none of which can reach
+// the unexported disconnect helpers.
+//
+// Semantics are deliberately those of a SERVER-INITIATED disconnect, so they
+// match a client that sent DISCONNECT itself:
+//   - the Will is suppressed (an operator evicting a client did not observe a
+//     failure, and publishing a will would be misleading), and
+//   - session state is preserved according to the negotiated Session Expiry
+//     Interval, exactly as on a graceful client disconnect.
+//
+// The socket is closed rather than asked to leave, so an unresponsive client is
+// actually removed. The readLoop then observes the error and runs its own
+// teardown; the identity check inside disconnect makes the second pass a no-op
+// rather than a double cleanup.
+//
+// Returns false when no such client is connected.
+func (b *Broker) DisconnectClient(clientID string) bool {
+	b.mu.RLock()
+	cs, ok := b.connections[clientID]
+	b.mu.RUnlock()
+	if !ok || cs == nil || cs.conn == nil {
+		return false
+	}
+
+	// Suppress the will before closing: once the socket is down the readLoop
+	// cannot tell an operator eviction from a client failure.
+	b.will.RemoveWill(clientID)
+
+	if err := cs.conn.Close(); err != nil {
+		// The readLoop still wakes up and tears the session down; report only.
+		b.logger.Debug("failed to close client connection on disconnect request",
+			"clientID", clientID, "error", err)
+	}
+	return true
+}
+
+// DisconnectAllClients closes every currently connected client, returning how
+// many were closed. Like DisconnectClient it is a server-initiated disconnect:
+// wills are suppressed and session state is kept per the negotiated expiry.
+// A rolling restart that has already called BeginShutdown needs nothing else --
+// Stop closes the sockets itself.
+func (b *Broker) DisconnectAllClients() int {
+	b.mu.RLock()
+	ids := make([]string, 0, len(b.connections))
+	for id := range b.connections {
+		ids = append(ids, id)
+	}
+	b.mu.RUnlock()
+
+	n := 0
+	for _, id := range ids {
+		if b.DisconnectClient(id) {
+			n++
+		}
+	}
+	return n
 }
 
 func (b *Broker) gracefulDisconnect(clientID string, conn net.Conn) {

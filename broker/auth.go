@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 
@@ -173,12 +174,12 @@ func (s *StaticAuth) CanPublish(ctx context.Context, username, topic string) boo
 	if !ok {
 		return false
 	}
-	for _, t := range acl.PublishTopics {
-		if aclCovers(t, topic) {
-			return true
-		}
-	}
-	return false
+	// slices.ContainsFunc (Go 1.21+) states the intent directly: does ANY entry
+	// satisfy the predicate. The equivalent hand-written loop obscured that this
+	// is a search, not a transformation.
+	return slices.ContainsFunc(acl.PublishTopics, func(pattern string) bool {
+		return aclCovers(pattern, topic)
+	})
 }
 
 func (s *StaticAuth) CanSubscribe(ctx context.Context, username, topic string) bool {
@@ -189,12 +190,9 @@ func (s *StaticAuth) CanSubscribe(ctx context.Context, username, topic string) b
 	if !ok {
 		return false
 	}
-	for _, t := range acl.SubscribeTopics {
-		if aclCovers(t, topic) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(acl.SubscribeTopics, func(pattern string) bool {
+		return aclCovers(pattern, topic)
+	})
 }
 
 // aclCovers reports whether the ACL pattern covers the requested topic or
