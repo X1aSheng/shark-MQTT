@@ -10,15 +10,32 @@ spec:
   selector:
     {{- include "shark-mqtt.selectorLabels" . | nindent 4 }}
   ports:
+    {{- if .Values.config.listenAddrs }}
+    {{/*
+      listenAddrs REPLACES listen_addr, so the broker may not be listening on
+      service.mqttPort at all -- with listen_addrs=[":2883"] it listens only on
+      2883. Pointing the primary Service port at service.mqttPort would then
+      black-hole every client while the pod looks healthy. The first entry of
+      listenAddrs is the primary, and it is exactly what the broker binds as
+      port[0]; route the primary Service port there.
+    */}}
+    - name: mqtt
+      protocol: TCP
+      port: {{ (index .Values.config.listenAddrs 0) | replace ":" "" | trimPrefix "0.0.0.0" | trimPrefix ":" | int }}
+      targetPort: mqtt-extra-{{ index .Values.config.listenAddrs 0 | replace ":" "-" | replace "." "-" | replace "[" "" | replace "]" "" | trunc 12 | trimSuffix "-" | trimPrefix "-" }}
+    {{- else }}
     - name: mqtt
       protocol: TCP
       port: {{ .Values.service.mqttPort }}
       targetPort: mqtt
+    {{- end }}
     {{- range .Values.config.listenAddrs }}
+    {{- if ne . (index $.Values.config.listenAddrs 0) }}
     - name: mqtt-extra-{{ . | replace ":" "-" | replace "." "-" | replace "[" "" | replace "]" "" | trunc 12 | trimSuffix "-" | trimPrefix "-" }}
       protocol: TCP
       port: {{ . | replace ":" "" | trimPrefix "0.0.0.0" | trimPrefix ":" | int }}
       targetPort: mqtt-extra-{{ . | replace ":" "-" | replace "." "-" | replace "[" "" | replace "]" "" | trunc 12 | trimSuffix "-" | trimPrefix "-" }}
+    {{- end }}
     {{- end }}
     - name: metrics
       protocol: TCP

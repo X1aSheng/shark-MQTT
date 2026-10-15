@@ -45,12 +45,27 @@ spec:
             - "-allow-all"
             {{- end }}
           ports:
+            {{- if .Values.config.listenAddrs }}
+            {{/*
+              Same reason as the Service: when listenAddrs replaces listen_addr
+              the broker binds only those ports. Declaring a containerPort for
+              service.mqttPort would advertise a port nothing listens on, so the
+              primary entry of listenAddrs becomes the "mqtt" port and the rest
+              follow as extras.
+            */}}
             - name: mqtt
-              containerPort: {{ .Values.service.mqttPort }}
+              containerPort: {{ index .Values.config.listenAddrs 0 | replace ":" "" | trimPrefix "0.0.0.0" | trimPrefix ":" | int }}
               protocol: TCP
             {{- range .Values.config.listenAddrs }}
+            {{- if ne . (index $.Values.config.listenAddrs 0) }}
             - name: mqtt-extra-{{ . | replace ":" "-" | replace "." "-" | replace "[" "" | replace "]" "" | trunc 12 | trimSuffix "-" | trimPrefix "-" }}
               containerPort: {{ . | replace ":" "" | trimPrefix "0.0.0.0" | trimPrefix ":" | int }}
+              protocol: TCP
+            {{- end }}
+            {{- end }}
+            {{- else }}
+            - name: mqtt
+              containerPort: {{ .Values.service.mqttPort }}
               protocol: TCP
             {{- end }}
             - name: metrics
@@ -85,8 +100,22 @@ spec:
             failureThreshold: 3
           lifecycle:
             preStop:
-              exec:
-                command: ["sleep", "{{ .Values.preStopSleepSeconds | default 10 }}"]
+              {{/*
+                Use the native sleep handler, NOT `exec: ["sleep", "10"]`.
+
+                An exec hook runs a binary INSIDE the container, which means the
+                image must ship one. This project's image is a minimal static
+                rootfs with no shell and no coreutils, so the exec hook fails
+                with `FailedPreStopHook` -- observed on a real cluster during a
+                rolling update. The failure is only a warning, so the rollout
+                completes and the problem stays invisible: the intended delay
+                before SIGTERM simply never happens.
+
+                The native handler is handled by the kubelet, so it works
+                regardless of what the image contains.
+              */}}
+              sleep:
+                seconds: {{ .Values.preStopSleepSeconds | default 10 }}
           volumeMounts:
             - name: config
               mountPath: /etc/shark-mqtt/config.yaml
