@@ -141,7 +141,7 @@ func TestBroker_Publish_NoSubscribers(t *testing.T) {
 		Topic:       "test/topic",
 		Payload:     []byte("hello"),
 	}
-	b.handlePublish("client1", nil, pkt)
+	b.handlePublish(context.Background(), "client1", nil, pkt)
 }
 
 func TestBroker_RetainedMetricsCountUpdatesOnOverwriteAndDelete(t *testing.T) {
@@ -157,7 +157,7 @@ func TestBroker_RetainedMetricsCountUpdatesOnOverwriteAndDelete(t *testing.T) {
 	defer b.Stop()
 
 	publish := func(payload []byte) {
-		b.handlePublish("client1", nil, &protocol.PublishPacket{
+		b.handlePublish(context.Background(), "client1", nil, &protocol.PublishPacket{
 			FixedHeader: protocol.FixedHeader{
 				PacketType: protocol.PacketTypePublish,
 				Retain:     true,
@@ -202,7 +202,7 @@ func TestBroker_PublishWillStoresRetainedMessage(t *testing.T) {
 	}
 	defer b.Stop()
 
-	if err := b.publishWill("user1", "will/retained", []byte("offline"), 1, true, nil); err != nil {
+	if err := b.publishWill(context.Background(), "user1", "will/retained", []byte("offline"), 1, true, nil); err != nil {
 		t.Fatalf("publishWill: %v", err)
 	}
 
@@ -291,7 +291,7 @@ func TestBroker_QoS2DupDetection(t *testing.T) {
 
 	// handlePublish should detect the duplicate and re-send PUBREC without
 	// replacing the staged message or touching the QoS engine.
-	b.handlePublish("dup-client", sess, dupPkt)
+	b.handlePublish(context.Background(), "dup-client", sess, dupPkt)
 
 	if !sess.HasInboundQoS2(100) {
 		t.Error("packet ID should still be tracked after dup detection")
@@ -314,7 +314,7 @@ func TestBroker_QoS2DupDetection(t *testing.T) {
 		PacketID: 200,
 		Payload:  []byte("new"),
 	}
-	b.handlePublish("dup-client", sess, newPkt)
+	b.handlePublish(context.Background(), "dup-client", sess, newPkt)
 
 	if !sess.HasInboundQoS2(200) {
 		t.Error("new packet ID should be staged for non-dup PUBLISH")
@@ -365,7 +365,7 @@ func TestBroker_SubscribeAndUnsubscribe(t *testing.T) {
 			{Topic: "test/topic", QoS: 0},
 		},
 	}
-	b.handleSubscribe("test-client", sess, subPkt)
+	b.handleSubscribe(context.Background(), "test-client", sess, subPkt)
 
 	if _, ok := sess.Subscriptions["test/topic"]; !ok {
 		t.Error("expected subscription to be added")
@@ -428,7 +428,7 @@ func TestBroker_CleanSessionUnsubscribesOnDisconnect(t *testing.T) {
 			b.sessions.sessions[clientID] = sess
 			b.sessions.mu.Unlock()
 
-			b.handleSubscribe(clientID, sess, &protocol.SubscribePacket{
+			b.handleSubscribe(context.Background(), clientID, sess, &protocol.SubscribePacket{
 				FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe},
 				Topics:      []protocol.TopicFilter{{Topic: "leak/topic", QoS: 1}},
 			})
@@ -612,7 +612,7 @@ func TestCleanStartWithExpiryKeepsSubscriptionsOnDisconnect(t *testing.T) {
 			b.sessions.sessions[clientID] = sess
 			b.sessions.mu.Unlock()
 
-			b.handleSubscribe(clientID, sess, &protocol.SubscribePacket{
+			b.handleSubscribe(context.Background(), clientID, sess, &protocol.SubscribePacket{
 				FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe},
 				Topics:      []protocol.TopicFilter{{Topic: "keep/topic", QoS: 1}},
 			})
@@ -1196,7 +1196,7 @@ func TestInboundReceiveMaxExceededDisconnects(t *testing.T) {
 	collect, _ := inboundWirePump(t, b, "rm-inbound", protocol.Version50)
 
 	publish := func(id uint16) {
-		b.handlePublish("rm-inbound", sess, &protocol.PublishPacket{
+		b.handlePublish(context.Background(), "rm-inbound", sess, &protocol.PublishPacket{
 			FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 2},
 			PacketID:    id,
 			Topic:       "rm/inbound",
@@ -1258,7 +1258,7 @@ func TestInboundBudgetPreV5KeepsConnection(t *testing.T) {
 	collect, closed := inboundWirePump(t, b, "rm-311", protocol.Version311)
 
 	for _, id := range []uint16{1, 2, 3} {
-		b.handlePublish("rm-311", sess, &protocol.PublishPacket{
+		b.handlePublish(context.Background(), "rm-311", sess, &protocol.PublishPacket{
 			FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 2},
 			PacketID:    id,
 			Topic:       "rm/inbound",
@@ -1376,7 +1376,7 @@ func TestBroker_WillAuthDenied(t *testing.T) {
 	}()
 
 	// Publishing a will to a topic the user cannot publish must be denied.
-	if err := b.publishWill("u1", "secret/topic", []byte("leak"), 1, false, nil); err != nil {
+	if err := b.publishWill(context.Background(), "u1", "secret/topic", []byte("leak"), 1, false, nil); err != nil {
 		t.Fatalf("publishWill: %v", err)
 	}
 
@@ -1453,7 +1453,7 @@ func TestMalformedTopicNameIsProtocolError(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			qos := tc.qos
 			pkts := malformedTopicTeardown(t, tc.name, tc.version, func(b *Broker, clientID string, sess *Session) {
-				b.handlePublish(clientID, sess, &protocol.PublishPacket{
+				b.handlePublish(context.Background(), clientID, sess, &protocol.PublishPacket{
 					FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: qos},
 					PacketID:    7,
 					Topic:       "sport#", // '#' is illegal in a Topic Name
@@ -1502,7 +1502,7 @@ func TestMalformedSubscribeFilterIsProtocolError(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			pkts := malformedTopicTeardown(t, tc.name, tc.version, func(b *Broker, clientID string, sess *Session) {
-				b.handleSubscribe(clientID, sess, &protocol.SubscribePacket{
+				b.handleSubscribe(context.Background(), clientID, sess, &protocol.SubscribePacket{
 					FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe},
 					PacketID:    3,
 					Topics:      []protocol.TopicFilter{{Topic: "sport#", QoS: 1}},
@@ -1638,7 +1638,7 @@ func TestWellFormedTopicIsNotTornDown(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		id := uint16(10 + i)
 		got := driveThenRead("PUBACK", func() {
-			b.handlePublish("wf", sess, &protocol.PublishPacket{
+			b.handlePublish(context.Background(), "wf", sess, &protocol.PublishPacket{
 				FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 1},
 				PacketID:    id,
 				Topic:       "sport/tennis",
@@ -1656,7 +1656,7 @@ func TestWellFormedTopicIsNotTornDown(t *testing.T) {
 
 	// 2. Well-formed subscribe -> SUBACK granting the requested QoS.
 	gotSub := driveThenRead("SUBACK", func() {
-		b.handleSubscribe("wf", sess, &protocol.SubscribePacket{
+		b.handleSubscribe(context.Background(), "wf", sess, &protocol.SubscribePacket{
 			FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe},
 			PacketID:    20,
 			Topics:      []protocol.TopicFilter{{Topic: "sport/+", QoS: 1}},

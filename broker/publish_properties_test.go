@@ -190,7 +190,7 @@ func TestRepublishKeepsForwardedProperties(t *testing.T) {
 	}
 	b.mu.Unlock()
 
-	if err := b.republish(clientID, 7, "props/retry", []byte("payload"), 1, false); err != nil {
+	if err := b.republish(context.Background(), clientID, 7, "props/retry", []byte("payload"), 1, false); err != nil {
 		t.Fatalf("republish: %v", err)
 	}
 
@@ -330,7 +330,7 @@ func TestSessionRestoreKeepsForwardedProperties(t *testing.T) {
 	}
 	second.mu.Unlock()
 
-	if err := second.republish(clientID, 7, "props/restart", []byte("body"), 1, false); err != nil {
+	if err := second.republish(context.Background(), clientID, 7, "props/restart", []byte("body"), 1, false); err != nil {
 		t.Fatalf("republish: %v", err)
 	}
 	select {
@@ -399,7 +399,7 @@ func TestRepublishKeepsExpiredDeliveryThatWasAlreadySent(t *testing.T) {
 	// Two ticks on purpose: one proves the retransmission survives the
 	// deadline, the second is what used to surface the stray PUBREC.
 	for i := 1; i <= 2; i++ {
-		if err := b.republish(clientID, 7, "props/expired", []byte("stale"), 1, false); err != nil {
+		if err := b.republish(context.Background(), clientID, 7, "props/expired", []byte("stale"), 1, false); err != nil {
 			t.Fatalf("republish #%d: %v", i, err)
 		}
 	}

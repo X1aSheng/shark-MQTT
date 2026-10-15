@@ -196,13 +196,18 @@ func New(opts ...Option) *Broker {
 			return b.sendPubComp(clientID, packetID)
 		},
 		func(clientID string, packetID uint16, topic string, payload []byte, qos uint8, retain bool) error {
-			return b.republish(clientID, packetID, topic, payload, qos, retain)
+			// Retry runs on the QoS engine's own schedule, long after the original
+			// PUBLISH was handled, so it is broker-scoped by nature.
+			return b.republish(b.ctx, clientID, packetID, topic, payload, qos, retain)
 		},
 	)
 
 	// Setup Will callback
 	b.will.SetPublishCallback(func(username string, topic string, payload []byte, qos uint8, retain bool, props *protocol.Properties) error {
-		return b.publishWill(username, topic, payload, qos, retain, props)
+		// A will fires from the will handler's own timer, long after the owning
+		// connection is gone, so it is broker-scoped work by nature: b.ctx, not
+		// any connection context.
+		return b.publishWill(b.ctx, username, topic, payload, qos, retain, props)
 	})
 
 	return b
@@ -228,6 +233,26 @@ func connAckForConnectRejection(sp protocol.Spec, connectPkt *protocol.ConnectPa
 // It consumes a protocol-neutral Conn whose handshake has already been
 // performed by the network server's protocol adapter; the broker core no
 // longer decodes the MQTT CONNECT itself.
+//
+// # Context scopes
+//
+// Two contexts reach this package and they are NOT interchangeable:
+//
+//   - ctx (this parameter) is the CONNECTION scope. Every per-connection path
+//     takes it as its first parameter -- readLoop, handlePublish, handleSubscribe,
+//     deliverToClient, queueOfflineMessage, plugin dispatch -- so a store write
+//     or authorization check started by this connection ends when the connection
+//     ends. This is what a ctx-taking function should use unless it says otherwise.
+//   - b.ctx is the BROKER scope, owned by Start/Stop. It belongs to the three
+//     background loops (session expiry sweep, retained expiry sweep, $SYS
+//     publisher) and to work that outlives its connection: the will publish
+//     callback (fires from the will handler's own timer), the QoS retry republish,
+//     and the connection teardown store writes (see teardownCtx).
+//
+// The distinction is not cosmetic: a per-connection store write issued with
+// b.ctx survives its client, and a teardown write issued with the connection ctx
+// is cancelled before it stores anything, losing session state that MQTT 5.0
+// 3.1.2.11.2 requires the server to keep.
 func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 	conn := c.Raw
 	codec := c.Codec
@@ -259,7 +284,7 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 	}
 
 	// Plugin hook: OnAccept
-	b.dispatch(plugin.OnAccept, &plugin.Context{
+	b.dispatch(ctx, plugin.OnAccept, &plugin.Context{
 		RemoteAddr: conn.RemoteAddr().String(),
 	})
 
@@ -734,7 +759,7 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 	}
 
 	// Plugin hook: OnConnected
-	b.dispatch(plugin.OnConnected, &plugin.Context{
+	b.dispatch(ctx, plugin.OnConnected, &plugin.Context{
 		ClientID: clientID,
 		Username: connectPkt.Username,
 	})
@@ -755,13 +780,13 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 	}
 
 	// Deliver messages queued while this persistent session was offline (P1-5).
-	b.deliverQueuedMessages(clientID, sess)
+	b.deliverQueuedMessages(ctx, clientID, sess)
 
 	// Set initial keep-alive deadline so idle clients are detected
 	b.setKeepAliveDeadline(conn, clientID, sess.KeepAlive)
 
 	// Run read loop (handles its own cleanup via abnormalDisconnect/gracefulDisconnect)
-	b.readLoop(clientID, sess, codec, conn)
+	b.readLoop(ctx, clientID, sess, codec, conn)
 
 	return nil
 }
@@ -1142,7 +1167,7 @@ func (b *Broker) publishSystem(topic string, payload []byte) {
 		Payload:     payload,
 	}
 	for _, sub := range b.topics.Match(topic) {
-		b.deliverToClient(sub.ClientID, "$SYS", pkt)
+		b.deliverToClient(b.ctx, sub.ClientID, "$SYS", pkt)
 	}
 }
 
@@ -1329,11 +1354,11 @@ func (b *Broker) totalInflight() int {
 	return total
 }
 
-func (b *Broker) dispatch(hook plugin.Hook, data *plugin.Context) {
+func (b *Broker) dispatch(ctx context.Context, hook plugin.Hook, data *plugin.Context) {
 	if b.pluginMgr == nil {
 		return
 	}
-	if err := b.pluginMgr.Dispatch(b.ctx, hook, data); err != nil {
+	if err := b.pluginMgr.Dispatch(ctx, hook, data); err != nil {
 		b.logger.Debug("plugin dispatch error", "hook", hook, "error", err)
 	}
 }
@@ -1468,12 +1493,12 @@ func (b *Broker) disconnect(ctx context.Context, clientID string, conn net.Conn)
 	// registration or teardown for every client (audit). The session is no
 	// longer reachable at this point, so no takeover can race these writes.
 	if persistSess != nil && b.messageStore != nil {
-		b.persistBufferedOutbound(clientID, persistSess)
+		b.persistBufferedOutbound(ctx, clientID, persistSess)
 	}
 
 	b.metrics.SetOnlineSessions(online)
 	// Plugin hook
-	b.dispatch(plugin.OnClose, &plugin.Context{ClientID: clientID})
+	b.dispatch(ctx, plugin.OnClose, &plugin.Context{ClientID: clientID})
 
 	// Metrics
 	b.metrics.OnDisconnect()
@@ -1532,7 +1557,7 @@ func decodeErrorReasonCode(err error) (byte, bool) {
 	}
 }
 
-func (b *Broker) readLoop(clientID string, sess *Session, codec protocol.PacketCodec, conn net.Conn) {
+func (b *Broker) readLoop(ctx context.Context, clientID string, sess *Session, codec protocol.PacketCodec, conn net.Conn) {
 	for {
 		pkt, err := codec.Decode(conn)
 		if err != nil {
@@ -1608,7 +1633,7 @@ func (b *Broker) readLoop(clientID string, sess *Session, codec protocol.PacketC
 				hookCtx.QoS = pub.QoS
 				hookCtx.Retain = pub.Retain
 			}
-			b.dispatch(plugin.OnMessage, hookCtx)
+			b.dispatch(ctx, plugin.OnMessage, hookCtx)
 		}
 
 		// Update activity and refresh the keep-alive deadline
@@ -1618,9 +1643,9 @@ func (b *Broker) readLoop(clientID string, sess *Session, codec protocol.PacketC
 		switch p := pkt.(type) {
 		case *protocol.PublishPacket:
 			sess.TrackReceived(len(p.Payload) + len(p.Topic))
-			b.handlePublish(clientID, sess, p)
+			b.handlePublish(ctx, clientID, sess, p)
 		case *protocol.SubscribePacket:
-			b.handleSubscribe(clientID, sess, p)
+			b.handleSubscribe(ctx, clientID, sess, p)
 		case *protocol.UnsubscribePacket:
 			b.handleUnsubscribe(clientID, sess, p)
 		case *protocol.PingReqPacket:
@@ -1650,7 +1675,7 @@ func (b *Broker) readLoop(clientID string, sess *Session, codec protocol.PacketC
 		case *protocol.PubRecPacket:
 			b.handlePubRec(clientID, p.PacketID, p.ReasonCode)
 		case *protocol.PubRelPacket:
-			b.handlePubRel(clientID, p.PacketID)
+			b.handlePubRel(ctx, clientID, p.PacketID)
 		case *protocol.PubCompPacket:
 			b.handlePubComp(clientID, p.PacketID)
 		case *protocol.AuthPacket:
@@ -1713,7 +1738,7 @@ func (b *Broker) readLoop(clientID string, sess *Session, codec protocol.PacketC
 	}
 }
 
-func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.PublishPacket) {
+func (b *Broker) handlePublish(ctx context.Context, clientID string, sess *Session, pkt *protocol.PublishPacket) {
 	start := time.Now()
 	defer func() {
 		// Observe latency at the configured sampling rate; histogram
@@ -1817,7 +1842,7 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 	if sess != nil {
 		username = sess.Username
 	}
-	if b.opts.authorizer != nil && !b.opts.authorizer.CanPublish(b.ctx, username, pkt.Topic) {
+	if b.opts.authorizer != nil && !b.opts.authorizer.CanPublish(ctx, username, pkt.Topic) {
 		// A QoS 1/2 PUBLISH needs the matching acknowledgement so the client
 		// can free its packet id; previously the v5 reason code reached v3.1.1
 		// clients whose PUBACK/PUBREC format has no reason field, which made
@@ -1895,7 +1920,7 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 			return
 		}
 		if pkt.Retain {
-			b.handleRetainedMessage(pkt)
+			b.handleRetainedMessage(ctx, pkt)
 		}
 		b.writePacket(clientID, &protocol.PubRecPacket{
 			FixedHeader: protocol.FixedHeader{
@@ -1909,7 +1934,7 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 
 	// QoS 0/1: handle retained message for the delivered message.
 	if pkt.Retain {
-		b.handleRetainedMessage(pkt)
+		b.handleRetainedMessage(ctx, pkt)
 	}
 
 	// Route to subscribers for QoS 0 and QoS 1. The outgoing RETAIN flag is
@@ -1918,10 +1943,10 @@ func (b *Broker) handlePublish(clientID string, sess *Session, pkt *protocol.Pub
 	forwardPkt := *pkt
 	subscribers := b.topics.Match(forwardPkt.Topic)
 	for _, sub := range subscribers {
-		b.deliverToClient(sub.ClientID, clientID, &forwardPkt)
+		b.deliverToClient(ctx, sub.ClientID, clientID, &forwardPkt)
 	}
 	// Route to shared subscribers (round-robin, one per share group)
-	b.routeSharedPublish(clientID, &forwardPkt)
+	b.routeSharedPublish(ctx, clientID, &forwardPkt)
 
 	// Send PUBACK for QoS 1. Incoming QoS 1 has no client acknowledgment and
 	// must NOT be tracked in the QoS engine: tracking it here caused the
@@ -2082,7 +2107,7 @@ func (b *Broker) closeProtocolViolationWithReason(clientID string, sess *Session
 	}
 }
 
-func (b *Broker) handleRetainedMessage(pkt *protocol.PublishPacket) {
+func (b *Broker) handleRetainedMessage(ctx context.Context, pkt *protocol.PublishPacket) {
 	if b.retainedStore == nil {
 		return
 	}
@@ -2091,7 +2116,7 @@ func (b *Broker) handleRetainedMessage(pkt *protocol.PublishPacket) {
 	defer b.retainedMu.Unlock()
 
 	existed := true
-	if _, err := b.retainedStore.GetRetained(b.ctx, pkt.Topic); err != nil {
+	if _, err := b.retainedStore.GetRetained(ctx, pkt.Topic); err != nil {
 		if errors.Is(err, store.ErrRetainedNotFound) {
 			existed = false
 		} else {
@@ -2113,7 +2138,7 @@ func (b *Broker) handleRetainedMessage(pkt *protocol.PublishPacket) {
 	}
 
 	if len(pkt.Payload) == 0 {
-		if err := b.retainedStore.DeleteRetained(b.ctx, pkt.Topic); err != nil {
+		if err := b.retainedStore.DeleteRetained(ctx, pkt.Topic); err != nil {
 			b.logger.Warn("failed to delete retained message", "topic", pkt.Topic, "error", err)
 			b.metrics.IncErrors("retained_store")
 			return
@@ -2141,7 +2166,7 @@ func (b *Broker) handleRetainedMessage(pkt *protocol.PublishPacket) {
 		Properties: storeProperties(pkt.Properties),
 		ExpiresAt:  messageExpiresAt(pkt),
 	}
-	if err := b.retainedStore.SaveRetained(b.ctx, record); err != nil {
+	if err := b.retainedStore.SaveRetained(ctx, record); err != nil {
 		b.logger.Warn("failed to save retained message", "topic", pkt.Topic, "error", err)
 		b.metrics.IncErrors("retained_store")
 		return
@@ -2178,7 +2203,7 @@ func subAckFailureCode(sess *Session) byte {
 	return protocol.SubAckFailure
 }
 
-func (b *Broker) handleSubscribe(clientID string, sess *Session, pkt *protocol.SubscribePacket) {
+func (b *Broker) handleSubscribe(ctx context.Context, clientID string, sess *Session, pkt *protocol.SubscribePacket) {
 	// Failure code for a rejected subscription filter (version-specific).
 	failCode := subAckFailureCode(sess)
 
@@ -2237,7 +2262,7 @@ func (b *Broker) handleSubscribe(clientID string, sess *Session, pkt *protocol.S
 		}
 
 		// Check authorization against the effective (non-shared) filter.
-		if b.opts.authorizer != nil && !b.opts.authorizer.CanSubscribe(b.ctx, username, aclFilter) {
+		if b.opts.authorizer != nil && !b.opts.authorizer.CanSubscribe(ctx, username, aclFilter) {
 			reasonCodes[i] = failCode
 			continue
 		}
@@ -2280,11 +2305,11 @@ func (b *Broker) handleSubscribe(clientID string, sess *Session, pkt *protocol.S
 		if IsSharedSubscription(topic.Topic) {
 			_, realFilter, ok := ParseSharedFilter(topic.Topic)
 			if ok && protocol.ValidateTopicFilter(realFilter) {
-				b.deliverRetainedMessages(clientID, sess, realFilter)
+				b.deliverRetainedMessages(ctx, clientID, sess, realFilter)
 			}
 			continue
 		}
-		b.deliverRetainedMessages(clientID, sess, topic.Topic)
+		b.deliverRetainedMessages(ctx, clientID, sess, topic.Topic)
 	}
 }
 
@@ -2360,10 +2385,10 @@ func messageExpiresAt(pkt *protocol.PublishPacket) time.Time {
 // It checks subscription matches and applies QoS downgrade. An offline
 // persistent-session subscriber has its message queued for later delivery
 // instead of silently dropped (P1-5).
-func (b *Broker) deliverToClient(clientID, sourceClientID string, pkt *protocol.PublishPacket) {
+func (b *Broker) deliverToClient(ctx context.Context, clientID, sourceClientID string, pkt *protocol.PublishPacket) {
 	sess, ok := b.sessions.GetSession(clientID)
 	if !ok {
-		b.queueOfflineMessage(clientID, pkt, messageExpiresAt(pkt))
+		b.queueOfflineMessage(ctx, clientID, pkt, messageExpiresAt(pkt))
 		return
 	}
 	if sourceClientID != "" && clientID == sourceClientID && !sess.AllowsLocalPublish(pkt.Topic) {
@@ -2389,7 +2414,7 @@ func (b *Broker) deliverToClient(clientID, sourceClientID string, pkt *protocol.
 // result, since re-matching by topic would also pick up the session's ordinary
 // filters, and this copy did not match those), so it is deliberately not
 // guessed at here.
-func (b *Broker) deliverToSharedClient(clientID, sourceClientID string, pkt *protocol.PublishPacket, subQoS uint8) {
+func (b *Broker) deliverToSharedClient(ctx context.Context, clientID, sourceClientID string, pkt *protocol.PublishPacket, subQoS uint8) {
 	sess, ok := b.sessions.GetSession(clientID)
 	if !ok {
 		return
@@ -2414,15 +2439,15 @@ func (b *Broker) deliverWithQoS(sess *Session, pkt *protocol.PublishPacket, subQ
 // queueOfflineMessage stores a QoS 1/2 message for an offline persistent
 // session so it can be delivered when the client reconnects (P1-5). QoS 0 is
 // fire-and-forget and is never queued.
-func (b *Broker) queueOfflineMessage(clientID string, pkt *protocol.PublishPacket, expiresAt time.Time) {
+func (b *Broker) queueOfflineMessage(ctx context.Context, clientID string, pkt *protocol.PublishPacket, expiresAt time.Time) {
 	if b.messageStore == nil || b.sessionStore == nil || pkt.FixedHeader.QoS == 0 {
 		return
 	}
-	exists, err := b.sessionStore.IsSessionExists(b.ctx, clientID)
+	exists, err := b.sessionStore.IsSessionExists(ctx, clientID)
 	if err != nil || !exists {
 		return
 	}
-	data, err := b.sessionStore.GetSession(b.ctx, clientID)
+	data, err := b.sessionStore.GetSession(ctx, clientID)
 	if err != nil {
 		return
 	}
@@ -2462,7 +2487,7 @@ func (b *Broker) queueOfflineMessage(clientID string, pkt *protocol.PublishPacke
 		Timestamp: time.Now(),
 		ExpiresAt: expiresAt,
 	}
-	if err := b.messageStore.SaveMessage(b.ctx, clientID, msg); err != nil {
+	if err := b.messageStore.SaveMessage(ctx, clientID, msg); err != nil {
 		b.metrics.IncErrors("message_store")
 		b.logger.Warn("failed to queue offline message", "clientID", clientID, "error", err)
 		return
@@ -2497,11 +2522,11 @@ func (b *Broker) adjustOfflineCount(clientID string, delta int) {
 // was offline, respecting the subscription QoS downgrade and the client's
 // ReceiveMaximum. Delivered messages are removed from the store; messages that
 // would exceed the flow-control window stay queued for a later reconnect.
-func (b *Broker) deliverQueuedMessages(clientID string, sess *Session) {
+func (b *Broker) deliverQueuedMessages(ctx context.Context, clientID string, sess *Session) {
 	if b.messageStore == nil {
 		return
 	}
-	msgs, err := b.messageStore.ListMessages(b.ctx, clientID)
+	msgs, err := b.messageStore.ListMessages(ctx, clientID)
 	if err != nil {
 		b.logger.Warn("failed to list queued messages", "clientID", clientID, "error", err)
 		return
@@ -2511,7 +2536,7 @@ func (b *Broker) deliverQueuedMessages(clientID string, sess *Session) {
 		// the client was offline (§3.3.2.3.3).
 		if !msg.ExpiresAt.IsZero() && time.Now().After(msg.ExpiresAt) {
 			b.metrics.IncMessagesDropped("message_expired")
-			if err := b.messageStore.DeleteMessage(b.ctx, clientID, msg.ID); err != nil {
+			if err := b.messageStore.DeleteMessage(ctx, clientID, msg.ID); err != nil {
 				b.logger.Warn("failed to delete expired queued message", "clientID", clientID, "error", err)
 			} else {
 				b.adjustOfflineCount(clientID, -1)
@@ -2524,7 +2549,7 @@ func (b *Broker) deliverQueuedMessages(clientID string, sess *Session) {
 			// exists; previously the message was skipped forever and leaked
 			// (audit H2). Remove it so the queue cannot grow without bound.
 			b.metrics.IncMessagesDropped("offline_stale")
-			if err := b.messageStore.DeleteMessage(b.ctx, clientID, msg.ID); err != nil {
+			if err := b.messageStore.DeleteMessage(ctx, clientID, msg.ID); err != nil {
 				b.logger.Warn("failed to delete stale queued message", "clientID", clientID, "error", err)
 			} else {
 				b.adjustOfflineCount(clientID, -1)
@@ -2554,7 +2579,7 @@ func (b *Broker) deliverQueuedMessages(clientID string, sess *Session) {
 			pubPkt.Properties = &protocol.Properties{MessageExpiryInterval: remainingExpiry(msg.ExpiresAt)}
 		}
 		b.doDeliver(clientID, pubPkt, deliverQoS, msg.ExpiresAt, subOpts, subIDs, false)
-		if err := b.messageStore.DeleteMessage(b.ctx, clientID, msg.ID); err != nil {
+		if err := b.messageStore.DeleteMessage(ctx, clientID, msg.ID); err != nil {
 			b.logger.Warn("failed to delete queued message", "clientID", clientID, "error", err)
 		} else {
 			b.adjustOfflineCount(clientID, -1)
@@ -2698,7 +2723,7 @@ func (b *Broker) flushBufferedOutbound(clientID string, sess *Session) {
 // persistBufferedOutbound moves a persistent session's buffered deliveries into
 // the message store when it disconnects, so they are not lost and are delivered
 // on reconnect (P1-5 + P2-14).
-func (b *Broker) persistBufferedOutbound(clientID string, sess *Session) {
+func (b *Broker) persistBufferedOutbound(ctx context.Context, clientID string, sess *Session) {
 	if b.messageStore == nil {
 		return
 	}
@@ -2716,7 +2741,7 @@ func (b *Broker) persistBufferedOutbound(clientID string, sess *Session) {
 			Timestamp: time.Now(),
 			ExpiresAt: msg.expiresAt,
 		}
-		if err := b.messageStore.SaveMessage(b.ctx, clientID, sm); err != nil {
+		if err := b.messageStore.SaveMessage(ctx, clientID, sm); err != nil {
 			b.metrics.IncErrors("message_store")
 			continue
 		}
@@ -2743,19 +2768,19 @@ func (b *Broker) connection(clientID string) *clientState {
 // which selects one subscriber per share group using round-robin. Only online
 // members are considered so the message is never handed to an offline member
 // (P2-9).
-func (b *Broker) routeSharedPublish(sourceClientID string, pkt *protocol.PublishPacket) {
+func (b *Broker) routeSharedPublish(ctx context.Context, sourceClientID string, pkt *protocol.PublishPacket) {
 	shared := b.topics.MatchSharedOnline(pkt.Topic, b.isClientOnline)
 	for _, sub := range shared {
-		b.deliverToSharedClient(sub.ClientID, sourceClientID, pkt, sub.QoS)
+		b.deliverToSharedClient(ctx, sub.ClientID, sourceClientID, pkt, sub.QoS)
 	}
 }
 
-func (b *Broker) deliverRetainedMessages(clientID string, sess *Session, topicFilter string) {
+func (b *Broker) deliverRetainedMessages(ctx context.Context, clientID string, sess *Session, topicFilter string) {
 	if b.retainedStore == nil {
 		return
 	}
 
-	retained, err := b.retainedStore.MatchRetained(b.ctx, topicFilter)
+	retained, err := b.retainedStore.MatchRetained(ctx, topicFilter)
 	if err != nil {
 		b.logger.Warn("failed to match retained messages", "filter", topicFilter, "error", err)
 		return
@@ -3252,7 +3277,7 @@ func (b *Broker) dropRejectedDelivery(clientID string, packetID uint16, reasonCo
 		"clientID", clientID, "packetID", packetID, "reasonCode", reasonCode)
 }
 
-func (b *Broker) handlePubRel(clientID string, packetID uint16) {
+func (b *Broker) handlePubRel(ctx context.Context, clientID string, packetID uint16) {
 	// Route the staged inbound QoS 2 message to subscribers now that the
 	// client completed its half of the handshake. Entries are session-owned
 	// and persisted, so a restored session still delivers (audit H4); an
@@ -3279,9 +3304,9 @@ func (b *Broker) handlePubRel(clientID string, packetID uint16) {
 			}
 			subscribers := b.topics.Match(msg.Topic)
 			for _, sub := range subscribers {
-				b.deliverToClient(sub.ClientID, clientID, pubPkt)
+				b.deliverToClient(ctx, sub.ClientID, clientID, pubPkt)
 			}
-			b.routeSharedPublish(clientID, pubPkt)
+			b.routeSharedPublish(ctx, clientID, pubPkt)
 		}
 	}
 	b.writePacket(clientID, &protocol.PubCompPacket{
@@ -3429,7 +3454,7 @@ func (b *Broker) sendPubComp(clientID string, packetID uint16) error {
 	return nil
 }
 
-func (b *Broker) republish(clientID string, packetID uint16, topic string, payload []byte, qos uint8, retain bool) error {
+func (b *Broker) republish(ctx context.Context, clientID string, packetID uint16, topic string, payload []byte, qos uint8, retain bool) error {
 	// The QoS engine's retry callback fires for both directions. An outbound
 	// delivery (broker->subscriber, tracked in the session's Inflight) is
 	// re-sent as a PUBLISH with the DUP flag. An inbound QoS 2 publish has the
@@ -3478,11 +3503,11 @@ func (b *Broker) republish(clientID string, packetID uint16, topic string, paylo
 // Server's own Subscription Identifiers and remaining Message Expiry Interval.
 // A will with RETAIN set stores them with the retained copy through
 // handleRetainedMessage, so a later subscriber sees them too.
-func (b *Broker) publishWill(username string, topic string, payload []byte, qos uint8, retain bool, props *protocol.Properties) error {
+func (b *Broker) publishWill(ctx context.Context, username string, topic string, payload []byte, qos uint8, retain bool, props *protocol.Properties) error {
 	// A will message must respect publish authorization just like a normal
 	// PUBLISH, otherwise any client could set a will on a topic it has no
 	// permission to publish.
-	if b.opts.authorizer != nil && !b.opts.authorizer.CanPublish(b.ctx, username, topic) {
+	if b.opts.authorizer != nil && !b.opts.authorizer.CanPublish(ctx, username, topic) {
 		b.logger.Debug("will publish denied by authorizer", "topic", topic, "username", username)
 		b.metrics.IncAuthFailures()
 		return nil
@@ -3500,16 +3525,16 @@ func (b *Broker) publishWill(username string, topic string, payload []byte, qos 
 	}
 
 	if retain {
-		b.handleRetainedMessage(pubPkt)
+		b.handleRetainedMessage(ctx, pubPkt)
 	}
 
 	// The live forward keeps the publisher's RETAIN flag; doDeliver applies
 	// Retain As Published per subscription.
 	subscribers := b.topics.Match(topic)
 	for _, sub := range subscribers {
-		b.deliverToClient(sub.ClientID, "", pubPkt)
+		b.deliverToClient(ctx, sub.ClientID, "", pubPkt)
 	}
-	b.routeSharedPublish("", pubPkt)
+	b.routeSharedPublish(ctx, "", pubPkt)
 	return nil
 }
 

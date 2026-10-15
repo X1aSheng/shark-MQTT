@@ -628,7 +628,7 @@ func TestBroker_OfflineQueueBounded(t *testing.T) {
 		t.Fatalf("save session: %v", err)
 	}
 	for i := 0; i < 25; i++ {
-		b.queueOfflineMessage("cid", &protocol.PublishPacket{
+		b.queueOfflineMessage(context.Background(), "cid", &protocol.PublishPacket{
 			FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 1},
 			Topic:       "q/t",
 			Payload:     []byte("m"),
@@ -674,7 +674,7 @@ func TestBroker_StaleQueuedMessageDeletedOnReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("restore: %v", err)
 	}
-	b.deliverQueuedMessages("cid", sess)
+	b.deliverQueuedMessages(context.Background(), "cid", sess)
 
 	left, err := msgStore.ListMessages(ctx, "cid")
 	if err != nil {
@@ -704,7 +704,7 @@ func TestBroker_ExpiredSessionCleanupCascadesToQueue(t *testing.T) {
 	if err := sessStore.SaveSession(ctx, "cid", data); err != nil {
 		t.Fatalf("save session: %v", err)
 	}
-	b.queueOfflineMessage("cid", &protocol.PublishPacket{
+	b.queueOfflineMessage(context.Background(), "cid", &protocol.PublishPacket{
 		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 1},
 		Topic:       "q/t",
 		Payload:     []byte("m"),

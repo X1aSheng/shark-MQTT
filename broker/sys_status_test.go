@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"context"
 	"net"
 	"testing"
 	"time"
@@ -51,7 +52,7 @@ func TestBroker_SysStatusTopics(t *testing.T) {
 		}
 	}()
 
-	b.handleSubscribe("sys-sub", sess, &protocol.SubscribePacket{
+	b.handleSubscribe(context.Background(), "sys-sub", sess, &protocol.SubscribePacket{
 		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe},
 		PacketID:    1, // required for a well-formed SUBACK
 		Topics:      []protocol.TopicFilter{{Topic: "$SYS/#", QoS: 0}},
