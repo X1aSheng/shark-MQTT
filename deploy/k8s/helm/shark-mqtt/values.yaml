@@ -38,10 +38,29 @@ autoscaling:
 
 config:
   listenAddr: ":18983"
+  # Additional MQTT ports served by the same pod (listen_addrs). The broker
+  # binds every entry in one process, so no extra container is needed.
+  # listenAddrs takes precedence over listenAddr when set.
+  listenAddrs: []
+  # - []  use listenAddr only (default)
+  # - [":18983", ":28983"]
+  #   serve two ports from one broker
+
+  # WebSocket listener (empty disables).
+  wsListenAddr: ""
+  # wsListenAddrs: []
+  wssListenAddr: ""
+
   allowAllAuth: true
+  # Real authentication. When auth.existingSecret is set, the broker reads
+  # credentials from that Secret and allowAllAuth is ignored -- this is the
+  # production path. See the auth block below.
   maxConnections: 10000
   keepAlive: 60
   maxPacketSize: 262144
+  # Seconds Stop waits for in-flight QoS 1/2 messages to be acknowledged
+  # before closing sockets. 0 closes immediately.
+  drainTimeout: "5s"
   logLevel: "info"
   logFormat: "json"
   qosRetryInterval: "10s"
@@ -51,6 +70,33 @@ config:
   storageBackend: "memory"
   metricsEnabled: true
   metricsAddr: "0.0.0.0:18999"
+
+# Read-only management API (GET /clients, /clients/{id}, /topics), served on the
+# metrics listener. Disabled by default because it exposes client IDs,
+# usernames and topic filters.
+management:
+  enabled: false
+  # Required whenever the metrics Service is not loopback-only. Put it in a
+  # Secret rather than inline.
+  token: ""
+  existingSecret: ""
+  existingSecretKey: "token"
+
+# Authentication credentials. Leave empty when config.allowAllAuth is true
+# (development only). For production, create a Secret holding the same YAML
+# structure broker.NewFileAuth expects:
+#
+#   users:
+#     - username: alice
+#       password: "$2a$10$..."   # bcrypt
+#       client_ids: []
+auth:
+  # existingSecret: shark-mqtt-auth
+  # fileKey: users.yaml
+  # inline: |                # convenient for small deployments, not for git
+  #   users: []
+  existingSecret: ""
+  fileKey: "users.yaml"
 
 networkPolicy:
   enabled: true

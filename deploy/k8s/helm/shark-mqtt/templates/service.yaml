@@ -14,6 +14,12 @@ spec:
       protocol: TCP
       port: {{ .Values.service.mqttPort }}
       targetPort: mqtt
+    {{- range .Values.config.listenAddrs }}
+    - name: mqtt-extra-{{ . | replace ":" "-" | replace "." "-" | replace "[" "" | replace "]" "" | trunc 12 | trimSuffix "-" | trimPrefix "-" }}
+      protocol: TCP
+      port: {{ . | replace ":" "" | trimPrefix "0.0.0.0" | trimPrefix ":" | int }}
+      targetPort: mqtt-extra-{{ . | replace ":" "-" | replace "." "-" | replace "[" "" | replace "]" "" | trunc 12 | trimSuffix "-" | trimPrefix "-" }}
+    {{- end }}
     - name: metrics
       protocol: TCP
       port: {{ .Values.service.metricsPort }}

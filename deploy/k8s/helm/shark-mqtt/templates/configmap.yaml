@@ -7,7 +7,12 @@ metadata:
     {{- include "shark-mqtt.labels" . | nindent 4 }}
 data:
   config.yaml: |
+    {{- if .Values.config.listenAddrs }}
+    # listen_addrs replaces listen_addr entirely; it is deliberately NOT
+    # emitted here so nobody assumes both are bound.
+    {{- else }}
     listen_addr: {{ .Values.config.listenAddr | quote }}
+    {{- end }}
     max_connections: {{ .Values.config.maxConnections }}
     keep_alive: {{ .Values.config.keepAlive }}
     max_packet_size: {{ .Values.config.maxPacketSize }}
@@ -20,3 +25,42 @@ data:
     storage_backend: {{ .Values.config.storageBackend | quote }}
     metrics_enabled: {{ .Values.config.metricsEnabled }}
     metrics_addr: {{ .Values.config.metricsAddr | quote }}
+    {{- with .Values.config.listenAddrs }}
+    # Emitted only when non-empty; the broker then ignores listen_addr, since
+    # listen_addrs replaces it rather than adding to it.
+    listen_addrs:
+      {{- range . }}
+      - {{ . | quote }}
+      {{- end }}
+    {{- end }}
+    {{- with .Values.config.wsListenAddrs }}
+    ws_listen_addrs:
+      {{- range . }}
+      - {{ . | quote }}
+      {{- end }}
+    {{- end }}
+    {{- with .Values.config.wsListenAddr }}
+    ws_listen_addr: {{ . | quote }}
+    {{- end }}
+    {{- with .Values.config.wssListenAddrs }}
+    wss_listen_addrs:
+      {{- range . }}
+      - {{ . | quote }}
+      {{- end }}
+    {{- end }}
+    {{- with .Values.config.wssListenAddr }}
+    wss_listen_addr: {{ . | quote }}
+    {{- end }}
+    {{- with .Values.config.drainTimeout }}
+    drain_timeout: {{ . | quote }}
+    {{- end }}
+    {{- if .Values.management.enabled }}
+    management_enabled: true
+    {{- if .Values.management.token }}
+    # Inline token: prefer management.existingSecret in production.
+    management_token: {{ .Values.management.token | quote }}
+    {{- end }}
+    {{- end }}
+    {{- if .Values.auth.existingSecret }}
+    auth_file: {{ printf "/etc/shark-mqtt/auth/%s" .Values.auth.fileKey | quote }}
+    {{- end }}

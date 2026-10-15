@@ -36,14 +36,23 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
-            - "-addr={{ .Values.config.listenAddr }}"
-            {{- if .Values.config.allowAllAuth }}
+            # -addr would OVERRIDE listen_addr in the mounted config file, and
+            # with it the listen_addrs entries -- a multi-port deployment would
+            # silently collapse to one port. Pass -config instead and let the
+            # ConfigMap be the single source of truth.
+            - "-config=/etc/shark-mqtt/config.yaml"
+            {{- if and .Values.config.allowAllAuth (not .Values.auth.existingSecret) }}
             - "-allow-all"
             {{- end }}
           ports:
             - name: mqtt
               containerPort: {{ .Values.service.mqttPort }}
               protocol: TCP
+            {{- range .Values.config.listenAddrs }}
+            - name: mqtt-extra-{{ . | replace ":" "-" | replace "." "-" | replace "[" "" | replace "]" "" | trunc 12 | trimSuffix "-" | trimPrefix "-" }}
+              containerPort: {{ . | replace ":" "" | trimPrefix "0.0.0.0" | trimPrefix ":" | int }}
+              protocol: TCP
+            {{- end }}
             - name: metrics
               containerPort: {{ .Values.service.metricsPort }}
               protocol: TCP
@@ -77,6 +86,35 @@ spec:
           lifecycle:
             preStop:
               exec:
-                command: ["sleep", "10"]
+                command: ["sleep", "{{ .Values.preStopSleepSeconds | default 10 }}"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/shark-mqtt/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            {{- if .Values.auth.existingSecret }}
+            - name: auth
+              mountPath: /etc/shark-mqtt/auth
+              readOnly: true
+            {{- end }}
+            {{- if .Values.management.enabled }}
+            - name: metrics
+              mountPath: /var/run/secrets/shark-mqtt
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "shark-mqtt.fullname" . }}-config
+        {{- if .Values.auth.existingSecret }}
+        - name: auth
+          secret:
+            secretName: {{ .Values.auth.existingSecret }}
+        {{- end }}
+        {{- if and .Values.management.enabled .Values.management.existingSecret }}
+        - name: metrics
+          secret:
+            secretName: {{ .Values.management.existingSecret }}
+        {{- end }}
       affinity:
         {{- toYaml .Values.affinity | nindent 8 }}
