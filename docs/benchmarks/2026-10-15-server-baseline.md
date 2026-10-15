@@ -274,6 +274,54 @@ of round-trip traffic. The broker's same-host ceiling is 280,000, so this link
 can still only observe about a sixth of what the broker can do - but that sixth
 is enough to show which of the two is the constraint.
 
+## Private networking: unavailable across these hosts
+
+A private link would remove the bandwidth ceiling entirely, so it was checked
+rather than assumed. It is not available here.
+
+| Host | Private address | VPC range |
+| --- | --- | --- |
+| Broker host (8 vCPU, 100 Mbps) | 172.22.110.252/20 | 172.22.0.0/20 |
+| Second 8 vCPU host | 172.29.189.109/20 | 172.29.0.0/20 |
+| 2 vCPU client host | 172.23.221.243/20 | 172.23.0.0/20 |
+
+Three hosts, three different VPC ranges. Traffic between them does not route
+privately:
+
+```
+$ ping -c 3 -W 2 172.22.110.252      # from the third host
+3 packets transmitted, 0 received, 100% packet loss
+
+$ ip route get 172.29.189.109        # from the broker host
+172.29.189.109 via 172.22.111.253 dev eth0 src 172.22.110.252
+```
+
+The route lookup confirms it: the destination resolves through the **default
+gateway**, meaning there is no private path and the packet leaves over the
+public interface. Both directions behave the same way.
+
+**Consequence for measurement.** Every cross-host figure in this document is a
+public-link measurement, capped at 100 Mbps where both hosts have it. At 256
+bytes that is about 48,000 deliveries per second, against a same-host broker
+ceiling of roughly 280,000. The public link can observe **one sixth** of the
+broker's capacity, which is enough to identify the binding constraint but not
+enough to reach it.
+
+Reaching it needs one of:
+
+1. **VPC peering or a cloud enterprise network** between the hosts. Private
+   bandwidth is orders of magnitude wider than 100 Mbps and is typically not
+   billed by traffic, which makes this the cheapest option by a wide margin.
+2. **Both hosts in the same VPC**, avoiding the peering step entirely.
+3. **600 Mbps or more of public bandwidth**, which costs more than the first two
+   and still carries the public round-trip time.
+
+The alternative is to stop trying to reach the ceiling and rely on the per-core
+figure instead: five independent scenarios agree on 60,000-87,000 message
+operations per second per core, so eight cores extrapolate to roughly 500,000
+with reasonable confidence. That is an extrapolation, not a measurement, and is
+labelled as such wherever it appears.
+
 ## Broker scaling, and the ceiling this host cannot reach
 
 Two same-host runs with 8 subscribers isolate how the broker's CPU use tracks
