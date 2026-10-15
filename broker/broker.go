@@ -469,6 +469,11 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 	// in-memory session (the old connection is still registered, so
 	// CreateSession will kick it below) and the persisted one -- so both are
 	// released here, before the new session takes the ClientID over.
+	//
+	// Store calls on this path use the connection ctx, not b.ctx: the work is
+	// scoped to one CONNECT handshake and must be cancellable with that
+	// connection. b.ctx is the broker-wide lifetime and belongs to the
+	// background loops (session expiry sweep, $SYS publisher) only.
 	if connectPkt.Flags.CleanSession {
 		if sess, ok := b.sessions.GetSession(clientID); ok {
 			b.unsubscribeSessionTopics(sess)
@@ -481,13 +486,13 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 				}
 				b.unsubscribeTopics(clientID, topics)
 			}
-			if err := b.sessionStore.DeleteSession(b.ctx, clientID); err != nil {
+			if err := b.sessionStore.DeleteSession(ctx, clientID); err != nil {
 				b.metrics.IncErrors("session_save")
 				b.logger.Warn("failed to delete old session on clean connect", "clientID", clientID, "error", err)
 			}
 		}
 		if b.messageStore != nil {
-			if err := b.messageStore.ClearMessages(b.ctx, clientID); err != nil {
+			if err := b.messageStore.ClearMessages(ctx, clientID); err != nil {
 				b.metrics.IncErrors("message_store")
 				b.logger.Warn("failed to clear offline messages on clean connect", "clientID", clientID, "error", err)
 			}
@@ -2552,10 +2557,20 @@ func (b *Broker) doDeliver(clientID string, pkt *protocol.PublishPacket, deliver
 			ExpiresAt:  expiresAt,
 			Properties: pubPkt.Properties,
 		})
+		// A tracking failure means this delivery is not registered for retry,
+		// so a lost PUBACK would silently drop the message. Report it instead
+		// of discarding the error: the delivery still goes out (the client has
+		// it either way), but the condition is now visible in metrics+logs.
+		var trackErr error
 		if deliverQoS == 1 {
-			_ = b.qos.TrackOutboundQoS1(clientID, pubPkt.PacketID, pkt.Topic, pkt.Payload, outRetain)
+			trackErr = b.qos.TrackOutboundQoS1(clientID, pubPkt.PacketID, pkt.Topic, pkt.Payload, outRetain)
 		} else {
-			_ = b.qos.TrackOutboundQoS2(clientID, pubPkt.PacketID, pkt.Topic, pkt.Payload, outRetain)
+			trackErr = b.qos.TrackOutboundQoS2(clientID, pubPkt.PacketID, pkt.Topic, pkt.Payload, outRetain)
+		}
+		if trackErr != nil {
+			b.metrics.IncErrors("qos_track")
+			b.logger.Warn("failed to track outbound for retry",
+				"clientID", clientID, "packetID", pubPkt.PacketID, "qos", deliverQoS, "error", trackErr)
 		}
 	}
 
@@ -2577,7 +2592,13 @@ func (b *Broker) flushBufferedOutbound(clientID string, sess *Session) {
 		if !sess.CanSendOutbound() {
 			return
 		}
-		msg, _ := sess.PopOutbound()
+		// The queue length is checked above, so a failed pop can only mean a
+		// concurrent drain won the race. Bail out rather than deliver the
+		// zero-value message that PopOutbound returns alongside ok=false.
+		msg, ok := sess.PopOutbound()
+		if !ok {
+			return
+		}
 		b.doDeliver(clientID, msg.pkt, msg.deliverQoS, msg.expiresAt, msg.subOpts, msg.subIDs, false)
 	}
 }

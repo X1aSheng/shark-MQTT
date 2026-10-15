@@ -47,6 +47,7 @@ var allowedMetricLabels = map[string]map[string]bool{
 		"flow_control":   true,
 		"message_store":  true,
 		"protocol":       true,
+		"qos_track":      true,
 		"rate_limit":     true,
 		"retained_store": true,
 		"session_save":   true,
