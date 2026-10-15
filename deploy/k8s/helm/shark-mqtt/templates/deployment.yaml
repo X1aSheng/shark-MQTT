@@ -58,7 +58,8 @@ spec:
               protocol: TCP
             {{- range .Values.config.listenAddrs }}
             {{- if ne . (index $.Values.config.listenAddrs 0) }}
-            - name: mqtt-extra-{{ . | replace ":" "-" | replace "." "-" | replace "[" "" | replace "]" "" | trunc 12 | trimSuffix "-" | trimPrefix "-" }}
+            {{- /* Same 15-character IANA_SVC_NAME cap as the Service. */}}
+            - name: mqtt-{{ . | replace ":" "" | trimPrefix "0.0.0.0" | trimPrefix ":" | int }}
               containerPort: {{ . | replace ":" "" | trimPrefix "0.0.0.0" | trimPrefix ":" | int }}
               protocol: TCP
             {{- end }}

@@ -39,10 +39,16 @@ spec:
     {{- end }}
     {{- range .Values.config.listenAddrs }}
     {{- if ne . (index $.Values.config.listenAddrs 0) }}
-    - name: mqtt-extra-{{ . | replace ":" "-" | replace "." "-" | replace "[" "" | replace "]" "" | trunc 12 | trimSuffix "-" | trimPrefix "-" }}
+    {{- /*
+      The port name is a IANA_SVC_NAME, which caps at 15 characters. Deriving
+      it from the port number alone keeps it short and unique; deriving it from
+      the raw listen address does not, and "0.0.0.0:18983" produces a name long
+      enough that the API server rejects the Service outright.
+    */}}
+    - name: mqtt-{{ . | replace ":" "" | trimPrefix "0.0.0.0" | trimPrefix ":" | int }}
       protocol: TCP
       port: {{ . | replace ":" "" | trimPrefix "0.0.0.0" | trimPrefix ":" | int }}
-      targetPort: mqtt-extra-{{ . | replace ":" "-" | replace "." "-" | replace "[" "" | replace "]" "" | trunc 12 | trimSuffix "-" | trimPrefix "-" }}
+      targetPort: mqtt-{{ . | replace ":" "" | trimPrefix "0.0.0.0" | trimPrefix ":" | int }}
     {{- end }}
     {{- end }}
     - name: metrics
