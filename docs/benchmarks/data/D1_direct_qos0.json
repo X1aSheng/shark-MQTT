@@ -1,0 +1,36 @@
+{
+  "_meta": {
+    "commit": "61a8f7602",
+    "description": "\u8de8\u673a\u516c\u7f51\u76f4\u8fde QoS0 / 2 \u8ba2\u9605\u8005",
+    "host": "8 vCPU/16GB broker, 2 vCPU/2GB client",
+    "tool": "tools/loadgen"
+  },
+  "broker_cpu_cores": 0,
+  "broker_pid": 0,
+  "broker_rss_avg_mb": 0,
+  "broker_rss_peak_mb": 0,
+  "broker_threads_peak": 0,
+  "config": {
+    "addr": "47.120.44.128:18000",
+    "duration_s": 20,
+    "payload": 256,
+    "publishers": 4,
+    "qos": 0,
+    "rate_target": 10000,
+    "subscribers": 2
+  },
+  "deliver_rate_msg_s": 2563.3723238706784,
+  "delivery_ratio": 1.6752825614708937,
+  "elapsed_s": 20.758591916,
+  "errors": 0,
+  "latency_max_us": 7405512,
+  "latency_mean_us": 1829951.467534407,
+  "latency_p50_us": 1661317,
+  "latency_p90_us": 3293735,
+  "latency_p999_us": 6675505,
+  "latency_p99_us": 5560293,
+  "latency_samples": 53201,
+  "received": 53212,
+  "send_rate_msg_s": 1530.1134165809283,
+  "sent": 31763
+}

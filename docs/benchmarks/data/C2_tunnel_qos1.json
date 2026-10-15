@@ -1,0 +1,36 @@
+{
+  "_meta": {
+    "commit": "61a8f7602",
+    "description": "\u8de8\u673a SSH \u96a7\u9053 QoS1 / 4 \u8ba2\u9605\u8005",
+    "host": "8 vCPU/16GB broker, 2 vCPU/2GB client",
+    "tool": "tools/loadgen"
+  },
+  "broker_cpu_cores": 0,
+  "broker_pid": 0,
+  "broker_rss_avg_mb": 0,
+  "broker_rss_peak_mb": 0,
+  "broker_threads_peak": 0,
+  "config": {
+    "addr": "127.0.0.1:2883",
+    "duration_s": 10,
+    "payload": 256,
+    "publishers": 8,
+    "qos": 1,
+    "rate_target": 20000,
+    "subscribers": 4
+  },
+  "deliver_rate_msg_s": 7656.369437653971,
+  "delivery_ratio": 0,
+  "elapsed_s": 10.011664226,
+  "errors": 0,
+  "latency_max_us": 47285967,
+  "latency_mean_us": 32559276.574555688,
+  "latency_p50_us": 32779229,
+  "latency_p90_us": 44358095,
+  "latency_p999_us": 47266155,
+  "latency_p99_us": 46932021,
+  "latency_samples": 76653,
+  "received": 76653,
+  "send_rate_msg_s": 0,
+  "sent": 0
+}

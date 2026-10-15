@@ -15,6 +15,10 @@ running server.
 | Go | 1.26.1 |
 | Broker | `shark-mqtt` at commit `d5e37f8f9`, storage backend `memory` |
 | Client | `tools/loadgen`, built from the same commit |
+| Second host | Aliyun ECS, Ubuntu 26.04, 2 vCPU / 2 GB, used for the cross-host attempt |
+
+The second host is in a different VPC from the broker host, which matters for
+the cross-host section below: the private network does not join them.
 
 The load generator ran on the **same host** as the broker. Both compete for the
 same eight cores, so every number here is a floor rather than a ceiling. The
@@ -159,13 +163,95 @@ Threads stay between 13 and 26. Connections add goroutines, but a message rate
 15 times higher adds no threads at all, which is what a goroutine-per-connection
 design should look like.
 
+## Two-host test, and why the link masked the broker
+
+A second host was added to remove the same-host contention described above: an
+8 vCPU / 16 GB machine running the broker, and a 2 vCPU / 2 GB machine running
+the load generator.
+
+The two hosts are in different VPCs (172.22.0.0/20 and 172.23.0.0/20), so the
+private network does not connect them. The security group initially allowed only
+port 22, which forced an SSH tunnel; it was later opened for 18000/19000, giving
+a direct path. Both configurations were measured.
+
+| Path | Subscribers | QoS | Actual send | Delivered | P50 | Round-trip traffic |
+| --- | --- | --- | --- | --- | --- | --- |
+| SSH tunnel | 4 | 0 | 19,680 | 2,729 | 4.32 s | - |
+| SSH tunnel | 4 | 1 | 0 (starved) | 7,656 | 32.8 s | - |
+| Direct, port 18000 | 2 | 0 | 1,530 | 2,563 | 1.66 s | **1.00 MB/s (8.0 Mbps)** |
+
+Direct connection is 27 times slower than the same-host run (1,530 vs 78,678
+messages/second). The natural reading, "the broker is slow over a network", is
+wrong. Measuring the link directly settles it:
+
+```
+$ curl -o /dev/null -w '%{speed_download}\n' http://<broker>:19000/metrics
+725024
+751865
+1053578
+872625
+779961
+```
+
+The link carries **0.7 - 1.05 MB/s**. The MQTT run above moved exactly
+**1.00 MB/s** of round-trip traffic. The test saturated the link, and every
+throughput figure is a measurement of the WAN path rather than of the broker.
+
+This also explains why the SSH tunnel and the direct connection land in the same
+place: encryption was never the limitation, the link was. A 4.4 MB payload at
+1 MB/s simply cannot arrive faster than the wire permits.
+
+Two supporting observations:
+
+- Ping RTT between the hosts is a steady 6.6 ms, so the path is public rather
+  than intra-VPC.
+- The client host was idle throughout (load average 0.19, 1 GB RAM free), so the
+  client was not the constraint either.
+
+**A cross-host test needs either the private network or a link that exceeds what
+the broker can produce.** At 1 MB/s the wire tops out near 4,000 messages per
+second of round-trip traffic, which is three orders of magnitude below the
+broker's same-host ceiling. The numbers above are retained as a record of the
+attempt and as a caution, not as broker measurements.
+
+## Broker scaling, and the ceiling this host cannot reach
+
+Two same-host runs with 8 subscribers isolate how the broker's CPU use tracks
+message rate:
+
+| Broker cores | Client cores | Actual send | Delivered | P50 | Broker CPU |
+| --- | --- | --- | --- | --- | --- |
+| 0-3 (4 cores) | 4-7 (4 cores) | 19,324 | 154,567 | 216 us | 2.72 |
+| 0-5 (6 cores) | 6-7 (2 cores) | 19,407 | 154,599 | **220 ms** | 2.29 |
+
+Both delivered 154,600 messages per second, but the second run's P50 is a
+thousand times worse. The broker used *fewer* cores in the second run, not more:
+given extra cores it did not need, it left them idle while the client, cut to two
+cores, fell behind and queued.
+
+The useful figure is the ratio. **154,600 messages per second on 2.3-2.7 cores
+is roughly 60,000-70,000 delivered messages per second per core**, which agrees
+with the fan-out run above (274,184 on 3.84 cores is 71,000 per core).
+
+That consistency is what makes the earlier "saturation" finding worth restating
+precisely: the 4-core broker was not saturated by its own work. It reached 96%
+of its allowance only because the load generator sat on the other four cores of
+the same machine, and the two together consumed all eight. **On an 8-core host
+the broker's own ceiling is not reachable**, because measuring it requires a
+client with comparable CPU, and there is none left.
+
+Extrapolating at 60,000-70,000 per core, an 8-core broker should deliver
+roughly 500,000 messages per second. Confirming that requires the client to run
+somewhere else, on a link that is not the bottleneck.
+
 ## Capacity guidance
 
 Derived from the measurements above, for provisioning rather than marketing:
 
 | Question | Answer from this run | Basis |
 | --- | --- | --- |
-| Messages/sec per core | ~71,000 | 285,000 delivered on 4 cores, CPU at 96% |
+| Messages/sec per core | 60,000 - 71,000 | 154,600 on 2.7 cores, 274,184 on 3.84 cores |
+| Memory per 1,000 connections | ~256 MB | 50 connections peaked at 22.6 MB |
 | Memory for 50 connections | ~23 MB | 50-subscriber run |
 | Memory per additional connection | well under 1 MB | 4 vs 50 subscribers differ by 1.7 MB |
 | Single-connection QoS 0 ceiling | ~80,000/s | delivery falls off above this |
@@ -197,8 +283,10 @@ configuration, so a scenario can be rerun and compared without guesswork.
 
 ## Caveats
 
-- Same-host client and broker. A two-host setup would remove the CPU
-  interference entirely and is the obvious next measurement.
+- Same-host client and broker for every number except the cross-host section.
+  The two-host attempt was made and is documented, but the WAN link (0.7 -
+  1.05 MB/s) capped it far below the broker's ability, so the CPU interference
+  remains unresolved rather than removed.
 - In-memory storage. A persistent backend would add disk latency that none of
   these numbers include.
 - Ports, topics and subscriptions were created once at startup. A scenario that

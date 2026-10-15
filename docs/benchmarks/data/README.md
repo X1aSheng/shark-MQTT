@@ -22,11 +22,21 @@ so a result without it cannot be compared against another run.
 | `V1_20sub_20k.json` | 20 | 8 | 0 | 20,000 | 256 B | pinned 4/4 |
 | `V2_50sub_10k.json` | 50 | 8 | 0 | 10,000 | 256 B | pinned 4/4 |
 | `W1_6core.json` | 20 | 8 | 0 | 20,000 | 256 B | pinned 6/2 |
+| `X1_broker4c.json` | 8 | 8 | 0 | 20,000 | 256 B | pinned 4/4 |
+| `X2_broker6c.json` | 8 | 8 | 0 | 20,000 | 256 B | pinned 6/2 |
+| `C1_tunnel_qos0.json` | 4 | 8 | 0 | 20,000 | 256 B | cross-host, SSH tunnel |
+| `C2_tunnel_qos1.json` | 4 | 8 | 1 | 20,000 | 256 B | cross-host, SSH tunnel |
+| `D1_direct_qos0.json` | 2 | 4 | 0 | 10,000 | 256 B | cross-host, direct 18000 |
 
 "pinned 4/4" means the broker ran on cores 0-3 and the load generator on 4-7.
 "pinned 6/2" means the broker got six cores and the generator two, which turned
 out to starve the client and is documented as a negative result rather than a
 broker measurement.
+
+The `C*` and `D*` files are cross-host runs against a broker on a second machine.
+Their throughput reflects the WAN link (0.7 - 1.05 MB/s), not the broker, and
+they are kept as a record of that limit. See the baseline document for the
+measurement that establishes it.
 
 Host: 8 vCPU / 16 GB, Ubuntu 26.04, Go 1.26.1. Commit `d5e37f8f9`.
 
