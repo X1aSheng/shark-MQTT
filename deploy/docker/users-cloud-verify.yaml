@@ -1,0 +1,14 @@
+# Credentials for cloud verification only.
+#
+# The password below is "cloud-verify-pass" (bcrypt, cost 10). This file exists
+# to exercise the real authentication path on the target host -- NOT as a
+# template to copy into production. Generate your own hashes, mount the file
+# read-only from a Secret, and keep it out of version control in a real
+# deployment.
+#
+# client_ids may be omitted entirely (wildcard) or list the Client IDs that
+# username is allowed to connect with.
+users:
+  - username: cloud-verify
+    password: "$2a$10$zsdHGzWfY6dGPmwJ3r6qd.fT9Fp1Hci2WngM9IZiPn1xxuh2PSkxW"
+    client_ids: []

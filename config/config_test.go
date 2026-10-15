@@ -397,3 +397,39 @@ func TestValidate_NilWhenValid(t *testing.T) {
 		t.Errorf("Validate() on defaults = %v, want nil", err)
 	}
 }
+
+// TestLoadCloudVerifyConfig parses the config shipped for cloud verification.
+// A YAML field-name typo or a struct-tag mismatch would otherwise only surface
+// as a failed rollout on the target host, where the feedback loop is long.
+func TestLoadCloudVerifyConfig(t *testing.T) {
+	cfg, err := NewLoader("../deploy/docker/config-cloud-verify.yaml").Load()
+	if err != nil {
+		t.Fatalf("load cloud verify config: %v", err)
+	}
+
+	if got := cfg.EffectiveListenAddrs(); len(got) != 2 {
+		t.Errorf("EffectiveListenAddrs() = %v, want 2 entries", got)
+	}
+	if got := cfg.EffectiveWSListenAddrs(); len(got) != 1 {
+		t.Errorf("EffectiveWSListenAddrs() = %v, want 1 entry", got)
+	}
+	if !cfg.ManagementEnabled {
+		t.Error("management_enabled not parsed")
+	}
+	if cfg.ManagementToken != "cloud-verify-token" {
+		t.Errorf("management_token = %q, not parsed", cfg.ManagementToken)
+	}
+	// The binary refuses to start without an authenticator, so the shipped
+	// config must point at a credential file or it would fail on the host.
+	if cfg.AuthFile == "" {
+		t.Error("auth_file not parsed; the binary now fails closed without one")
+	}
+	if !cfg.MetricsEnabled {
+		t.Error("metrics_enabled not parsed")
+	}
+	// The config binds a non-loopback metrics address, so validation must pass
+	// only because a management token is set.
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() on the shipped config = %v, want nil", err)
+	}
+}

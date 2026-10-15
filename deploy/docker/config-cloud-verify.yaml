@@ -1,0 +1,42 @@
+# Cloud verification config for shark-mqtt.
+#
+# Exercises the capabilities added in the platformization round:
+#  - listen_addrs: one process serving several MQTT ports
+#  - management_enabled + management_token: read-only management API
+#
+# Ports are chosen to stay clear of the defaults (1883 / 19090) because the
+# cloud host runs nothing else, but they are fixed rather than ephemeral so the
+# verification script can probe them by name.
+listen_addr: "0.0.0.0:1883"
+
+# Multiple MQTT ports served by a single process.
+listen_addrs:
+  - "0.0.0.0:1883"
+  - "0.0.0.0:2883"
+
+# MQTT over WebSocket on a second port.
+ws_listen_addr: "0.0.0.0:8083"
+
+metrics_enabled: true
+metrics_addr: "0.0.0.0:19090"
+
+# Management API: bound to a non-loopback address, so a token is REQUIRED.
+# Validate() rejects this combination without one.
+management_enabled: true
+management_token: "cloud-verify-token"
+
+max_connections: 5000
+keep_alive: 60
+connect_timeout: 10s
+
+# Real authentication on purpose: the binary now refuses to start without an
+# authenticator, so this also verifies the credential-file path end to end
+# (bcrypt verify, not just "a listener is open").
+auth_file: "/etc/shark-mqtt/users.yaml"
+
+# Fail fast rather than hanging a rollout if the acknowledgments do not arrive.
+drain_timeout: 5s
+
+storage_backend: memory
+log_level: info
+version: "cloud-verify"

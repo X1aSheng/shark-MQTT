@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/X1aSheng/shark-mqtt/api"
@@ -113,7 +114,22 @@ func main() {
 	fmt.Println(" | |_| | |_) | |_| | (_| | |  __/ / /_\\\\ ")
 	fmt.Println("  \\___/| .__/ \\__,_|\\__,_|_|\\___| \\____/ ")
 	fmt.Println("       |_|")
-	fmt.Printf("Shark-MQTT Broker v%s - listening on %s\n\n", Version, cfg.ListenAddr)
+	// Report every address that will actually be bound. Printing only
+	// cfg.ListenAddr hid the additional listen_addrs entries, so a multi-port
+	// deployment looked like a single-port one in the very first log line an
+	// operator reads.
+	if addrs := cfg.EffectiveListenAddrs(); len(addrs) > 0 {
+		fmt.Printf("Shark-MQTT Broker v%s - listening on %s\n", Version, strings.Join(addrs, ", "))
+	} else {
+		fmt.Printf("Shark-MQTT Broker v%s\n", Version)
+	}
+	if ws := cfg.EffectiveWSListenAddrs(); len(ws) > 0 {
+		fmt.Printf("WebSocket listening on %s\n", strings.Join(ws, ", "))
+	}
+	if wss := cfg.EffectiveWSSListenAddrs(); len(wss) > 0 {
+		fmt.Printf("WSS listening on %s\n", strings.Join(wss, ", "))
+	}
+	fmt.Println()
 
 	var brokerOpts []api.Option
 	brokerOpts = append(brokerOpts, api.WithConfig(cfg))
@@ -139,7 +155,15 @@ func main() {
 		fmt.Printf("Authentication enabled via %s\n", cfg.AuthFile)
 		brokerOpts = append(brokerOpts, api.WithAuth(fa))
 	default:
-		fmt.Println("Authentication required. Use --allow-all (development) or -auth-file <users.yaml> for production.")
+		// Refuse to start rather than run with no authenticator at all. The
+		// previous behaviour printed a hint and carried on, which meant a
+		// deployment that forgot auth_file (or mistyped the key in the config)
+		// came up accepting every client -- and the only symptom was a line of
+		// stdout nobody reads. Failing closed is the only safe default here.
+		fmt.Fprintln(os.Stderr, "FATAL: no authenticator configured.")
+		fmt.Fprintln(os.Stderr, "  Provide -auth-file <users.yaml> (or auth_file in the config) for production,")
+		fmt.Fprintln(os.Stderr, "  or pass --allow-all explicitly if you really accept every client.")
+		os.Exit(1)
 	}
 
 	b := api.NewBroker(brokerOpts...)
