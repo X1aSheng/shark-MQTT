@@ -7,6 +7,74 @@ This project uses semantic versioning. Pre-release tags use the form
 
 ## Unreleased
 
+### Verified on a real cloud host (2026-10-15)
+
+Validated against an Ubuntu 26.04 / 2C2G Alibaba Cloud host (Docker + Helm +
+k3s). Four defects and three Helm-chart defects surfaced that no local test
+could have caught.
+
+- **The binary started with no authenticator at all.** It printed a hint and
+  carried on, meaning any deployment that forgot `auth_file` — or mistyped the
+  key — accepted every client, with a line of stdout as the only symptom. It now
+  fails closed with exit code 1. Every deployment asset in this repo passes
+  `-allow-all` explicitly, so nothing broke.
+- **`-auth-file ""` could not clear the config value.** `if authFile != ""`
+  cannot distinguish "flag absent" from "flag explicitly empty". Found while
+  verifying the change above; fixed with `flag.Visit`.
+- **The startup line printed only `listen_addr`**, so a multi-port deployment
+  looked single-port in the very first log line an operator reads.
+- **`time.Duration` behaved differently in YAML than in the environment.** The
+  env path went through `ParseDuration` (bare number = seconds); the YAML path
+  went straight to `yaml.Unmarshal` and rejected bare integers. A Kubernetes
+  ConfigMap renders durations as bare numbers by habit, so this is exactly the
+  path most likely to hit it. Pods went CrashLoop on a value that was valid in
+  the same key via env. New `config.Duration` accepts both, everywhere.
+- **Helm chart**: the container's `-addr` overrode the mounted config and with it
+  `listen_addrs`, silently collapsing a multi-port deployment to one port; a
+  values.yaml hierarchy mistake rendered `storage_backend`, `metrics_addr` and
+  others as empty; and a volumeMount was created without its volume. All three
+  pass `helm lint` and only appear when rendering or deploying.
+
+`deploy/docker/verify-cloud.sh` checks a live instance end to end: an
+unauthenticated CONNECT is refused on every port, an authenticated one gets a
+CONNACK, the WebSocket upgrade succeeds, the management API enforces its token
+and rejects non-GET, and the health endpoints answer. 15/15 passing on the cloud
+host.
+
+### Verified on a real cloud host (2026-10-15)
+
+Validated against an Ubuntu 26.04 / 2C2G Alibaba Cloud host (Docker + Helm +
+k3s). Four defects and three Helm-chart defects surfaced that no local test
+could have caught.
+
+- **The binary started with no authenticator at all.** It printed a hint and
+  carried on, meaning any deployment that forgot `auth_file` — or mistyped the
+  key — accepted every client, with a line of stdout as the only symptom. It now
+  fails closed with exit code 1. Every deployment asset in this repo passes
+  `-allow-all` explicitly, so nothing broke.
+- **`-auth-file ""` could not clear the config value.** `if authFile != ""`
+  cannot distinguish "flag absent" from "flag explicitly empty". Found while
+  verifying the change above; fixed with `flag.Visit`.
+- **The startup line printed only `listen_addr`**, so a multi-port deployment
+  looked single-port in the very first log line an operator reads.
+- **`time.Duration` behaved differently in YAML than in the environment.** The
+  env path went through `ParseDuration` (bare number = seconds); the YAML path
+  went straight to `yaml.Unmarshal` and rejected bare integers. A Kubernetes
+  ConfigMap renders durations as bare numbers by habit, so this is exactly the
+  path most likely to hit it. Pods went CrashLoop on a value that was valid in
+  the same key via env. New `config.Duration` accepts both, everywhere.
+- **Helm chart**: the container's `-addr` overrode the mounted config and with it
+  `listen_addrs`, silently collapsing a multi-port deployment to one port; a
+  values.yaml hierarchy mistake rendered `storage_backend`, `metrics_addr` and
+  others as empty; and a volumeMount was created without its volume. All three
+  pass `helm lint` and only appear when rendering or deploying.
+
+`deploy/docker/verify-cloud.sh` checks a live instance end to end: an
+unauthenticated CONNECT is refused on every port, an authenticated one gets a
+CONNACK, the WebSocket upgrade succeeds, the management API enforces its token
+and rejects non-GET, and the health endpoints answer. 15/15 passing on the cloud
+host.
+
 ### Read-only management API (2026-10-15)
 
 - **`GET /clients`, `GET /clients/{id}`, `GET /topics`** on the metrics
