@@ -1,0 +1,36 @@
+{
+  "_meta": {
+    "commit": "d5e37f8f9",
+    "host": "8 vCPU / 16 GB Ubuntu 26.04",
+    "schedule": "shared",
+    "tool": "tools/loadgen"
+  },
+  "broker_cpu_cores": 2.1193300775186765,
+  "broker_pid": 5688,
+  "broker_rss_avg_mb": 19.770881558641975,
+  "broker_rss_peak_mb": 20.11328125,
+  "broker_threads_peak": 17,
+  "config": {
+    "addr": "127.0.0.1:2883",
+    "duration_s": 20,
+    "payload": 256,
+    "publishers": 8,
+    "qos": 0,
+    "rate_target": 20000,
+    "subscribers": 4
+  },
+  "deliver_rate_msg_s": 78678.35788757041,
+  "delivery_ratio": 3.999977499549991,
+  "elapsed_s": 20.335439668,
+  "errors": 0,
+  "latency_max_us": 14302,
+  "latency_mean_us": 209.0766711965744,
+  "latency_p50_us": 158,
+  "latency_p90_us": 376,
+  "latency_p999_us": 4103,
+  "latency_p99_us": 722,
+  "latency_samples": 1599959,
+  "received": 1599959,
+  "send_rate_msg_s": 19669.700116168642,
+  "sent": 399992
+}

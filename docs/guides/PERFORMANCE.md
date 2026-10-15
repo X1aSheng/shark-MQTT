@@ -21,7 +21,13 @@ go test -bench=BenchmarkPublishQos0 -benchmem ./tests/bench/...
 
 ## Latest Reference Run
 
-Latest full benchmark run: `tests/logs/20260506_123128_benchmark.log` on AMD Ryzen 7 8845HS / Windows 11 / Go 1.26.1.
+For end-to-end server measurements (throughput, latency distribution, CPU and
+memory under sustained load), see
+[`docs/benchmarks/2026-10-15-server-baseline.md`](../benchmarks/2026-10-15-server-baseline.md).
+The micro-benchmarks below measure individual functions; that run measures a
+running broker under load, which is a different question.
+
+Latest full micro-benchmark run: `tests/logs/20260506_123128_benchmark.log` on AMD Ryzen 7 8845HS / Windows 11 / Go 1.26.1.
 
 | Benchmark | ns/op | B/op | allocs/op |
 |-----------|-------|------|-----------|
