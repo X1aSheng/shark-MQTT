@@ -1,6 +1,6 @@
 # Testing Guide
 
-Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。当前基线为 **485 个单元测试**、**170 个集成测试**、**61 个基准测试**（口径：源码中声明的顶层 `Test*` / `Benchmark*` 函数数，复现方式见 [测试统计](#测试统计)）。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
+Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。当前基线为 **491 个单元测试**、**172 个集成测试**、**61 个基准测试**（口径：源码中声明的顶层 `Test*` / `Benchmark*` 函数数，复现方式见 [测试统计](#测试统计)）。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
 
 ---
 
@@ -31,7 +31,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 |  +-- data_delivery_bench_test.go - E2E 数据验证基准 (12)   |
 |  +-- micro_bench_test.go         - 组件级微基准 (27)       |
 +------------------------------------------------------------+
-|  Integration Tests (170 declared)                          |
+|  Integration Tests (172 declared)                          |
 |  tests/integration/  (35 files)                            |
 |  +-- connect / pubsub / qos / persistent_session           |
 |  +-- delivery / retained / will / topic_wildcard           |
@@ -54,7 +54,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 |  +-- topic_filter_defect_test.go - topic filter 边界       |
 |  +-- windows_benchmark_test.go - Windows benchmark 隔离    |
 +------------------------------------------------------------+
-|  Unit Tests (485 declared)                                 |
+|  Unit Tests (491 declared)                                 |
 |  各包内 *_test.go 文件                                     |
 |  broker/ protocol/ client/ config/ plugin/ store/          |
 |  store/memory/ pkg/ api/ errs/                             |
@@ -67,8 +67,8 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 
 | 类型 | 数量 | 位置 |
 |------|------|------|
-| 单元测试 | 485 | 各包 `*_test.go`（含 `tests/defects/`） |
-| 集成测试 | 170 | `tests/integration/` |
+| 单元测试 | 491 | 各包 `*_test.go`（含 `tests/defects/`） |
+| 集成测试 | 172 | `tests/integration/` |
 | 缺陷回归测试 | `tests/defects/` 7 个文件 / 8 个用例 + 包内回归 | `tests/defects/`、`broker/`、`client/`、`protocol/` |
 | 基准测试 | 61（Windows 本地实际执行 58） | `tests/bench/`、`plugin/`、`pkg/metrics/` |
 
@@ -98,7 +98,7 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 
 | 包 | 测试数 | 基准测试数 | 说明 |
 |----|--------|-----------|------|
-| broker/ | 215 | 0 | 核心逻辑：TopicTree、QoS 引擎、会话、遗嘱、认证、服务器、retained metrics、MQTT 5.0 属性中继与过期边界、重连重传、按协议版本门控的连接内重传、解码失败与 keepalive 超时的原因码回执、会话接管拆除（§3.1.4 确定性 DISCONNECT 0x8E）、入站 Receive Maximum 超限拆除（§3.3.4 DISCONNECT 0x93，预算取 CONNACK 广播值）、畸形主题名/过滤器的 Protocol Error 拆链（§4.7.1 / §4.13.1 DISCONNECT 0x82）、插件钩子上下文 |
+| broker/ | 221 | 0 | 核心逻辑：TopicTree、QoS 引擎、会话、遗嘱、认证、服务器、retained metrics、MQTT 5.0 属性中继与过期边界、重连重传、按协议版本门控的连接内重传、解码失败与 keepalive 超时的原因码回执、会话接管拆除（§3.1.4 确定性 DISCONNECT 0x8E）、入站 Receive Maximum 超限拆除（§3.3.4 DISCONNECT 0x93，预算取 CONNACK 广播值）、畸形主题名/过滤器的 Protocol Error 拆链（§4.7.1 / §4.13.1 DISCONNECT 0x82）、Clean Start 与 Session Expiry Interval 解耦（§3.1.2.4 / §3.1.2.11.2：按协商值留存会话、CONNACK 广播实际采用值、遗嘱延迟不再被折零）、插件钩子上下文 |
 | protocol/ | 95 | 0 | MQTT 3.1 / 3.1.1 / 5.0 编解码、属性、报文 flags 校验（解码与编码对称）、流对齐不变量、属性出现次数与所属报文类型校验（Table 2-4，解码与编码双向）、DISCONNECT 原因码的协议版本门控、协议适配层（15 种报文；握手失败仍返回 codec，供服务端回 CONNACK） |
 | client/ | 40 | 0 | MQTT 客户端连接、发布、订阅、断开清理、QoS 2 入站 ack（PUBREC 保留 flags）与对端 reason-code 守卫 |
 | config/ | 24 | 0 | 配置解析与校验 |
@@ -111,8 +111,8 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 | pkg/logger/ | 7 | 0 | slog 日志适配 |
 | errs/ | 4 | 0 | 错误定义 |
 | tests/defects/ | 8 | 0 | 审查发现缺陷的最小复现和回归测试 |
-| **单元测试合计** | **485** | **4** | |
-| tests/integration/ | 170 | 0 | 端到端集成测试（含部署验证） |
+| **单元测试合计** | **491** | **4** | |
+| tests/integration/ | 172 | 0 | 端到端集成测试（含部署验证） |
 | tests/bench/ | 0 | 57 | 全栈 TCP、E2E 数据验证、微基准 |
 | **基准测试合计** | | **61** | |
 | store/redis/（`store_redis`） | 18 | 9 | Redis 存储：消息、保留、会话（默认不编译） |
@@ -128,10 +128,10 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 | 指标 | 数量 |
 |------|------|
 | `.go` 文件 | 174（67 非测试 / 107 测试） |
-| 非测试代码行数 | 17,214 |
-| 测试代码行数 | 29,954 |
+| 非测试代码行数 | 17,298 |
+| 测试代码行数 | 30,581 |
 
-主要模块的非测试行数：`broker` 7,558（17 文件）· `protocol` 3,851（13）· `store` 1,459（10）·
+主要模块的非测试行数：`broker` 7,642（17 文件）· `protocol` 3,851（13）· `store` 1,459（10）·
 `client` 916（2）· `api` 532（2）· `pkg` 466（7）· `config` 366（2）· `plugin` 200（1）·
 `cmd` 160（1）· `errs` 43（1）；其余分布在 `examples/`、`scripts/`、`tests/`。
 
@@ -202,7 +202,7 @@ func TestTopicTree_Subscribe(t *testing.T) {
 ### 测试清单
 
 集成测试按文件组织，每个文件覆盖一个语义域。下表由源码直接统计
-（`grep -c '^func Test' tests/integration/*_test.go`），合计 **170 个**：
+（`grep -c '^func Test' tests/integration/*_test.go`），合计 **172 个**：
 
 | 文件 | 测试数 | 覆盖重点 |
 |------|--------|----------|
@@ -222,7 +222,7 @@ func TestTopicTree_Subscribe(t *testing.T) {
 | `observability_test.go` | 3 | 拒绝连接的审计日志与凭据脱敏（本轮加固回归） |
 | `pubsub_test.go` | 3 | 基础发布-订阅、自发布投递、MQTT 5.0 No Local |
 | `qos_test.go` | 3 | QoS 0 / 1 / 2 完整流程 |
-| `session_expiry_test.go` | 3 | 会话过期与清理 |
+| `session_expiry_test.go` | 5 | 会话过期与清理：expiry 0 / 缺省服务端默认 / DISCONNECT 覆盖、Clean Start = 1 携带非零 expiry 仍留存会话、clean 重连丢弃旧共享订阅 |
 | `protocol_violation_disconnect_test.go` | 3 | 拆链前确定性发出 DISCONNECT：二次 CONNECT 0x82、未映射 Topic Alias 0x82，以及二次 CONNECT 与 will 语义共存（本轮修复回归） |
 | `lifecycle_regression_test.go` | 2 | 服务生命周期回归 |
 | `message_expiry_test.go` | 2 | 消息过期（Message Expiry Interval） |
@@ -241,7 +241,7 @@ func TestTopicTree_Subscribe(t *testing.T) {
 | `write_queue_test.go` | 1 | 写队列与背压 |
 | `topic_alias_test.go` | 2 | Topic Alias 协商方向与非法值 0x94 拆链、客户端声明 0 时服务端仍可用别名 |
 | `receive_max_test.go` | 1 | CONNACK 广播服务端自身的 Receive Maximum：客户端声明更小值时服务端不得回显该值（§3.2.2.3.3），出站窗口另行取 min |
-| **合计** | **170** | |
+| **合计** | **172** | |
 
 具体测试函数名可用 `go test -list '.*' ./tests/integration/...` 列出。本表**不逐条维护函数名**，
 以免每次新增用例都要同步文档、产生漂移；只维护"文件 -> 数量 -> 语义域"这一层。
