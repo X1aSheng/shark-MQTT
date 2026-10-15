@@ -1,6 +1,6 @@
 # Testing Guide
 
-Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。当前基线为 **566 个单元测试**、**191 个集成测试**、**70 个基准测试**（口径：源码中声明的顶层 `Test*` / `Benchmark*` 函数数，复现方式见 [测试统计](#测试统计)）。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
+Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。当前基线为 **538 个单元测试**、**194 个集成测试**、**72 个基准测试**（口径：源码中声明的顶层 `Test*` / `Benchmark*` 函数数，复现方式见 [测试统计](#测试统计)）。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
 
 ---
 
@@ -25,14 +25,14 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 
 ```
 +------------------------------------------------------------+
-|  Benchmarks (70 declared, 67 run on Windows)               |
+|  Benchmarks (72 declared, 69 run on Windows)               |
 |  tests/bench/ + plugin/ + pkg/metrics/                     |
 |  +-- broker_bench_test.go        - 全栈 TCP 基准 (18)      |
 |  +-- data_delivery_bench_test.go - E2E 数据验证基准 (12)   |
 |  +-- micro_bench_test.go         - 组件级微基准 (27)       |
 +------------------------------------------------------------+
-|  Integration Tests (172 declared)                          |
-|  tests/integration/  (35 files)                            |
+|  Integration Tests (194 declared)                          |
+|  tests/integration/  (40 files)                            |
 |  +-- connect / pubsub / qos / persistent_session           |
 |  +-- delivery / retained / will / topic_wildcard           |
 |  +-- session_expiry / message_expiry / outbound_retry      |
@@ -54,7 +54,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 |  +-- topic_filter_defect_test.go - topic filter 边界       |
 |  +-- windows_benchmark_test.go - Windows benchmark 隔离    |
 +------------------------------------------------------------+
-|  Unit Tests (491 declared)                                 |
+|  Unit Tests (538 declared)                                 |
 |  各包内 *_test.go 文件                                     |
 |  broker/ protocol/ client/ config/ plugin/ store/          |
 |  store/memory/ pkg/ api/ errs/                             |
@@ -67,10 +67,10 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 
 | 类型 | 数量 | 位置 |
 |------|------|------|
-| 单元测试 | 566 | 各包 `*_test.go`（含 `tests/defects/`） |
-| 集成测试 | 191 | `tests/integration/` |
+| 单元测试 | 538 | 各包 `*_test.go`（含 `tests/defects/`） |
+| 集成测试 | 194 | `tests/integration/` |
 | 缺陷回归测试 | `tests/defects/` 7 个文件 / 8 个用例 + 包内回归 | `tests/defects/`、`broker/`、`client/`、`protocol/` |
-| 基准测试 | 70（Windows 本地实际执行 67） | `tests/bench/`、`plugin/`、`pkg/metrics/` |
+| 基准测试 | 72（Windows 本地实际执行 69） | `tests/bench/`、`plugin/`、`pkg/metrics/` |
 
 **统计口径**：以上均为源码中**声明的顶层 `Test*` / `Benchmark*` 函数数**，不是 `go test -json` 的"运行条数"（后者会把每个子测试 `t.Run` 计一条）。复现命令：
 
@@ -83,7 +83,7 @@ go test -list '.*' ./api/... ./broker/... ./client/... ./config/... ./errs/... \
 # 集成测试
 grep -c '^func Test' tests/integration/*_test.go
 
-# 基准测试（默认构建；加 store/redis 的 9 个为 70）
+# 基准测试（默认构建；store/redis 另有 9 个，需 -tags store_redis）
 grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/metrics | wc -l
 ```
 
@@ -91,30 +91,30 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 
 - **构建标签**：`store/redis/`（18 个测试 + 9 个基准）仅在 `-tags store_redis` 下编译，`store/badger/`（10 个测试）仅在 `-tags store_badger` 下编译，因此**不计入**默认口径。
 - **存储层格式测试**：`store/` 根包（8 个测试）不带构建标签，直接验证 `encoding/json` 的会话与保留消息记录布局 —— 这是 `store/badger` 与 `store/redis` 共用的持久化格式，因此无需任一后端即可回归。
-- **Windows 跳过**：`tests/bench/` 中 3 个连接 churn 基准在 Windows 下主动 `b.Skip`（见 [基准测试](#基准测试)），故本地执行数为 `61 - 3 = 58`。
+- **Windows 跳过**：`tests/bench/` 中 3 个连接 churn 基准在 Windows 下主动 `b.Skip`（见 [基准测试](#基准测试)），故本地执行数为 `72 - 3 = 69`。
 - **历史日志**：`tests/logs/` 下的历史运行日志（如 `20260806_*`）记录的是当时的运行条数口径，与上表不可直接比较。
 
 ### 各包测试明细
 
 | 包 | 测试数 | 基准测试数 | 说明 |
 |----|--------|-----------|------|
-| broker/ | 221 | 0 | 核心逻辑：TopicTree、QoS 引擎、会话、遗嘱、认证、服务器、retained metrics、MQTT 5.0 属性中继与过期边界、重连重传、按协议版本门控的连接内重传、解码失败与 keepalive 超时的原因码回执、会话接管拆除（§3.1.4 确定性 DISCONNECT 0x8E）、入站 Receive Maximum 超限拆除（§3.3.4 DISCONNECT 0x93，预算取 CONNACK 广播值）、畸形主题名/过滤器的 Protocol Error 拆链（§4.7.1 / §4.13.1 DISCONNECT 0x82）、Clean Start 与 Session Expiry Interval 解耦（§3.1.2.4 / §3.1.2.11.2：按协商值留存会话、CONNACK 广播实际采用值、遗嘱延迟不再被折零）、插件钩子上下文 |
+| broker/ | 237 | 0 | 核心逻辑：TopicTree、QoS 引擎、会话、遗嘱、认证、服务器、retained metrics、MQTT 5.0 属性中继与过期边界、重连重传、按协议版本门控的连接内重传、解码失败与 keepalive 超时的原因码回执、会话接管拆除（§3.1.4 确定性 DISCONNECT 0x8E）、入站 Receive Maximum 超限拆除（§3.3.4 DISCONNECT 0x93，预算取 CONNACK 广播值）、畸形主题名/过滤器的 Protocol Error 拆链（§4.7.1 / §4.13.1 DISCONNECT 0x82）、Clean Start 与 Session Expiry Interval 解耦（§3.1.2.4 / §3.1.2.11.2：按协商值留存会话、CONNACK 广播实际采用值、遗嘱延迟不再被折零）、插件钩子上下文 |
 | protocol/ | 95 | 0 | MQTT 3.1 / 3.1.1 / 5.0 编解码、属性、报文 flags 校验（解码与编码对称）、流对齐不变量、属性出现次数与所属报文类型校验（Table 2-4，解码与编码双向）、DISCONNECT 原因码的协议版本门控、协议适配层（15 种报文；握手失败仍返回 codec，供服务端回 CONNACK） |
 | client/ | 40 | 0 | MQTT 客户端连接、发布、订阅、断开清理、QoS 2 入站 ack（PUBREC 保留 flags）与对端 reason-code 守卫 |
-| config/ | 24 | 0 | 配置解析与校验 |
+| config/ | 34 | 0 | 配置解析与校验 |
 | store/memory/ | 23 | 0 | 内存存储：会话、消息、保留消息 |
 | api/ | 25 | 0 | 公共 API、健康端点与健康监听的生命周期（Stop 释放端口/幂等、重启可重绑） |
-| plugin/ | 16 | 3 | 插件系统：注册、分发、超时与 panic 隔离 |
+| plugin/ | 37 | 3 | 插件系统：注册、分发、超时与 panic 隔离 |
 | pkg/bufferpool/ | 10 | 0 | 缓冲池管理 |
 | pkg/metrics/ | 10 | 1 | Prometheus 指标 |
 | store/ | 8 | 0 | 存储层 JSON 格式：会话与保留消息的中继属性编解码及向后兼容 |
 | pkg/logger/ | 7 | 0 | slog 日志适配 |
 | errs/ | 4 | 0 | 错误定义 |
 | tests/defects/ | 8 | 0 | 审查发现缺陷的最小复现和回归测试 |
-| **单元测试合计** | **566** | **4** | |
-| tests/integration/ | 191 | 0 | 端到端集成测试（含部署验证） |
-| tests/bench/ | 0 | 57 | 全栈 TCP、E2E 数据验证、微基准 |
-| **基准测试合计** | | **70** | |
+| **单元测试合计** | **538** | **4** | |
+| tests/integration/ | 194 | 0 | 端到端集成测试（含部署验证） |
+| tests/bench/ | 0 | 68 | 全栈 TCP、E2E 数据验证、微基准 |
+| **基准测试合计** | | **72** | |
 | store/redis/（`store_redis`） | 18 | 9 | Redis 存储：消息、保留、会话（默认不编译） |
 | store/badger/（`store_badger`） | 10 | 0 | BadgerDB 持久化存储（默认不编译） |
 
@@ -127,13 +127,13 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 
 | 指标 | 数量 |
 |------|------|
-| `.go` 文件 | 196（78 非测试 / 118 测试） |
-| 非测试代码行数 | 19,236 |
-| 测试代码行数 | 33,042 |
+| `.go` 文件 | 198（79 非测试 / 119 测试） |
+| 非测试代码行数 | 19,738 |
+| 测试代码行数 | 33,233 |
 
 主要模块的非测试行数：`broker` 8,376（25 文件）· `protocol` 3,851（13）· `store` 1,459（10）·
-`client` 916（2）· `api` 707（2）· `pkg` 466（7）· `config` 474（2）· `plugin` 902（3）·
-`cmd` 160（1）· `errs` 43（1）；其余分布在 `examples/`、`scripts/`、`tests/`。
+`client` 916（2）· `api` 733（2）· `pkg` 466（7）· `config` 632（3）· `plugin` 902（3）·
+`cmd` 195（1）· `errs` 43（1）；其余分布在 `examples/`、`scripts/`、`tests/`。
 
 ```bash
 # 全部 .go 文件数
@@ -202,7 +202,7 @@ func TestTopicTree_Subscribe(t *testing.T) {
 ### 测试清单
 
 集成测试按文件组织，每个文件覆盖一个语义域。下表由源码直接统计
-（`grep -c '^func Test' tests/integration/*_test.go`），合计 **172 个**：
+（`grep -c '^func Test' tests/integration/*_test.go`），合计 **194 个**：
 
 | 文件 | 测试数 | 覆盖重点 |
 |------|--------|----------|
@@ -210,21 +210,26 @@ func TestTopicTree_Subscribe(t *testing.T) {
 | `delivery_test.go` | 13 | 多订阅者投递、QoS 降级、顺序保证、各类负载（64KB / 二进制 / 空 / Unicode） |
 | `retained_test.go` | 11 | 保留消息投递、更新、删除、通配符匹配、RetainHandling |
 | `qa_mqtt31_verify_test.go` | 8 | MQTT 3.1 语义专项验收 |
+| `management_api_test.go` | 8 | 管理端点：默认关闭、token 鉴权、非 GET 405、无 token 暴露告警、会话/主题列表与 clientID 转义 |
 | `unsubscribe_test.go` | 8 | 取消订阅、批量取消、通配符取消、重新订阅、系统主题隔离 |
 | `edge_case_test.go` | 5 | 认证失败、重复 ClientID、非法主题过滤器（畸形即 Protocol Error 拆链 0x82，非 SUBACK 失败码）、连接数上限、空 ClientID |
 | `persistent_session_test.go` | 5 | CleanSession=false 会话保持、重连恢复、重复 ClientID 接管 |
 | `retain_as_published_test.go` | 5 | Retain As Published 对出站 RETAIN 的影响（本轮修复回归） |
 | `topic_wildcard_test.go` | 5 | `+` / `#` 通配符匹配（含根级 `#` 与混合形式） |
 | `decode_error_disconnect_test.go` | 5 | 解码失败的拆链回执：重复属性 0x82、畸形 Remaining Length / 保留位 / 属性归属 0x81、超长报文 0x95，以及传输层失败必须保持静默（本轮新增） |
+| `multi_listener_test.go` | 5 | 多监听地址：数组覆盖标量、标量仍可用、Stop 关闭全部端口、绑定失败整体回滚 |
 | `graceful_shutdown_test.go` | 4 | 优雅停机：抑制遗嘱风暴、MQTT 5.0 DISCONNECT 0x8B（本轮修复回归） |
 | `mqtt31_test.go` | 4 | MQTT 3.1 连接、版本协商与字节级兼容 |
 | `will_test.go` | 8 | 遗嘱触发、优雅断开不触发、遗嘱 QoS、Will Properties 中继（§3.1.3.2 + §3.3.2.3）、Will Delay 与会话结束取先到者（§3.1.3.2.2：Clean Start 立即发布、Session Expiry 上界、Clean Start 重连丢弃旧会话时立即发布） |
+| `disconnect_client_test.go` | 4 | 主动踢客户端：关闭 socket、抑制遗嘱、批量断开、未启动 broker |
 | `observability_test.go` | 3 | 拒绝连接的审计日志与凭据脱敏（本轮加固回归） |
 | `pubsub_test.go` | 3 | 基础发布-订阅、自发布投递、MQTT 5.0 No Local |
 | `qos_test.go` | 3 | QoS 0 / 1 / 2 完整流程 |
 | `session_expiry_test.go` | 5 | 会话过期与清理：expiry 0 / 缺省服务端默认 / DISCONNECT 覆盖、Clean Start = 1 携带非零 expiry 仍留存会话、clean 重连丢弃旧共享订阅 |
 | `protocol_violation_disconnect_test.go` | 3 | 拆链前确定性发出 DISCONNECT：二次 CONNECT 0x82、未映射 Topic Alias 0x82，以及二次 CONNECT 与 will 语义共存（本轮修复回归） |
+| `flapping_test.go` | 3 | 连接抖动抑制：风暴拒绝、关闭时全放行、惩罚原因码 |
 | `lifecycle_regression_test.go` | 2 | 服务生命周期回归 |
+| `drain_test.go` | 2 | 停机排空：等 inflight ack 后再关链、超时有界 |
 | `message_expiry_test.go` | 2 | 消息过期（Message Expiry Interval） |
 | `publish_properties_test.go` | 3 | MQTT 5.0 PUBLISH 属性中继：在线投递、QoS 2 中转与版本门控（本轮新增） |
 | `qos1_regression_test.go` | 2 | QoS 1 回归 |
@@ -241,7 +246,7 @@ func TestTopicTree_Subscribe(t *testing.T) {
 | `write_queue_test.go` | 1 | 写队列与背压 |
 | `topic_alias_test.go` | 2 | Topic Alias 协商方向与非法值 0x94 拆链、客户端声明 0 时服务端仍可用别名 |
 | `receive_max_test.go` | 1 | CONNACK 广播服务端自身的 Receive Maximum：客户端声明更小值时服务端不得回显该值（§3.2.2.3.3），出站窗口另行取 min |
-| **合计** | **172** | |
+| **合计** | **194** | |
 
 具体测试函数名可用 `go test -list '.*' ./tests/integration/...` 列出。本表**不逐条维护函数名**，
 以免每次新增用例都要同步文档、产生漂移；只维护"文件 -> 数量 -> 语义域"这一层。
