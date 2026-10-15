@@ -436,7 +436,7 @@ func TestBroker_CleanSessionUnsubscribesOnDisconnect(t *testing.T) {
 				t.Fatalf("expected 1 subscription after subscribe, got %d", got)
 			}
 
-			b.disconnect(clientID, conn)
+			b.disconnect(context.Background(), clientID, conn)
 			if got := b.topics.SubscriberCount(); got != tc.wantSub {
 				t.Errorf("subscriptions after disconnect = %d, want %d", got, tc.wantSub)
 			}
@@ -616,7 +616,7 @@ func TestCleanStartWithExpiryKeepsSubscriptionsOnDisconnect(t *testing.T) {
 				FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypeSubscribe},
 				Topics:      []protocol.TopicFilter{{Topic: "keep/topic", QoS: 1}},
 			})
-			b.disconnect(clientID, conn)
+			b.disconnect(context.Background(), clientID, conn)
 			if got := b.topics.SubscriberCount(); got != tc.wantSub {
 				t.Errorf("subscriptions after disconnect = %d, want %d", got, tc.wantSub)
 			}

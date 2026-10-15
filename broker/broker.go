@@ -1364,7 +1364,17 @@ func (b *Broker) unsubscribeSessionTopics(sess *Session) {
 	b.unsubscribeTopics(sess.ClientID, topics)
 }
 
-func (b *Broker) disconnect(clientID string, conn net.Conn) {
+// disconnect tears down a connection's session state. ctx scopes the store
+// operations below.
+//
+// The caller chooses the scope deliberately, because the right answer differs
+// per path: session persistence must SURVIVE the connection's death (it is the
+// whole point -- a client that asked for Session Expiry Interval > 0 must have
+// its state stored), so paths that run after the socket died pass a
+// disconnect-scoped context rather than the cancelled connection context.
+// Passing a cancelled ctx here would abort the store call and silently lose
+// the session.
+func (b *Broker) disconnect(ctx context.Context, clientID string, conn net.Conn) {
 	// The will is NOT touched here. gracefulDisconnect removes it and
 	// abnormalDisconnect triggers it; calling RemoveWill here cancelled a
 	// just-armed delayed will (P2-5b) and, on takeover, deleted the NEW
@@ -1388,17 +1398,17 @@ func (b *Broker) disconnect(clientID string, conn net.Conn) {
 	// (§3.14.2.2.2) a no-op for the same client.
 	if sess, ok := b.sessions.GetSession(clientID); ok && b.sessionStore != nil {
 		if sess.ExpiryInterval > 0 {
-			if err := sess.Save(b.ctx, b.sessionStore); err != nil {
+			if err := sess.Save(ctx, b.sessionStore); err != nil {
 				b.logger.Warn("failed to save session", "clientID", clientID, "error", err)
 				b.metrics.IncErrors("session_save")
 			}
 		} else {
-			if err := b.sessionStore.DeleteSession(b.ctx, clientID); err != nil {
+			if err := b.sessionStore.DeleteSession(ctx, clientID); err != nil {
 				b.logger.Warn("failed to delete expired session", "clientID", clientID, "error", err)
 				b.metrics.IncErrors("session_save")
 			}
 			if b.messageStore != nil {
-				if err := b.messageStore.ClearMessages(b.ctx, clientID); err != nil {
+				if err := b.messageStore.ClearMessages(ctx, clientID); err != nil {
 					b.metrics.IncErrors("message_store")
 					b.logger.Warn("failed to clear messages of expiring session", "clientID", clientID, "error", err)
 				}
@@ -3503,12 +3513,27 @@ func (b *Broker) publishWill(username string, topic string, payload []byte, qos 
 	return nil
 }
 
+// teardownCtx returns the context that scopes a connection's final store
+// writes. It deliberately derives from the broker lifetime, NOT from the dying
+// connection: the socket is already gone by the time disconnect runs, so a
+// connection-scoped context would be cancelled and the session persistence
+// would be aborted -- losing exactly the state MQTT 5.0 3.1.2.11.2 requires the
+// server to keep when Session Expiry Interval > 0.
+//
+// A broker-wide shutdown must still cut these writes off, so the context is
+// cancelled by Stop via b.ctx.
+func (b *Broker) teardownCtx() (context.Context, context.CancelFunc) {
+	return context.WithCancel(b.ctx)
+}
+
 func (b *Broker) abnormalDisconnect(clientID string, conn net.Conn) {
 	// A broker-initiated shutdown is not a client failure: publish no will, or
 	// a rolling restart would fire one will per connected client at once.
 	if b.shuttingDown.Load() {
 		b.will.RemoveWill(clientID)
-		b.disconnect(clientID, conn)
+		ctx, cancel := b.teardownCtx()
+		defer cancel()
+		b.disconnect(ctx, clientID, conn)
 		return
 	}
 	// The will is only fired when it belongs to THIS connection: after a
@@ -3517,10 +3542,14 @@ func (b *Broker) abnormalDisconnect(clientID string, conn net.Conn) {
 	if err := b.will.TriggerWill(clientID, conn); err != nil {
 		b.logger.Debug("failed to trigger will", "clientID", clientID, "error", err)
 	}
-	b.disconnect(clientID, conn)
+	ctx, cancel := b.teardownCtx()
+	defer cancel()
+	b.disconnect(ctx, clientID, conn)
 }
 
 func (b *Broker) gracefulDisconnect(clientID string, conn net.Conn) {
 	b.will.RemoveWill(clientID)
-	b.disconnect(clientID, conn)
+	ctx, cancel := b.teardownCtx()
+	defer cancel()
+	b.disconnect(ctx, clientID, conn)
 }
