@@ -7,6 +7,29 @@ This project uses semantic versioning. Pre-release tags use the form
 
 ## Unreleased
 
+### Kubernetes runtime fixes (2026-10-15)
+
+Found by running the chart on a real k3s cluster. Both pass `helm lint` and
+`helm template`; neither produces any signal that something is wrong.
+
+- **The primary Service port went dark when `listenAddrs` is used.**
+  `listen_addrs` replaces `listen_addr`, so with `[":2883"]` the broker stops
+  listening on `service.mqttPort`. The Service still routed its primary port to
+  the named port `mqtt`, so every client using that port was refused -- while
+  the pod was healthy, both probes passed and the Service existed. The first
+  entry of `listenAddrs` now becomes the primary port for both the Service and
+  the container's declared ports.
+- **`preStop` never ran.** `exec: ["sleep", "10"]` needs a binary inside the
+  container, and this image is a minimal static rootfs with no shell, so every
+  rolling update logged `FailedPreStopHook`. It is only a warning, so the
+  rollout succeeded anyway and the intended delay before SIGTERM silently never
+  happened. Replaced with the native `sleep` handler, which the kubelet executes
+  regardless of image contents.
+
+Verified end to end on k3s: rolling update completes with no preStop failure,
+the new pod reaches 1/1 Ready, an authenticated CONNECT returns
+`20020000`, an anonymous one is rejected, and `/clients` lists the session.
+
 ### Verified on a real cloud host (2026-10-15)
 
 Validated against an Ubuntu 26.04 / 2C2G Alibaba Cloud host (Docker + Helm +
