@@ -155,6 +155,50 @@ Returns the underlying broker core for advanced usage.
 
 ---
 
+## Management Endpoints
+
+Read-only inspection over HTTP, served on the **metrics listener**. Disabled by
+default: they reveal client IDs, usernames and topic filters, which is
+reconnaissance material for anyone who can reach the port.
+
+```yaml
+management_enabled: true
+management_token: "your-token"        # required unless bound to loopback
+metrics_addr: "127.0.0.1:19090"
+```
+
+`Validate` rejects `management_enabled` without a token on a non-loopback
+`metrics_addr` rather than exposing client data silently.
+
+| Endpoint | Returns |
+|----------|---------|
+| `GET /clients` | `{"count", "online", "clients": [...]}` |
+| `GET /clients/{id}` | One client, or `404` |
+| `GET /topics` | `{"count", "topics": [...]}` |
+| `GET /topics?filter=<f>` | Narrowed server-side |
+
+Authenticate with `Authorization: Bearer <token>` or `?token=<token>`
+(constant-time comparison). Every endpoint is GET/HEAD only; other methods get
+`405` with an `Allow` header.
+
+**Client fields:** `client_id`, `username`, `online`, `protocol_version`,
+`clean_start`, `keep_alive`, `connected_at`, `last_activity`,
+`session_expiry_interval`, `inflight`, `subscriptions` (filter -> granted QoS).
+
+**Topic fields:** `filter`, `shared`, `group`, `subscribers` (client -> QoS).
+Shared subscriptions (`$share/<group>/<filter>`) are reported separately so
+`$share/g/a/b` is distinguishable from `a/b`.
+
+**Example:**
+```bash
+curl -H "Authorization: Bearer your-token" http://127.0.0.1:19090/clients
+```
+
+> **Write operations are deliberately not exposed here.** `Core().DisconnectClient`
+> exists for programmatic use, but putting an unauthenticated "kick this client"
+> button next to a read-only view would be a footgun. Wrap it in a surface that
+> authenticates before exposing it over HTTP.
+
 ## Configuration
 
 ### Default Configuration

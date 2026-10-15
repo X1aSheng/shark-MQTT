@@ -3,10 +3,14 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -462,6 +466,112 @@ func Run(ctx context.Context, opts ...Option) error {
 	return nil
 }
 
+// registerManagementRoutes wires the read-only management endpoints onto the
+// metrics listener. Every handler is GET-only and returns JSON.
+//
+// Read-only on purpose: mutating a broker from an HTTP endpoint needs an auth
+// story this package does not have. The write side that does exist
+// (DisconnectClient) is deliberately NOT exposed here -- putting an
+// unauthenticated "kick this client" button on the same port as a read-only
+// view would be a footgun. Expose it through a surface that authenticates.
+func (b *Broker) registerManagementRoutes(mux *http.ServeMux) {
+	authed := func(h func(http.ResponseWriter, *http.Request)) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+				w.Header().Set("Allow", "GET, HEAD")
+				writeJSONError(w, http.StatusMethodNotAllowed, "only GET is supported")
+				return
+			}
+			if !b.managementAuthorized(r) {
+				// 401 without a body detail: do not confirm which token is wrong.
+				w.Header().Set("WWW-Authenticate", `Bearer realm="shark-mqtt"`)
+				writeJSONError(w, http.StatusUnauthorized, "unauthorized")
+				return
+			}
+			h(w, r)
+		}
+	}
+
+	mux.HandleFunc("/clients", authed(func(w http.ResponseWriter, r *http.Request) {
+		clients := b.broker.Clients()
+		if clients == nil {
+			clients = []broker.ClientInfo{}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"count":   len(clients),
+			"online":  b.ConnCount(),
+			"clients": clients,
+		})
+	}))
+
+	// Go 1.22+ pattern matching: /clients/{id} without a manual mux walk.
+	mux.HandleFunc("/clients/{id}", authed(func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		// A ClientID may legitimately contain characters that need escaping;
+		// unescape so the lookup sees the same string the client registered.
+		if decoded, err := url.PathUnescape(id); err == nil {
+			id = decoded
+		}
+		info, ok := b.broker.Client(id)
+		if !ok {
+			writeJSONError(w, http.StatusNotFound, "no such client")
+			return
+		}
+		writeJSON(w, http.StatusOK, info)
+	}))
+
+	mux.HandleFunc("/topics", authed(func(w http.ResponseWriter, r *http.Request) {
+		stats := b.broker.TopicStats()
+		if stats == nil {
+			stats = []broker.TopicFilterStat{}
+		}
+		// Optional ?filter= narrows server-side: the whole-tree walk is the
+		// expensive part, and an operator usually knows what they are after.
+		if want := r.URL.Query().Get("filter"); want != "" {
+			filtered := stats[:0:0]
+			for _, st := range stats {
+				if st.Filter == want || st.Group+"/"+st.Filter == want {
+					filtered = append(filtered, st)
+				}
+			}
+			stats = filtered
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"count":  len(stats),
+			"topics": stats,
+		})
+	}))
+}
+
+// managementAuthorized checks the bearer token (or ?token=) when one is
+// configured. Comparison is constant-time so a wrong token cannot be recovered
+// byte by byte from response timing.
+func (b *Broker) managementAuthorized(r *http.Request) bool {
+	want := b.cfg.ManagementToken
+	if want == "" {
+		return true
+	}
+	got := ""
+	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+		got = strings.TrimPrefix(auth, "Bearer ")
+	} else if q := r.URL.Query().Get("token"); q != "" {
+		got = q
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
+}
+
+func writeJSON(w http.ResponseWriter, status int, payload any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(payload)
+}
+
+func writeJSONError(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg})
+}
+
 func (b *Broker) startHealthServer() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -479,6 +589,14 @@ func (b *Broker) startHealthServer() {
 			fmt.Fprintf(w, "not ready")
 		}
 	})
+
+	// Management endpoints are opt-in. They expose client IDs, usernames and
+	// topic filters, which is reconnaissance material: an unauthenticated
+	// /clients turns a broker into a directory of who is connected to what.
+	// Off unless explicitly enabled.
+	if b.cfg.ManagementEnabled {
+		b.registerManagementRoutes(mux)
+	}
 
 	// Register /metrics only when metrics are enabled (audit:
 	// metrics_enabled used to be a dead switch and /metrics was always

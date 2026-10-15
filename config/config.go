@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -96,8 +97,18 @@ type Config struct {
 	// deployments relying on them keep working. Default true to match the
 	// documented out-of-the-box Prometheus behavior; set false to reduce the
 	// network exposure.
-	MetricsEnabled bool   `yaml:"metrics_enabled" toml:"metrics_enabled" env:"MQTT_METRICS_ENABLED"`
-	MetricsAddr    string `yaml:"metrics_addr" toml:"metrics_addr" env:"MQTT_METRICS_ADDR"`
+	MetricsEnabled bool `yaml:"metrics_enabled" toml:"metrics_enabled" env:"MQTT_METRICS_ENABLED"`
+	// ManagementEnabled serves the read-only management endpoints (/clients,
+	// /clients/{id}, /topics) on the metrics listener. Off by default: they
+	// reveal client IDs, usernames and topic filters, which is reconnaissance
+	// material for anyone who can reach the port.
+	ManagementEnabled bool `yaml:"management_enabled" toml:"management_enabled" env:"MQTT_MANAGEMENT_ENABLED"`
+	// ManagementToken, when non-empty, is required as a bearer token or as
+	// ?token= on every management request. Empty means no authentication, which
+	// is only safe when the metrics listener is bound to a trusted interface --
+	// Validate warns rather than silently allowing it.
+	ManagementToken string `yaml:"management_token" toml:"management_token" env:"MQTT_MANAGEMENT_TOKEN"`
+	MetricsAddr     string `yaml:"metrics_addr" toml:"metrics_addr" env:"MQTT_METRICS_ADDR"`
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -201,6 +212,9 @@ func (c *Config) Validate() error {
 	// config using only listen_addrs leaves listen_addr empty by design.
 	if len(c.EffectiveListenAddrs()) == 0 {
 		add("listen_addr or listen_addrs must not be empty")
+	}
+	if c.ManagementEnabled && c.ManagementToken == "" && !strings.HasPrefix(c.MetricsAddr, "127.0.0.1") && !strings.HasPrefix(c.MetricsAddr, "localhost") {
+		add("management_enabled without management_token exposes client data; bind metrics_addr to loopback or set a token")
 	}
 	if len(c.EffectiveWSSListenAddrs()) > 0 && !c.TLSEnabled {
 		add("wss_listen_addr(s) requires TLS to be enabled (tls_enabled)")

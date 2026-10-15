@@ -3573,6 +3573,104 @@ func (b *Broker) abnormalDisconnect(clientID string, conn net.Conn) {
 	b.disconnect(ctx, clientID, conn)
 }
 
+// ClientInfo is a read-only snapshot of one session, for management endpoints.
+//
+// It is a copy, not a live handle: every field is read under the session lock
+// and the caller may hold it indefinitely without pinning broker state.
+type ClientInfo struct {
+	ClientID string `json:"client_id"`
+	Username string `json:"username,omitempty"`
+	Online   bool   `json:"online"`
+	// ProtocolVersion is the MQTT version byte: 3=3.1, 4=3.1.1, 5=5.0.
+	ProtocolVersion uint8     `json:"protocol_version"`
+	CleanStart      bool      `json:"clean_start"`
+	KeepAlive       uint16    `json:"keep_alive"`
+	ConnectedAt     time.Time `json:"connected_at"`
+	LastActivity    time.Time `json:"last_activity"`
+	// ExpiryInterval is the negotiated Session Expiry Interval: 0 means the
+	// session ends with the connection.
+	ExpiryInterval int `json:"session_expiry_interval"`
+	// Subscriptions maps topic filter to granted QoS.
+	Subscriptions map[string]uint8 `json:"subscriptions,omitempty"`
+	// Inflight is the number of outbound QoS 1/2 messages awaiting acknowledgment.
+	Inflight int `json:"inflight"`
+}
+
+// Clients returns a snapshot of every session, online or persisted.
+//
+// The list is intentionally read-only and non-blocking: it takes no store I/O
+// and never fails, so an operator endpoint cannot stall the publish path. A
+// session that exists only in the store (persisted, client offline) appears
+// here with Online=false only if it is still held in memory; the authoritative
+// persisted set is SessionStore.ListSessions.
+func (b *Broker) Clients() []ClientInfo {
+	b.mu.RLock()
+	online := make(map[string]struct{}, len(b.connections))
+	for id := range b.connections {
+		online[id] = struct{}{}
+	}
+	b.mu.RUnlock()
+
+	ids := b.sessions.ListSessions()
+	out := make([]ClientInfo, 0, len(ids))
+	for _, id := range ids {
+		sess, ok := b.sessions.GetSession(id)
+		if !ok {
+			continue
+		}
+		info := b.clientInfo(sess)
+		if _, isOnline := online[id]; isOnline {
+			info.Online = true
+		}
+		out = append(out, info)
+	}
+	return out
+}
+
+// Client returns one session's snapshot, or false when no such session exists.
+func (b *Broker) Client(clientID string) (ClientInfo, bool) {
+	sess, ok := b.sessions.GetSession(clientID)
+	if !ok {
+		return ClientInfo{}, false
+	}
+	info := b.clientInfo(sess)
+	b.mu.RLock()
+	_, info.Online = b.connections[clientID]
+	b.mu.RUnlock()
+	return info, true
+}
+
+// clientInfo copies the fields of one session under its own lock.
+func (b *Broker) clientInfo(sess *Session) ClientInfo {
+	sess.mu.RLock()
+	defer sess.mu.RUnlock()
+
+	info := ClientInfo{
+		ClientID:        sess.ClientID,
+		Username:        sess.Username,
+		ProtocolVersion: sess.ProtocolVer,
+		CleanStart:      sess.IsClean,
+		KeepAlive:       sess.KeepAlive,
+		ConnectedAt:     sess.ConnectedAt,
+		LastActivity:    sess.LastActivity,
+		ExpiryInterval:  int(sess.ExpiryInterval),
+		Inflight:        len(sess.Inflight) + len(sess.inboundQoS2),
+	}
+	if len(sess.Subscriptions) > 0 {
+		info.Subscriptions = make(map[string]uint8, len(sess.Subscriptions))
+		for filter, qos := range sess.Subscriptions {
+			info.Subscriptions[filter] = qos
+		}
+	}
+	return info
+}
+
+// TopicStats returns every topic filter with its subscribers, both ordinary and
+// shared ($share). See TopicTree.Stats for the cost note.
+func (b *Broker) TopicStats() []TopicFilterStat {
+	return b.topics.Stats()
+}
+
 // DisconnectClient forcibly closes a client connection by ClientID. It is the
 // operator-facing counterpart of the internal teardown paths: it is what an
 // admin API, a quota enforcer or a test harness needs, none of which can reach

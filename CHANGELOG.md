@@ -7,6 +7,35 @@ This project uses semantic versioning. Pre-release tags use the form
 
 ## Unreleased
 
+### Read-only management API (2026-10-15)
+
+- **`GET /clients`, `GET /clients/{id}`, `GET /topics`** on the metrics
+  listener. These close the observability gap that made the broker a black box:
+  `SessionStore.ListSessions`, the session manager and the topic tree already had
+  the data, but nothing exposed it outside the process.
+- **Opt-in and off by default.** The endpoints reveal client IDs, usernames and
+  topic filters, which is reconnaissance material; an unauthenticated `/clients`
+  turns a broker into a directory of who is connected to what.
+- **`management_token` gates every request**, via `Authorization: Bearer` or
+  `?token=`, compared with `subtle.ConstantTimeCompare`. `Config.Validate` now
+  *rejects* `management_enabled` with no token on a non-loopback `metrics_addr`
+  instead of letting client data be exposed silently.
+- **Read-only by construction**: GET/HEAD only, other methods get `405` with an
+  `Allow` header. `DisconnectClient` is deliberately *not* wired here -- an
+  unauthenticated "kick this client" button next to a read-only view would be a
+  footgun.
+- New read-only broker API: `Clients()`, `Client(id)`, `TopicStats()` and
+  `TopicTree.Stats()`. The client snapshot is a copy taken under the session
+  lock, so a caller can hold it without pinning broker state. `TopicTree.Stats`
+  walks the whole trie and allocates per filter, and is documented as a
+  management-endpoint cost rather than something for the publish path.
+- Shared subscriptions (`$share/<group>/<filter>`) are reported with their
+  group split out, so `$share/g/a/b` is distinguishable from a plain `a/b`.
+- Eight integration tests, including the security guards (disabled by default,
+  token required, non-GET rejected, config refuses exposure). The token test was
+  verified by sabotaging the comparison to accept any non-empty token, which
+  fails immediately.
+
 ### Multi-port listening (2026-10-15)
 
 - **One broker can now serve several MQTT ports.** `listen_addrs`,

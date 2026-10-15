@@ -224,6 +224,96 @@ func (tt *TopicTree) SubscriberCount() int64 {
 	return tt.totalSubs.Load()
 }
 
+// TopicFilterStat is one filter in a topic-tree listing.
+type TopicFilterStat struct {
+	// Filter is the topic filter as the client wrote it, with shared-subscription
+	// prefixes intact so an operator can distinguish "$share/g/a/b" from "a/b".
+	Filter string `json:"filter"`
+	// Shared is true for a $share filter, and Group then holds the share name.
+	Shared bool   `json:"shared"`
+	Group  string `json:"group,omitempty"`
+	// Subscribers maps each subscribed ClientID to its granted QoS.
+	Subscribers map[string]uint8 `json:"subscribers"`
+}
+
+// Stats returns every filter in the tree with its subscribers.
+//
+// The snapshot is taken under one read lock so the result is internally
+// consistent: a client cannot appear under one filter and be missing from
+// another within the same listing.
+//
+// This walks the whole trie and allocates one map per filter, so it is a
+// management-endpoint cost, not something to call on the publish path.
+func (tt *TopicTree) Stats() []TopicFilterStat {
+	tt.mu.RLock()
+	defer tt.mu.RUnlock()
+
+	var out []TopicFilterStat
+	var walk func(node *TopicNode, prefix string)
+	walk = func(node *TopicNode, prefix string) {
+		if node == nil {
+			return
+		}
+		if len(node.subscribers) > 0 {
+			filter, group, shared := splitSharedFilter(prefix)
+			subs := make(map[string]uint8, len(node.subscribers))
+			for clientID, qos := range node.subscribers {
+				subs[clientID] = qos
+			}
+			out = append(out, TopicFilterStat{
+				Filter:      filter,
+				Shared:      shared,
+				Group:       group,
+				Subscribers: subs,
+			})
+		}
+		for part, child := range node.children {
+			// Topic levels are separated by '/', so no separator escaping is
+			// needed: a node's path IS its filter.
+			if prefix == "" {
+				walk(child, part)
+			} else {
+				walk(child, prefix+"/"+part)
+			}
+		}
+	}
+	walk(tt.root, "")
+
+	// Shared subscriptions live outside the trie.
+	for group, filters := range tt.sharedSubs {
+		tt.sharedSubsMu.RLock()
+		for filter, clients := range filters {
+			subs := make(map[string]uint8, len(clients))
+			for clientID, qos := range clients {
+				subs[clientID] = qos
+			}
+			tt.sharedSubsMu.RUnlock()
+			out = append(out, TopicFilterStat{
+				Filter:      filter,
+				Shared:      true,
+				Group:       group,
+				Subscribers: subs,
+			})
+		}
+	}
+	return out
+}
+
+// splitSharedFilter reverses the "$share/<group>/<filter>" encoding applied when
+// the filter is stored in the trie.
+func splitSharedFilter(filter string) (base, group string, shared bool) {
+	if !IsSharedSubscription(filter) {
+		return filter, "", false
+	}
+	rest := filter[len(sharedSubPrefix):]
+	for i := 0; i < len(rest); i++ {
+		if rest[i] == '/' {
+			return rest[i+1:], rest[:i], true
+		}
+	}
+	return rest, "", true
+}
+
 // sharedSubPrefix is the prefix for MQTT 5.0 shared subscriptions.
 const sharedSubPrefix = "$share/"
 
