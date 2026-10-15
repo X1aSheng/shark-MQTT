@@ -83,7 +83,7 @@ func TestBrokerQoSConfigPropagation(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.ListenAddr = ":0"
 	cfg.QoSMaxInflight = 50
-	cfg.QoSRetryInterval = 5 * time.Second
+	cfg.QoSRetryInterval = config.Duration(5 * time.Second)
 	cfg.QoSMaxRetries = 5
 
 	b := NewBroker(

@@ -97,7 +97,7 @@ spec:
               mountPath: /etc/shark-mqtt/auth
               readOnly: true
             {{- end }}
-            {{- if .Values.management.enabled }}
+            {{- if and .Values.management.enabled .Values.management.existingSecret }}
             - name: metrics
               mountPath: /var/run/secrets/shark-mqtt
               readOnly: true

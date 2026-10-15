@@ -118,10 +118,20 @@ func setField(fv reflect.Value, val string) error {
 			return fmt.Errorf("invalid bool value: %s", val)
 		}
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		if fv.Type() == reflect.TypeOf(time.Duration(0)) {
-			d, err := time.ParseDuration(val)
+		// Two duration types reach here: the custom config.Duration (YAML/JSON
+		// struct fields) and time.Duration (any field still typed that way).
+		// Both accept a duration string and a bare number of seconds, so an env
+		// value and the same key in a config file behave identically.
+		if fv.Type() == reflect.TypeOf(Duration(0)) {
+			d, err := ParseDuration(val)
 			if err != nil {
-				return fmt.Errorf("invalid duration: %s", val)
+				return err
+			}
+			fv.SetInt(int64(d))
+		} else if fv.Type() == reflect.TypeOf(time.Duration(0)) {
+			d, err := ParseDuration(val)
+			if err != nil {
+				return err
 			}
 			fv.SetInt(int64(d))
 		} else {

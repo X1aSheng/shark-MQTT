@@ -55,7 +55,7 @@ func noAckQoS1DeliveryCount(t *testing.T, version protocol.Version, clientID str
 	cfg := config.DefaultConfig()
 	cfg.ListenAddr = ":0"
 	cfg.MetricsAddr = ":0"
-	cfg.QoSRetryInterval = 100 * time.Millisecond
+	cfg.QoSRetryInterval = config.Duration(100 * time.Millisecond)
 	cfg.QoSMaxRetries = 3
 
 	brk := api.NewBroker(api.WithConfig(cfg), api.WithAuth(broker.AllowAllAuth{}))

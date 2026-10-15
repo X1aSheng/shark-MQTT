@@ -111,7 +111,7 @@ func NewMQTTServer(cfg *config.Config, opts ...ServerOption) *MQTTServer {
 	// touching the server or the broker core.
 	ct := sopts.connectTimeout
 	if cfg != nil && cfg.ConnectTimeout > 0 {
-		ct = cfg.ConnectTimeout
+		ct = cfg.ConnectTimeout.Duration()
 	}
 	s.connectTimeout = ct
 	mps := int(sopts.maxPacketSize)
@@ -347,7 +347,7 @@ func (s *MQTTServer) acceptLoop(ln net.Listener) {
 
 		// Configure OS-level TCP keep-alive so a dead peer is detected even
 		// for clients that disable the MQTT keep-alive (KeepAlive=0).
-		configureTCPKeepAlive(conn, s.cfg.TCPKeepAlivePeriod)
+		configureTCPKeepAlive(conn, s.cfg.TCPKeepAlivePeriod.Duration())
 
 		s.wg.Add(1)
 		go func(c net.Conn) {
@@ -573,7 +573,7 @@ func (s *MQTTServer) wsHandler(w http.ResponseWriter, r *http.Request) {
 	conn := newWSConn(ws)
 	// WebSocket connections bypass the accept-loop path above, so apply the
 	// OS TCP keep-alive configuration to the upgraded socket here (audit).
-	configureTCPKeepAlive(ws.UnderlyingConn(), s.cfg.TCPKeepAlivePeriod)
+	configureTCPKeepAlive(ws.UnderlyingConn(), s.cfg.TCPKeepAlivePeriod.Duration())
 	s.connCount.Add(1)
 	s.mu.Lock()
 	s.conns[conn] = struct{}{}

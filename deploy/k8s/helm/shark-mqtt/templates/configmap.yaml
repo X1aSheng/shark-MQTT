@@ -21,7 +21,7 @@ data:
     qos_retry_interval: {{ .Values.config.qosRetryInterval | quote }}
     qos_max_retries: {{ .Values.config.qosMaxRetries }}
     qos_max_inflight: {{ .Values.config.qosMaxInflight }}
-    session_expiry_interval: {{ .Values.config.sessionExpiryInterval }}
+    session_expiry_interval: {{ .Values.config.sessionExpiryInterval | quote }}
     storage_backend: {{ .Values.config.storageBackend | quote }}
     metrics_enabled: {{ .Values.config.metricsEnabled }}
     metrics_addr: {{ .Values.config.metricsAddr | quote }}

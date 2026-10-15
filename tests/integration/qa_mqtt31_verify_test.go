@@ -385,7 +385,7 @@ func TestQA_3_1_1_MalformedFilterTearsDown(t *testing.T) {
 // oversized CONNECT paths.
 func TestQA_ErrorPaths_Handshake(t *testing.T) {
 	t.Run("remaining_length_zero", func(t *testing.T) {
-		brk := qaBroker(t, func(c *config.Config) { c.ConnectTimeout = 500 * time.Millisecond })
+		brk := qaBroker(t, func(c *config.Config) { c.ConnectTimeout = config.Duration(500 * time.Millisecond) })
 		conn := dialTestBroker(t, brk)
 		conn.SetDeadline(time.Now().Add(2 * time.Second))
 		if _, err := conn.Write([]byte{0x10, 0x00}); err != nil {
@@ -397,7 +397,7 @@ func TestQA_ErrorPaths_Handshake(t *testing.T) {
 	})
 
 	t.Run("truncated_packet", func(t *testing.T) {
-		brk := qaBroker(t, func(c *config.Config) { c.ConnectTimeout = 500 * time.Millisecond })
+		brk := qaBroker(t, func(c *config.Config) { c.ConnectTimeout = config.Duration(500 * time.Millisecond) })
 		conn := dialTestBroker(t, brk)
 		conn.SetDeadline(time.Now().Add(3 * time.Second))
 		// Declares 10 payload bytes but only supplies 2, then stalls.
@@ -488,7 +488,7 @@ func TestQA_MetricsValidateConnectFailureIsNotDecodeError(t *testing.T) {
 // decode_error exactly once and leaves invalid_connect untouched.
 func TestQA_MetricsMalformedConnectCountedDecodeError(t *testing.T) {
 	m := newQARecordingMetrics()
-	brk := qaBroker(t, func(c *config.Config) { c.ConnectTimeout = 500 * time.Millisecond }, api.WithMetrics(m))
+	brk := qaBroker(t, func(c *config.Config) { c.ConnectTimeout = config.Duration(500 * time.Millisecond) }, api.WithMetrics(m))
 
 	conn := dialTestBroker(t, brk)
 	conn.SetDeadline(time.Now().Add(2 * time.Second))

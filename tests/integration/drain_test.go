@@ -51,7 +51,7 @@ func TestDrain_WaitsForInflightAckBeforeClosing(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.ListenAddr = ":0"
 	cfg.MetricsAddr = ":0"
-	cfg.DrainTimeout = 3 * time.Second
+	cfg.DrainTimeout = config.Duration(3 * time.Second)
 
 	brk := api.NewBroker(
 		api.WithConfig(cfg),
@@ -146,7 +146,7 @@ func TestDrain_TimeoutIsBounded(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.ListenAddr = ":0"
 	cfg.MetricsAddr = ":0"
-	cfg.DrainTimeout = 300 * time.Millisecond
+	cfg.DrainTimeout = config.Duration(300 * time.Millisecond)
 
 	brk := api.NewBroker(
 		api.WithConfig(cfg),

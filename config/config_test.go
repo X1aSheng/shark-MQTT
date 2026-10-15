@@ -134,10 +134,10 @@ func TestDurationEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.ConnectTimeout != 30*time.Second {
+	if cfg.ConnectTimeout.Duration() != 30*time.Second {
 		t.Errorf("expected 30s, got %v", cfg.ConnectTimeout)
 	}
-	if cfg.QoSRetryInterval != 5*time.Minute {
+	if cfg.QoSRetryInterval.Duration() != 5*time.Minute {
 		t.Errorf("expected 5m, got %v", cfg.QoSRetryInterval)
 	}
 }

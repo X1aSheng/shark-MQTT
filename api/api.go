@@ -189,14 +189,14 @@ func NewBroker(opts ...Option) *Broker {
 	if o.cfg.WriteQueueSize > 0 {
 		bopts = append(bopts, broker.WithWriteQueueSize(o.cfg.WriteQueueSize))
 	}
-	if o.cfg.SysInterval > 0 {
-		bopts = append(bopts, broker.WithSysInterval(o.cfg.SysInterval))
+	if o.cfg.SysInterval.Duration() > 0 {
+		bopts = append(bopts, broker.WithSysInterval(o.cfg.SysInterval.Duration()))
 	}
 	if o.version != "" {
 		bopts = append(bopts, broker.WithVersion(o.version))
 	}
-	if o.cfg.SessionExpiryInterval > 0 {
-		bopts = append(bopts, broker.WithSessionExpiry(o.cfg.SessionExpiryInterval))
+	if o.cfg.SessionExpiryInterval.Duration() > 0 {
+		bopts = append(bopts, broker.WithSessionExpiry(o.cfg.SessionExpiryInterval.Duration()))
 	}
 	// Wire the config values that used to be dead: server-enforced keep-alive
 	// (config.keep_alive) and the CONNECT handshake timeout
@@ -204,23 +204,23 @@ func NewBroker(opts ...Option) *Broker {
 	if o.cfg.KeepAlive > 0 {
 		bopts = append(bopts, broker.WithBrokerKeepAlive(o.cfg.KeepAlive))
 	}
-	if o.cfg.ConnectTimeout > 0 {
-		bopts = append(bopts, broker.WithBrokerConnectTimeout(o.cfg.ConnectTimeout))
+	if o.cfg.ConnectTimeout.Duration() > 0 {
+		bopts = append(bopts, broker.WithBrokerConnectTimeout(o.cfg.ConnectTimeout.Duration()))
 	}
 	// Passed through as-is, including 0: "close without waiting" is a valid
 	// choice for a caller who set it. A zero-value Config built by hand (not via
 	// DefaultConfig) is indistinguishable from that intent, so only a
 	// non-zero value overrides the broker's own default.
-	if o.cfg.DrainTimeout != 0 {
-		bopts = append(bopts, broker.WithDrainTimeout(o.cfg.DrainTimeout))
+	if o.cfg.DrainTimeout.Duration() != 0 {
+		bopts = append(bopts, broker.WithDrainTimeout(o.cfg.DrainTimeout.Duration()))
 	}
-	if o.cfg.QoSMaxInflight > 0 || o.cfg.QoSRetryInterval > 0 || o.cfg.QoSMaxRetries > 0 {
+	if o.cfg.QoSMaxInflight > 0 || o.cfg.QoSRetryInterval.Duration() > 0 || o.cfg.QoSMaxRetries > 0 {
 		var qosOpts []broker.QoSOption
 		if o.cfg.QoSMaxInflight > 0 {
 			qosOpts = append(qosOpts, broker.WithMaxInflight(o.cfg.QoSMaxInflight))
 		}
-		if o.cfg.QoSRetryInterval > 0 {
-			qosOpts = append(qosOpts, broker.WithRetryInterval(o.cfg.QoSRetryInterval))
+		if o.cfg.QoSRetryInterval.Duration() > 0 {
+			qosOpts = append(qosOpts, broker.WithRetryInterval(o.cfg.QoSRetryInterval.Duration()))
 		}
 		if o.cfg.QoSMaxRetries >= 0 {
 			qosOpts = append(qosOpts, broker.WithMaxRetries(o.cfg.QoSMaxRetries))

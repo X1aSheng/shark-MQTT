@@ -20,7 +20,7 @@ func TestQoS1NoDuplicateDelivery(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.ListenAddr = ":0"
 	cfg.MetricsAddr = ":0"
-	cfg.QoSRetryInterval = 200 * time.Millisecond
+	cfg.QoSRetryInterval = config.Duration(200 * time.Millisecond)
 	cfg.QoSMaxRetries = 2
 
 	brk := api.NewBroker(

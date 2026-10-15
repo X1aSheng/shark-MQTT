@@ -41,34 +41,34 @@ type Config struct {
 	TLSMinVersion uint16 `yaml:"tls_min_version" toml:"tls_min_version" env:"MQTT_TLS_MIN_VERSION"`
 	TLSMaxVersion uint16 `yaml:"tls_max_version" toml:"tls_max_version" env:"MQTT_TLS_MAX_VERSION"`
 	// mTLS settings
-	TLSMutual      bool          `yaml:"tls_mutual" toml:"tls_mutual" env:"MQTT_TLS_MUTUAL"`
-	TLSCACertFile  string        `yaml:"tls_ca_cert_file" toml:"tls_ca_cert_file" env:"MQTT_TLS_CA_CERT_FILE"`
-	ConnectTimeout time.Duration `yaml:"connect_timeout" toml:"connect_timeout" env:"MQTT_CONNECT_TIMEOUT"`
+	TLSMutual      bool     `yaml:"tls_mutual" toml:"tls_mutual" env:"MQTT_TLS_MUTUAL"`
+	TLSCACertFile  string   `yaml:"tls_ca_cert_file" toml:"tls_ca_cert_file" env:"MQTT_TLS_CA_CERT_FILE"`
+	ConnectTimeout Duration `yaml:"connect_timeout" toml:"connect_timeout" env:"MQTT_CONNECT_TIMEOUT"`
 	// DrainTimeout bounds how long shutdown waits for in-flight QoS 1/2
 	// messages to be acknowledged before closing the sockets anyway.
 	// 0 closes immediately; the wait requires live sockets, so it happens
 	// before they close.
-	DrainTimeout   time.Duration `yaml:"drain_timeout" toml:"drain_timeout" env:"MQTT_DRAIN_TIMEOUT"`
-	KeepAlive      uint16        `yaml:"keep_alive" toml:"keep_alive" env:"MQTT_KEEP_ALIVE"`
-	MaxPacketSize  int           `yaml:"max_packet_size" toml:"max_packet_size" env:"MQTT_MAX_PACKET_SIZE"`
-	MaxConnections int           `yaml:"max_connections" toml:"max_connections" env:"MQTT_MAX_CONNECTIONS"`
-	WriteQueueSize int           `yaml:"write_queue_size" toml:"write_queue_size" env:"MQTT_WRITE_QUEUE_SIZE"`
+	DrainTimeout   Duration `yaml:"drain_timeout" toml:"drain_timeout" env:"MQTT_DRAIN_TIMEOUT"`
+	KeepAlive      uint16   `yaml:"keep_alive" toml:"keep_alive" env:"MQTT_KEEP_ALIVE"`
+	MaxPacketSize  int      `yaml:"max_packet_size" toml:"max_packet_size" env:"MQTT_MAX_PACKET_SIZE"`
+	MaxConnections int      `yaml:"max_connections" toml:"max_connections" env:"MQTT_MAX_CONNECTIONS"`
+	WriteQueueSize int      `yaml:"write_queue_size" toml:"write_queue_size" env:"MQTT_WRITE_QUEUE_SIZE"`
 	// TCPKeepAlivePeriod is the OS-level TCP keep-alive probe interval applied
 	// to accepted connections (0 = keep the Go runtime default). It bounds how
 	// long a dead peer that disables the MQTT keep-alive (KeepAlive=0) can
 	// stay registered as an online connection before being reaped.
-	TCPKeepAlivePeriod time.Duration `yaml:"tcp_keepalive_period" toml:"tcp_keepalive_period" env:"MQTT_TCP_KEEPALIVE_PERIOD"`
+	TCPKeepAlivePeriod Duration `yaml:"tcp_keepalive_period" toml:"tcp_keepalive_period" env:"MQTT_TCP_KEEPALIVE_PERIOD"`
 
 	// QoS settings
-	QoSRetryInterval time.Duration `yaml:"qos_retry_interval" toml:"qos_retry_interval" env:"MQTT_QOS_RETRY_INTERVAL"`
-	QoSMaxRetries    int           `yaml:"qos_max_retries" toml:"qos_max_retries" env:"MQTT_QOS_MAX_RETRIES"`
-	QoSMaxInflight   int           `yaml:"qos_max_inflight" toml:"qos_max_inflight" env:"MQTT_QOS_MAX_INFLIGHT"`
+	QoSRetryInterval Duration `yaml:"qos_retry_interval" toml:"qos_retry_interval" env:"MQTT_QOS_RETRY_INTERVAL"`
+	QoSMaxRetries    int      `yaml:"qos_max_retries" toml:"qos_max_retries" env:"MQTT_QOS_MAX_RETRIES"`
+	QoSMaxInflight   int      `yaml:"qos_max_inflight" toml:"qos_max_inflight" env:"MQTT_QOS_MAX_INFLIGHT"`
 
 	// Session settings
-	SessionExpiryInterval time.Duration `yaml:"session_expiry_interval" toml:"session_expiry_interval" env:"MQTT_SESSION_EXPIRY"`
+	SessionExpiryInterval Duration `yaml:"session_expiry_interval" toml:"session_expiry_interval" env:"MQTT_SESSION_EXPIRY"`
 
 	// $SYS status topic publish interval (0 disables the status loop).
-	SysInterval time.Duration `yaml:"sys_interval" toml:"sys_interval" env:"MQTT_SYS_INTERVAL"`
+	SysInterval Duration `yaml:"sys_interval" toml:"sys_interval" env:"MQTT_SYS_INTERVAL"`
 
 	// Storage backend: "memory", "redis", "badger"
 	StorageBackend string `yaml:"storage_backend" toml:"storage_backend" env:"MQTT_STORAGE_BACKEND"`
@@ -116,18 +116,18 @@ func DefaultConfig() *Config {
 	return &Config{
 		ListenAddr:            DefaultListenAddr,
 		TLSEnabled:            false,
-		ConnectTimeout:        10 * time.Second,
-		DrainTimeout:          5 * time.Second,
+		ConnectTimeout:        Duration(10 * time.Second),
+		DrainTimeout:          Duration(5 * time.Second),
 		KeepAlive:             60,
 		MaxPacketSize:         256 * 1024,
 		MaxConnections:        10000,
 		WriteQueueSize:        256,
-		TCPKeepAlivePeriod:    60 * time.Second,
-		QoSRetryInterval:      10 * time.Second,
+		TCPKeepAlivePeriod:    Duration(60 * time.Second),
+		QoSRetryInterval:      Duration(10 * time.Second),
 		QoSMaxRetries:         3,
 		QoSMaxInflight:        100,
-		SessionExpiryInterval: 24 * time.Hour,
-		SysInterval:           30 * time.Second,
+		SessionExpiryInterval: Duration(24 * time.Hour),
+		SysInterval:           Duration(30 * time.Second),
 		StorageBackend:        "memory",
 		LogLevel:              "info",
 		LogFormat:             "text",
