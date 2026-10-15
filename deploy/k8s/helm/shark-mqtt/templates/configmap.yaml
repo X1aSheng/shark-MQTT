@@ -54,6 +54,28 @@ data:
     {{- with .Values.config.drainTimeout }}
     drain_timeout: {{ . | quote }}
     {{- end }}
+    {{- if .Values.config.flapping.enabled }}
+    {{/*
+      Connection-flapping detection. Rendered only when explicitly enabled so
+      the ConfigMap does not carry a block of keys the broker will ignore, and
+      so an operator reading it can see at a glance whether the protection is
+      meant to be on.
+
+      The window and penalty are quoted because YAML would otherwise read "10s"
+      as a string anyway, but "300s" written bare is ambiguous enough that
+      quoting removes the question.
+    */}}
+    flapping_enabled: true
+    flapping_max_connects: {{ .Values.config.flapping.maxConnects | default 10 }}
+    flapping_window: {{ .Values.config.flapping.window | default "10s" | quote }}
+    flapping_penalty_duration: {{ .Values.config.flapping.penaltyDuration | default "60s" | quote }}
+    {{- with .Values.config.flapping.maxTrackedClients }}
+    flapping_max_tracked_clients: {{ . }}
+    {{- end }}
+    {{- with .Values.config.flapping.cleanupInterval }}
+    flapping_cleanup_interval: {{ . | quote }}
+    {{- end }}
+    {{- end }}
     {{- if .Values.management.enabled }}
     management_enabled: true
     {{- end }}

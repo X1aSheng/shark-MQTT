@@ -61,6 +61,28 @@ config:
   # Seconds Stop waits for in-flight QoS 1/2 messages to be acknowledged
   # before closing sockets. 0 closes immediately.
   drainTimeout: "5s"
+
+  # Connection-flapping protection. Off by default: a limit that silently
+  # rejects clients is worse than no limit when the limit is wrong.
+  #
+  # A client that reconnects in a tight loop never holds many concurrent
+  # connections, so maxConnections never trips -- yet every attempt still costs
+  # a goroutine, a file descriptor and a codec buffer.
+  flapping:
+    enabled: false
+    # Connections one client may open per window.
+    maxConnects: 10
+    # Sliding window over which connections are counted.
+    window: "10s"
+    # How long a client stays rejected after tripping the limit. Not extended by
+    # further attempts: extending it would lock out permanently the very
+    # clients the limit exists to protect the broker from.
+    penaltyDuration: "60s"
+    # Memory bound. Oldest entries are evicted when exceeded; negative disables
+    # the bound, which is only safe when the client count is already known.
+    maxTrackedClients: 10000
+    # How often expired entries are swept. Defaults to the window.
+    cleanupInterval: ""
   logLevel: "info"
   logFormat: "json"
   qosRetryInterval: "10s"

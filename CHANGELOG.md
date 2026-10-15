@@ -7,6 +7,21 @@ This project uses semantic versioning. Pre-release tags use the form
 
 ## Unreleased
 
+### Flapping configuration in the Helm chart (2026-10-15)
+
+Found by a full cluster regression: the chart had no way to express the
+flapping settings, so `--set config.flapping.*` was silently ignored and the
+ConfigMap carried no flapping keys at all. Nothing failed -- the broker simply
+ran without the protection while the values file implied it was on.
+
+`config.flapping.{enabled,maxConnects,window,penaltyDuration,maxTrackedClients,cleanupInterval}`
+now renders the corresponding keys, and only when `enabled` is true, so a
+ConfigMap does not carry a block of settings the broker would ignore.
+
+Verified on k3s: the rendered ConfigMap reaches the running pod, the detector
+throttles after 3 connections with a fresh source port on every attempt, and
+`GET /clients` reports `flapping: {enabled, trackedClients}`.
+
 ### Connection flapping protection (2026-10-15)
 
 A client that reconnects in a tight loop never holds many concurrent
