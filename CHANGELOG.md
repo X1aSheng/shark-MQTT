@@ -7,6 +7,30 @@ This project uses semantic versioning. Pre-release tags use the form
 
 ## Unreleased
 
+### broker.go split by responsibility (2026-10-15)
+
+`broker/broker.go` was 3,876 lines holding 99 functions spanning the entire
+broker. It is now 343 lines of type definition, constructor and plugin dispatch,
+with the behaviours moved into seven files:
+
+| File | Lines | Holds |
+| --- | --- | --- |
+| `conn_lifecycle.go` | 1,117 | accept, handshake, CONNECT, rejection paths, disconnect teardown |
+| `pub_sub.go` | 1,016 | PUBLISH routing, retained, SUBSCRIBE/UNSUBSCRIBE, delivery to a session |
+| `lifecycle.go` | 412 | start, cleanup loops, drain, stop |
+| `qos_outbound.go` | 255 | PUBACK/PUBREC/PUBREL/PUBCOMP, inflight retransmission, Will |
+| `admin.go` | 126 | management-API snapshots and the operator disconnect entry points |
+| `connack.go` | 130 | CONNACK construction, MQTT 5.0 reason string and properties |
+| `client_state.go` | 119 | per-connection write queue and write-failure classification |
+
+A pure code move, proven rather than asserted: every function body was extracted
+from `HEAD` and from the new files and compared. 99 functions in, 99 out, none
+lost, none added, none with a changed body.
+
+`tools/split-broker.py` performs the split by whole-declaration boundaries and
+refuses to run if two groups claim the same name, so it cannot silently drop a
+function. `Start` and `Stop` were compared byte for byte and are identical.
+
 ### Flapping configuration in the Helm chart (2026-10-15)
 
 Found by a full cluster regression: the chart had no way to express the
