@@ -69,9 +69,9 @@
 | G6 | Clean Start 分支在同一函数内混用连接 `ctx` 与全局 `b.ctx`，store IO 无法随连接取消 | 修正前 `broker/broker.go:484,490` vs 同函数 `:394` | ctx 纪律 | **已修**（`f74afec87`） |
 | G7 | `api.Broker.Broker()` 返回具体 `*broker.Broker`，绕过封装；且与 `api.Broker` 同名异义 | 修正前 `api/api.go:383` | API 设计 | **已修**（`1ada2b50f`，改为 `Core()` 窄接口） |
 | G8 | `Stop()` 持 `b.mu` 遍历执行 `conn.Close()` syscall，并发接入路径被排在最慢 Close 之后 | 修正前 `broker/broker.go` Stop 第 2 步 | 并发 | **已修**（`1ada2b50f`，锁内摘除 / 锁外关闭） |
-| G9 | `disconnect()` 不接受 ctx，其内部 store 调用一律用 `b.ctx` | `broker/broker.go:1280`（签名），调用点 `:3408,3417,3422` + 2 处测试 | ctx 纪律 | **未动** |
-| G10 | `disconnect()` / `handlePublish()` / `deliverToClient()` 等每连接路径统一用 `b.ctx`（全仓 29 处） | `b.ctx` 出现处（`:484`-`:3372` 区间） | ctx 纪律 | **未动** |
-| G11 | 会话快照每次落盘深拷贝全部 payload，为高频 GC 来源 | `broker/session.go` Save / Restore 的 `make`+`copy`；`pkg/bufferpool` 仅 protocol 层使用，broker 层零使用 | 性能 | **未动** |
+| G9 | `disconnect()` 不接受 ctx，其内部 store 调用一律用 `b.ctx` | `broker/broker.go:1280`（签名），调用点 `:3408,3417,3422` + 2 处测试 | ctx 纪律 | **已修**（`7ed370208`） |
+| G10 | `disconnect()` / `handlePublish()` / `deliverToClient()` 等每连接路径统一用 `b.ctx`（全仓 29 处） | `b.ctx` 出现处（`:484`-`:3372` 区间） | ctx 纪律 | **已修**（`23a5c19be`，16 个函数加 ctx 首参） |
+| G11 | 会话快照每次落盘深拷贝全部 payload，为高频 GC 来源 | `broker/session.go` Save / Restore 的 `make`+`copy`；`pkg/bufferpool` 仅 protocol 层使用，broker 层零使用 | 性能 | **放弃**（见 §4.2：这些 payload 被 store 长期持有并序列化，pool 语义不适用） |
 | G12 | `broker.go` 3,400+ 行单文件，天然边界清晰但未拆 | `broker/broker.go`：`HandleConnection` / `readLoop`+`handlePublish` / `clientState` 写路径 / QoS2 四件套 | 工程债 | **未动** |
 
 ### 2.2 P0 结构性缺口（4 项，与上一版一致，仍零推进）
@@ -104,7 +104,7 @@
 | 15 | 版本检查 / 更新提示 | 无 | 否 |
 | 16 | 指标项丰富度 | 12 项（`pkg/metrics/prometheus.go:67-138`），已含 Histogram；JVM/CPU gauge 不适用 Go | 部分 |
 | 19 | 内置压测（运行期可启动） | `loadtest/stress` 0 命中；压测仅存在于离线 `tests/bench`（`go test -bench`） | 部分 |
-| 20 | 连接管理（列表 / 强制断开） | `Broker` 导出方法仅 7 个；`disconnect`/`gracefulDisconnect` 全为非导出，**无 `DisconnectClient(clientID)` 之类管理入口** | 否 |
+| 20 | 连接管理（列表 / 强制断开） | `Broker` 导出方法仅 7 个（本轮后为 10个）；`disconnect`/`gracefulDisconnect` 全为非导出，**无 `DisconnectClient(clientID)` 之类管理入口** | 否 |
 | 21 | Topic 统计 / 订阅关系查询 | 仅 `TopicTree.SubscriberCount()` 聚合计数，无按 topic 查询；`ListSessions`/`ListMessages` 在 api/cmd 层 0 调用 | 否 |
 
 **已关闭**：`AI Agent / MCP`（不适用）、`License 授权`（不适用，MIT）、`License 连接数限制`（不适用）。
@@ -173,18 +173,28 @@ CHANGELOG 新增三节（drain 正确性 / 错误可见性与 ctx 纪律 / API �
 
 ## 4. 待办清单（本轮未动，按性价比排序）
 
+**已完成（本轮）**：G9 `disconnect` ctx 参数化 · G10 每连接路径 ctx 贯通 ·
+P2-20 `DisconnectClient` 管理出口 · `errors.Join` 聚合校验错误 ·
+`slices.ContainsFunc` / `slices.Collect(maps.Keys(...))`。
+
 | 序 | 项 | 理由 | 预估风险 |
 | --- | --- | --- | --- |
-| 1 | **G9** `disconnect()` 增加 ctx 参数 | 连接拆除的 store 调用应随连接取消；3 个生产调用点 + 2 个测试调用点 | 低 |
-| 2 | **G10** 每连接路径的 `b.ctx` → 连接 ctx | 29 处，需逐处判断"是连接作用域还是broker 作用域"，不能盲改 | 中 |
-| 3 | **P1-9** 多 listener 数组化 | 解锁"同一进程多端口"部署形态；smart-mqtt 五个插件各起端口 | 中 |
-| 4 | **P1-8** Flapping 连接防抖 | 补上"惩罚态 + 自动解封"，当前限流只有单次拒绝 | 中 |
-| 5 | **P2-20** `DisconnectClient(clientID)` 管理出口 | 强制断开是运维刚需；底层 `disconnect` 已有，只差导出 | 低 |
-| 6 | **G11** 会话快照深拷贝 → bufferpool | 直接收益（降高频 GC）；`pkg/bufferpool` 现成可用 | 中 |
-| 7 | **G12** `broker.go` 拆分 4 文件 | 边界已验证清晰；纯机械重构 | 中（需全量回归） |
-| 8 | **P0-3** HTTP 管理 API（只读） | 连接/订阅/主题统计查询；底层 `ListSessions`/`ListMessages` 已存在，api 层 0 调用 | 低 |
-| 9 | **P0-1/2** 插件生命周期 + 事件总线 | 生态地基，工作量大但价值最高 | 高 |
-| 10 | 补 `%w` 错误链（84 处 `fmt.Errorf` 无 `%w`） | 机械但量大，`errors.Is/As` 目前无法穿透 | 低（但需逐条判断） |
+| 1 | **P1-9** 多 listener 数组化 | 解锁"同一进程多端口"部署形态；smart-mqtt 五个插件各起端口。当前 `ListenAddr` 是单 `string` | 中 |
+| 2 | **P1-8** Flapping 连接防抖 | 补上"惩罚态 + 自动解封"，当前 `rate_limit.go` 是全局维度限流、只拒本次连接 | 中 |
+| 3 | **G12** `broker.go` 拆分 4 文件 | 边界已验证清晰（`HandleConnection` / `readLoop`+`handlePublish` / `clientState` 写路径 / QoS2 四件套）；纯机械重构 | 中（需全量回归） |
+| 4 | **P0-3** HTTP 管理 API（只读） | 连接/订阅/主题统计查询；底层 `ListSessions`/`ListMessages` 已存在，api 层 0 调用。`DisconnectClient` 本轮已铺好出口 | 低 |
+| 5 | **P0-1/2** 插件生命周期 + 事件总线 | 生态地基，工作量大但价值最高 | 高 |
+| 6 | 补 `%w` 错误链（84 处 `fmt.Errorf` 无 `%w`） | 机械但量大，`errors.Is/As` 目前无法穿透；需逐条判断是否有底层错误可包 | 低（但需逐条判断） |
+
+### 4.2 本轮证伪的两项（避免后人重蹈）
+
+| 原建议 | 证伪依据 |
+| --- | --- |
+| `b.ctx` 改 `atomic.Pointer` 以"根除竞态" | `Stop` 开头的 `b.loops.Wait()` 已确保三个后台循环全部退出后 `Start` 才重写字段，happens-before 关系充分。**本机无 gcc，`-race` 不可用**，故以代码推理否定 —— 结论是"无实际竞态"，而非"改造未做" |
+| 会话快照深拷贝改用 `pkg/bufferpool` | 这些 payload 会被 store **长期持有并序列化**（memory store 自己还要再拷一次），不是一次性临时缓冲。`Put` 要求"用完即还"，与持有期完全不匹配 —— 强行套用会引入 use-after-recycle |
+
+> 这两项都写在本轮改进计划里，实际动手前查证后被否。**记录否证过程比记录结论更有价值**：
+> 子代理或直觉给出的"优化建议"必须先验证前提，否则只是把复杂度引入代码却换不到收益。
 
 ---
 
