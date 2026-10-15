@@ -23,8 +23,16 @@ import (
 // MQTTServer handles incoming MQTT connections over TCP and, when configured,
 // MQTT-over-WebSocket (R5).
 type MQTTServer struct {
-	cfg         *config.Config
-	listener    net.Listener
+	cfg *config.Config
+	// listener is the primary MQTT-over-TCP listener (the first entry of
+	// cfg.EffectiveListenAddrs, or one injected via options). It stays the
+	// handle Addr() and WithListener address, so existing callers are
+	// unaffected by multi-port support.
+	listener net.Listener
+	// listeners holds every bound TCP listener, primary first. A failure to
+	// bind any one of them aborts Start, so the set is only ever read after a
+	// successful Start and is rebuilt from scratch on each Start.
+	listeners   []net.Listener
 	handler     ConnectionHandler
 	connCount   atomic.Int64
 	earlyClose  atomic.Int64
@@ -142,40 +150,73 @@ func (s *MQTTServer) Start() error {
 	default:
 	}
 
-	// Use pre-set listener (from options) or create one from config
-	if s.listener == nil {
-		addr := s.cfg.ListenAddr
+	// Use pre-set listener (from options) or create one per configured address.
+	// An injected listener wins outright: the caller already owns that socket,
+	// so binding cfg.ListenAddr as well would open a port the caller never asked
+	// for (and would conflict in the common ":0" test setup).
+	addrs := s.cfg.EffectiveListenAddrs()
+	if s.listener != nil {
+		addrs = nil
+	} else if len(addrs) == 0 {
+		return fmt.Errorf("server: no listen address configured")
+	}
+
+	bound := make([]net.Listener, 0, len(addrs)+1)
+	// rollback closes whatever was bound before an error, so a failed Start
+	// leaves no port dangling for the next Start to trip over.
+	rollback := func() {
+		for _, ln := range bound {
+			ln.Close()
+		}
+		bound = nil
+	}
+
+	for _, addr := range addrs {
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {
+			rollback()
+			if s.listener != nil {
+				s.listener.Close()
+			}
 			return fmt.Errorf("server: failed to listen on %s: %w", addr, err)
 		}
-		s.listener = ln
+		if s.tlsConfig != nil {
+			ln = tls.NewListener(ln, s.tlsConfig)
+		}
+		bound = append(bound, ln)
+		s.logr.Info("server listening", "addr", ln.Addr(), "tls", s.cfg.TLSEnabled)
+	}
+	if s.listener != nil {
+		// Injected via options: the caller owns that socket, so it is the
+		// primary and nothing was bound from cfg above.
+		s.listeners = []net.Listener{s.listener}
+	} else {
+		// bound is already in configured order, and its first entry is the
+		// primary. Do NOT prepend s.listener again -- it is bound[0].
+		s.listener = bound[0]
+		s.listeners = bound
 	}
 
-	if s.tlsConfig != nil {
-		s.listener = tls.NewListener(s.listener, s.tlsConfig)
+	for _, ln := range s.listeners {
+		ln := ln
+		s.wg.Add(1)
+		go s.acceptLoop(ln)
 	}
 
-	s.logr.Info("server listening", "addr", s.listener.Addr(), "tls", s.cfg.TLSEnabled)
-
-	ln := s.listener
-	s.wg.Add(1)
-	go s.acceptLoop(ln)
-
-	if s.cfg.WSListenAddr != "" {
-		if err := s.startWS(s.cfg.WSListenAddr, false); err != nil {
-			s.listener.Close()
-			return fmt.Errorf("server: failed to listen on ws %s: %w", s.cfg.WSListenAddr, err)
+	for _, addr := range s.cfg.EffectiveWSListenAddrs() {
+		if err := s.startWS(addr, false); err != nil {
+			rollback()
+			return fmt.Errorf("server: failed to listen on ws %s: %w", addr, err)
 		}
 	}
-	if s.cfg.WSSListenAddr != "" {
+	for _, addr := range s.cfg.EffectiveWSSListenAddrs() {
 		if s.tlsConfig == nil {
-			s.listener.Close()
-			return fmt.Errorf("server: wss_listen_addr requires TLS to be configured (tls_enabled)")
+			rollback()
+			return fmt.Errorf("server: wss_listen_addr(s) requires TLS to be configured (tls_enabled)")
 		}
-		if err := s.startWS(s.cfg.WSSListenAddr, true); err != nil {
-			s.listener.Close()
-			return fmt.Errorf("server: failed to listen on wss %s: %w", s.cfg.WSSListenAddr, err)
+		if err := s.startWS(addr, true); err != nil {
+			rollback()
+			return fmt.Errorf("server: failed to listen on wss %s: %w", addr, err)
 		}
 	}
 	return nil
@@ -184,6 +225,13 @@ func (s *MQTTServer) Start() error {
 // Stop gracefully shuts down the server.
 func (s *MQTTServer) Stop() {
 	s.cancel()
+	// Close every bound listener, not just the primary: a multi-port Start may
+	// have left several sockets open, and only the first one is s.listener.
+	for _, ln := range s.listeners {
+		if ln != nil {
+			ln.Close()
+		}
+	}
 	if s.listener != nil {
 		s.listener.Close()
 	}
@@ -206,6 +254,7 @@ func (s *MQTTServer) Stop() {
 
 	s.wg.Wait()
 	s.listener = nil
+	s.listeners = nil
 	s.started.Store(false) // allow re-Start after Stop
 
 	if n := s.earlyClose.Load(); n > 0 {
@@ -214,6 +263,24 @@ func (s *MQTTServer) Stop() {
 }
 
 // Addr returns the server's listening address.
+// Addrs returns every bound MQTT-over-TCP address, primary first. It is empty
+// before Start and after Stop, matching Addr's contract of never advertising an
+// address nobody listens on.
+//
+// Use this (not Addr) when reporting which ports a multi-port broker serves --
+// Addr returns only the first.
+func (s *MQTTServer) Addrs() []net.Addr {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]net.Addr, 0, len(s.listeners))
+	for _, ln := range s.listeners {
+		if ln != nil {
+			out = append(out, ln.Addr())
+		}
+	}
+	return out
+}
+
 func (s *MQTTServer) Addr() net.Addr {
 	if s.listener != nil {
 		return s.listener.Addr()

@@ -377,7 +377,7 @@ func TestValidate_ReportsEveryProblem(t *testing.T) {
 	}
 	msg := err.Error()
 	for _, want := range []string{
-		"listen_addr must not be empty",
+		"listen_addr or listen_addrs must not be empty",
 		"max_packet_size must be > 0",
 		"max_connections must be >= 0",
 		"qos_max_inflight must be > 0",

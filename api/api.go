@@ -306,7 +306,7 @@ func (b *Broker) Start() error {
 	// Health check endpoint
 	b.startHealthServer()
 
-	b.logr.Info("Shark-MQTT started", "addr", b.cfg.ListenAddr)
+	b.logr.Info("Shark-MQTT started", "addrs", b.Addrs(), "ws", b.cfg.EffectiveWSListenAddrs())
 	return nil
 }
 
@@ -369,6 +369,20 @@ func (b *Broker) Addr() string {
 		return addr.String()
 	}
 	return ""
+}
+
+// Addrs returns every bound MQTT-over-TCP address, primary first, or nil before
+// Start and after Stop. Addr remains the single-address convenience accessor.
+func (b *Broker) Addrs() []string {
+	listeners := b.srv.Addrs()
+	if len(listeners) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(listeners))
+	for _, a := range listeners {
+		out = append(out, a.String())
+	}
+	return out
 }
 
 // WSAddr returns the MQTT-over-WebSocket address, or "" when disabled (R5).

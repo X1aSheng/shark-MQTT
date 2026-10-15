@@ -19,9 +19,21 @@ const (
 // Config holds all configuration for the MQTT broker.
 type Config struct {
 	// Server settings
-	ListenAddr    string `yaml:"listen_addr" toml:"listen_addr" env:"MQTT_LISTEN_ADDR"`
-	WSListenAddr  string `yaml:"ws_listen_addr" toml:"ws_listen_addr" env:"MQTT_WS_LISTEN_ADDR"`    // MQTT-over-WebSocket, empty disables (R5)
-	WSSListenAddr string `yaml:"wss_listen_addr" toml:"wss_listen_addr" env:"MQTT_WSS_LISTEN_ADDR"` // TLS WebSocket, requires TLS (R5)
+	// ListenAddr is the primary MQTT-over-TCP address. Kept as a scalar for
+	// compatibility; ListenAddrs, when non-empty, takes precedence and may hold
+	// several addresses so one process can serve several ports (see
+	// effectiveListenAddrs).
+	ListenAddr string `yaml:"listen_addr" toml:"listen_addr" env:"MQTT_LISTEN_ADDR"`
+	// ListenAddrs serves additional MQTT-over-TCP addresses in the same process.
+	// Empty means "use ListenAddr only", so existing configs are unaffected.
+	ListenAddrs []string `yaml:"listen_addrs" toml:"listen_addrs" env:"MQTT_LISTEN_ADDRS"`
+	// WSListenAddrs / WSSListenAddrs are the array forms of the two WebSocket
+	// settings below, same precedence rule.
+	WSListenAddrs  []string `yaml:"ws_listen_addrs" toml:"ws_listen_addrs" env:"MQTT_WS_LISTEN_ADDRS"`    // MQTT-over-WebSocket, empty disables (R5)
+	WSSListenAddrs []string `yaml:"wss_listen_addrs" toml:"wss_listen_addrs" env:"MQTT_WSS_LISTEN_ADDRS"` // TLS WebSocket, requires TLS (R5)
+
+	WSListenAddr  string `yaml:"ws_listen_addr" toml:"ws_listen_addr" env:"MQTT_WS_LISTEN_ADDR"`    // MQTT-over-WebSocket, empty disables (R5); see WSListenAddrs
+	WSSListenAddr string `yaml:"wss_listen_addr" toml:"wss_listen_addr" env:"MQTT_WSS_LISTEN_ADDR"` // TLS WebSocket, requires TLS (R5); see WSSListenAddrs
 	TLSEnabled    bool   `yaml:"tls_enabled" toml:"tls_enabled" env:"MQTT_TLS_ENABLED"`
 	TLSCertFile   string `yaml:"tls_cert_file" toml:"tls_cert_file" env:"MQTT_TLS_CERT_FILE"`
 	TLSKeyFile    string `yaml:"tls_key_file" toml:"tls_key_file" env:"MQTT_TLS_KEY_FILE"`
@@ -114,6 +126,67 @@ func DefaultConfig() *Config {
 }
 
 // Validate checks that configuration values are valid.
+// EffectiveListenAddrs returns the MQTT-over-TCP addresses to bind.
+//
+// Precedence: ListenAddrs wins when non-empty, otherwise the scalar
+// ListenAddr is used alone. The scalar is never merged into the array -- doing
+// so would silently bind :18983 alongside an operator's explicit list, which is
+// a surprising port to open. Duplicates within the array are dropped while
+// preserving order, because binding the same address twice fails anyway and the
+// resulting error message would not say which entry was at fault.
+func (c *Config) EffectiveListenAddrs() []string {
+	addrs := c.ListenAddrs
+	if len(addrs) == 0 {
+		if c.ListenAddr == "" {
+			return nil
+		}
+		return []string{c.ListenAddr}
+	}
+	return dedupAddrs(addrs)
+}
+
+// EffectiveWSListenAddrs and EffectiveWSSListenAddrs apply the same precedence
+// to the two WebSocket settings.
+func (c *Config) EffectiveWSListenAddrs() []string {
+	if len(c.WSListenAddrs) > 0 {
+		return dedupAddrs(c.WSListenAddrs)
+	}
+	if c.WSListenAddr != "" {
+		return []string{c.WSListenAddr}
+	}
+	return nil
+}
+
+func (c *Config) EffectiveWSSListenAddrs() []string {
+	if len(c.WSSListenAddrs) > 0 {
+		return dedupAddrs(c.WSSListenAddrs)
+	}
+	if c.WSSListenAddr != "" {
+		return []string{c.WSSListenAddr}
+	}
+	return nil
+}
+
+// dedupAddrs removes empty and repeated entries while preserving order.
+func dedupAddrs(in []string) []string {
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, a := range in {
+		if a == "" {
+			continue
+		}
+		if _, dup := seen[a]; dup {
+			continue
+		}
+		seen[a] = struct{}{}
+		out = append(out, a)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func (c *Config) Validate() error {
 	// Every problem is collected, not just the first one. The old version
 	// returned on the first failure, so an operator with three bad fields had to
@@ -124,8 +197,13 @@ func (c *Config) Validate() error {
 		errs = append(errs, fmt.Errorf(format, args...))
 	}
 
-	if c.ListenAddr == "" {
-		add("listen_addr must not be empty")
+	// Check the addresses that will actually be bound, not the scalar alone: a
+	// config using only listen_addrs leaves listen_addr empty by design.
+	if len(c.EffectiveListenAddrs()) == 0 {
+		add("listen_addr or listen_addrs must not be empty")
+	}
+	if len(c.EffectiveWSSListenAddrs()) > 0 && !c.TLSEnabled {
+		add("wss_listen_addr(s) requires TLS to be enabled (tls_enabled)")
 	}
 	if c.MaxPacketSize <= 0 {
 		add("max_packet_size must be > 0, got %d", c.MaxPacketSize)

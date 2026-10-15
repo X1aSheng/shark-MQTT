@@ -35,6 +35,7 @@ Shark-MQTT supports configuration from multiple sources with the following prior
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `listen_addr` | string | `:18983` | Address to listen on |
+| `listen_addrs` | []string | - | Additional MQTT-over-TCP addresses served by the same process. **Takes precedence over `listen_addr`** and does not merge with it: when set, `listen_addr` is ignored entirely. Duplicates and empty entries are dropped |
 | `tls_enabled` | bool | `false` | Enable TLS |
 | `tls_cert_file` | string | - | TLS certificate file path |
 | `tls_key_file` | string | - | TLS private key file path |
@@ -65,7 +66,9 @@ export MQTT_CONNECT_TIMEOUT="15s"
 | `write_queue_size` | int | `256` | Per-connection write queue size |
 | `drain_timeout` | duration | `5s` | How long shutdown waits for in-flight QoS 1/2 messages to be acknowledged before closing sockets anyway. `0` closes immediately |
 | `ws_listen_addr` | string | - | MQTT-over-WebSocket listen address (empty disables, R5) |
+| `ws_listen_addrs` | []string | - | Array form of `ws_listen_addr`; takes precedence over it, same rule |
 | `wss_listen_addr` | string | - | MQTT-over-TLS-WebSocket (WSS) listen address; requires `tls_enabled` |
+| `wss_listen_addrs` | []string | - | Array form of `wss_listen_addr`; takes precedence over it, same rule |
 
 **Examples:**
 ```yaml
@@ -161,6 +164,31 @@ metrics_addr: ":18999"
 ## YAML Configuration
 
 ### Complete Example
+
+### Multiple Listen Ports
+
+One process can serve several MQTT ports. `listen_addrs` **replaces** `listen_addr`
+rather than adding to it -- when it is present, `listen_addr` is ignored. That is
+deliberate: merging would silently open the default port next to the operator's
+explicit list, which is a surprise nobody asked for.
+
+```yaml
+# Serves :18983 and :28983; listen_addr below is NOT used.
+listen_addrs:
+  - ":18983"
+  - ":28983"
+  - "192.168.1.10:3883"   # bind a specific interface
+```
+
+Repeat an address and only one socket is opened. Use `broker.Addrs()` to read back
+every bound address (`broker.Addr()` still returns the first, for compatibility).
+
+```yaml
+# WebSocket works the same way.
+ws_listen_addrs:
+  - ":18984"
+  - ":28984"
+```
 
 ```yaml
 # Network

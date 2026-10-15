@@ -1,6 +1,6 @@
 # Testing Guide
 
-Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。当前基线为 **521 个单元测试**、**178 个集成测试**、**70 个基准测试**（口径：源码中声明的顶层 `Test*` / `Benchmark*` 函数数，复现方式见 [测试统计](#测试统计)）。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
+Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。当前基线为 **521 个单元测试**、**183 个集成测试**、**70 个基准测试**（口径：源码中声明的顶层 `Test*` / `Benchmark*` 函数数，复现方式见 [测试统计](#测试统计)）。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
 
 ---
 
@@ -68,7 +68,7 @@ Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，
 | 类型 | 数量 | 位置 |
 |------|------|------|
 | 单元测试 | 521 | 各包 `*_test.go`（含 `tests/defects/`） |
-| 集成测试 | 178 | `tests/integration/` |
+| 集成测试 | 183 | `tests/integration/` |
 | 缺陷回归测试 | `tests/defects/` 7 个文件 / 8 个用例 + 包内回归 | `tests/defects/`、`broker/`、`client/`、`protocol/` |
 | 基准测试 | 70（Windows 本地实际执行 67） | `tests/bench/`、`plugin/`、`pkg/metrics/` |
 
@@ -112,7 +112,7 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 | errs/ | 4 | 0 | 错误定义 |
 | tests/defects/ | 8 | 0 | 审查发现缺陷的最小复现和回归测试 |
 | **单元测试合计** | **521** | **4** | |
-| tests/integration/ | 178 | 0 | 端到端集成测试（含部署验证） |
+| tests/integration/ | 183 | 0 | 端到端集成测试（含部署验证） |
 | tests/bench/ | 0 | 57 | 全栈 TCP、E2E 数据验证、微基准 |
 | **基准测试合计** | | **70** | |
 | store/redis/（`store_redis`） | 18 | 9 | Redis 存储：消息、保留、会话（默认不编译） |
@@ -127,12 +127,12 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 
 | 指标 | 数量 |
 |------|------|
-| `.go` 文件 | 176（67 非测试 / 109 测试） |
-| 非测试代码行数 | 17,589 |
-| 测试代码行数 | 31,006 |
+| `.go` 文件 | 177（67 非测试 / 110 测试） |
+| 非测试代码行数 | 17,748 |
+| 测试代码行数 | 31,216 |
 
-主要模块的非测试行数：`broker` 7,874（17 文件）· `protocol` 3,851（13）· `store` 1,459（10）·
-`client` 916（2）· `api` 575（2）· `pkg` 466（7）· `config` 382（2）· `plugin` 200（1）·
+主要模块的非测试行数：`broker` 7,941（17 文件）· `protocol` 3,851（13）· `store` 1,459（10）·
+`client` 916（2）· `api` 589（2）· `pkg` 466（7）· `config` 460（2）· `plugin` 200（1）·
 `cmd` 160（1）· `errs` 43（1）；其余分布在 `examples/`、`scripts/`、`tests/`。
 
 ```bash

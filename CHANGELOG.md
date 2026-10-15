@@ -7,6 +7,68 @@ This project uses semantic versioning. Pre-release tags use the form
 
 ## Unreleased
 
+### Multi-port listening (2026-10-15)
+
+- **One broker can now serve several MQTT ports.** `listen_addrs`,
+  `ws_listen_addrs` and `wss_listen_addrs` accept lists, so a single process can
+  serve multiple ports or bind specific interfaces (`192.168.1.10:3883`).
+  Previously all three settings were a single `string` and `MQTTServer` held one
+  `net.Listener`, so a second port meant a second process.
+- **The array form replaces the scalar rather than merging with it.** When
+  `listen_addrs` is set, `listen_addr` is ignored entirely. Merging would
+  silently open the default port next to the operator's explicit list -- a
+  surprise nobody asked for. Duplicate and empty entries are dropped.
+- **A listener injected through options still wins outright**, and
+  `listen_addr` is not bound alongside it. This keeps the `":0"` test setup and
+  any caller that owns its own socket working exactly as before.
+- **A failed bind releases everything already opened.** `Start` rolls back each
+  listener it managed to bind before returning the error, so a failed start
+  leaves no port dangling for the next start to trip over.
+- **`Stop` closes every listener, not just the primary** -- the single-listener
+  Stop only ever closed `s.listener`, which would have leaked the extra ports.
+- **`Addrs()` added** on both `MQTTServer` and `api.Broker`, returning every
+  bound address (primary first) and empty before `Start` / after `Stop`.
+  `Addr()` is unchanged and still returns the first, so existing callers are
+  unaffected.
+- `Config.Validate` now checks the addresses that will actually be bound, so a
+  config using only `listen_addrs` is not rejected for an empty `listen_addr`;
+  it also reports a WSS listener without `tls_enabled` as a config error rather
+  than a startup failure.
+- Five integration tests, verified by sabotaging the accept loop to run on the
+  primary listener only: the second port then accepts the TCP connection but
+  never answers, which the test catches.
+
+### Multi-port listening (2026-10-15)
+
+- **One broker can now serve several MQTT ports.** `listen_addrs`,
+  `ws_listen_addrs` and `wss_listen_addrs` accept lists, so a single process can
+  serve multiple ports or bind specific interfaces (`192.168.1.10:3883`).
+  Previously all three settings were a single `string` and `MQTTServer` held one
+  `net.Listener`, so a second port meant a second process.
+- **The array form replaces the scalar rather than merging with it.** When
+  `listen_addrs` is set, `listen_addr` is ignored entirely. Merging would
+  silently open the default port next to the operator's explicit list -- a
+  surprise nobody asked for. Duplicate and empty entries are dropped.
+- **A listener injected through options still wins outright**, and
+  `listen_addr` is not bound alongside it. This keeps the `":0"` test setup and
+  any caller that owns its own socket working exactly as before.
+- **A failed bind releases everything already opened.** `Start` rolls back each
+  listener it managed to bind before returning the error, so a failed start
+  leaves no port dangling for the next start to trip over.
+- **`Stop` closes every listener, not just the primary** -- the single-listener
+  Stop only ever closed `s.listener`, which would have leaked the extra ports.
+- **`Addrs()` added** on both `MQTTServer` and `api.Broker`, returning every
+  bound address (primary first) and empty before `Start` / after `Stop`.
+  `Addr()` is unchanged and still returns the first, so existing callers are
+  unaffected.
+- `Config.Validate` now checks the addresses that will actually be bound, so a
+  config using only `listen_addrs` is not rejected for an empty `listen_addr`;
+  it also reports a WSS listener without `tls_enabled` as a config error rather
+  than a startup failure.
+- Five integration tests, verified by sabotaging the accept loop to run on the
+  primary listener only: the second port then accepts the TCP connection but
+  never answers, which the test catches.
+
 ### Context scoping & management API (2026-10-15)
 
 - **Per-connection paths now carry the connection context.** `handlePublish`,
