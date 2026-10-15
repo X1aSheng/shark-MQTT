@@ -86,7 +86,18 @@ func main() {
 			cfg.LogLevel = f.Value.String()
 		}
 	})
-	if authFile != "" {
+	// Distinguish "flag not given" from "flag given as empty". The old
+	// `if authFile != ""` could not express the second case, so passing
+	// -auth-file "" left the config's value in place -- which looks like the
+	// flag did nothing. flag.Visit only reports flags actually present, so it
+	// is the right tool for "explicitly set this to empty".
+	flagAuthFileSet := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "auth-file" {
+			flagAuthFileSet = true
+		}
+	})
+	if flagAuthFileSet {
 		cfg.AuthFile = authFile
 	}
 
