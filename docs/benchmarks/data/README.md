@@ -31,6 +31,8 @@ so a result without it cannot be compared against another run.
 | `P2_sub2000.json` | 2000 | 10 | 0 | 1,000 | 128 B | same-host, upstream-shaped |
 | `P3_sub2000_5k.json` | 2000 | 10 | 0 | 5,000 | 128 B | same-host, upstream-shaped |
 | `Q1_sub200_5k.json` | 200 | 10 | 0 | 5,000 | 128 B | same-host, upstream-shaped |
+| `R1_1sub_100mbit.json` | 1 | 8 | 0 | 20,000 | 256 B | cross-host, 100 Mbps link |
+| `R2_8sub_100mbit.json` | 8 | 8 | 0 | 5,000 | 256 B | cross-host, 100 Mbps link |
 | `P1_sub200.json` | 200 | 10 | 0 | 1,000 | 128 B | same-host, upstream-shaped |
 | `P2_sub2000.json` | 2000 | 10 | 0 | 1,000 | 128 B | same-host, upstream-shaped |
 | `P3_sub2000_5k.json` | 2000 | 10 | 0 | 5,000 | 128 B | same-host, upstream-shaped |
@@ -41,10 +43,15 @@ so a result without it cannot be compared against another run.
 out to starve the client and is documented as a negative result rather than a
 broker measurement.
 
-The `C*` and `D*` files are cross-host runs against a broker on a second machine.
-Their throughput reflects the WAN link (0.7 - 1.05 MB/s), not the broker, and
-they are kept as a record of that limit. See the baseline document for the
-measurement that establishes it.
+The `C*` and `D*` files are cross-host runs over a **5 Mbps** link, which was the
+constraint rather than the broker. The `R*` files repeat the exercise over a
+**100 Mbps** link between two 8 vCPU hosts: delivery rises 15.5x and the
+completion rate goes from 14% to 99.7%, while the broker uses about half a core.
+See the baseline document for both.
+
+`R*` files carry extra `_meta` fields recording broker CPU and RSS, which were
+sampled on the broker host through `/proc` rather than by the load generator -
+the generator cannot see a remote process.
 
 Host: 8 vCPU / 16 GB, Ubuntu 26.04, Go 1.26.1. Commit `d5e37f8f9`.
 

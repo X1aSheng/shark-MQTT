@@ -1,0 +1,38 @@
+{
+  "_meta": {
+    "broker_host_cpu_cores": 0.51,
+    "broker_host_rss_mb": 28.6,
+    "description": "\u8de8\u673a 100Mbps: 8 \u8ba2\u9605\u8005 / 8 \u53d1\u5e03\u8005 / 256B / rate 5000",
+    "link": "100 Mbps public (both hosts)",
+    "note": "broker CPU measured on the broker host via /proc, not by loadgen",
+    "round_trip_mbps": 87.2
+  },
+  "broker_cpu_cores": 0,
+  "broker_pid": 0,
+  "broker_rss_avg_mb": 0,
+  "broker_rss_peak_mb": 0,
+  "broker_threads_peak": 0,
+  "config": {
+    "addr": "47.120.44.128:18000",
+    "duration_s": 20,
+    "payload": 256,
+    "publishers": 8,
+    "qos": 0,
+    "rate_target": 5000,
+    "subscribers": 8
+  },
+  "deliver_rate_msg_s": 39675.13966782465,
+  "delivery_ratio": 7.978233987151517,
+  "elapsed_s": 20.001719128,
+  "errors": 0,
+  "latency_max_us": 0,
+  "latency_mean_us": 0,
+  "latency_p50_us": 0,
+  "latency_p90_us": 0,
+  "latency_p999_us": 0,
+  "latency_p99_us": 0,
+  "latency_samples": 0,
+  "received": 793571,
+  "send_rate_msg_s": 4972.922545480511,
+  "sent": 99467
+}

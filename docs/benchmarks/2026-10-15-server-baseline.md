@@ -197,11 +197,15 @@ The link carries **0.7 - 1.05 MB/s**. The MQTT run above moved exactly
 **1.00 MB/s** of round-trip traffic. The test saturated the link, and every
 throughput figure is a measurement of the WAN path rather than of the broker.
 
-The cause is now confirmed rather than inferred: the ECS instances are
-provisioned with **5 Mbps peak public bandwidth**, which is 0.625 MB/s. The
-measured 0.7-1.05 MB/s sits just above that because a small response benefits
-from the burst allowance; sustained transfer settles at the 0.625 MB/s ceiling,
-and the MQTT run at 1.00 MB/s of round-trip traffic was over it in aggregate.
+The cause is now confirmed rather than inferred: **the 2 vCPU host used as the
+load generator is provisioned with 5 Mbps peak public bandwidth**, which is
+0.625 MB/s. The measured 0.7-1.05 MB/s sits just above that because a small
+response benefits from the burst allowance; sustained transfer settles at the
+0.625 MB/s ceiling, and the MQTT run at 1.00 MB/s of round-trip traffic was over
+it in aggregate.
+
+That host was the constrained end of the path. Both 8 vCPU hosts carry
+**100 Mbps**, which changes the picture - see the next section.
 
 This also explains why the SSH tunnel and the direct connection land in the same
 place: encryption was never the limitation, the link was. A 4.4 MB payload at
@@ -226,6 +230,49 @@ about 560 Mbps. At 128 bytes and 275,000 deliveries/second it is still around
 35 MB/s. **Testing this broker across a public link needs at least several
 hundred Mbps, and realistically the private network.** A 5 Mbps link can carry
 about 0.2% of what the broker produces.
+
+## At 100 Mbps: the link was the limit, not the broker
+
+The first cross-host attempt used the 2 vCPU / 5 Mbps host as the client and
+concluded, correctly but incompletely, that the wire was the bottleneck. With a
+second 8 vCPU / 100 Mbps host available, the same test runs on a link 20 times
+wider, and the conclusion sharpens.
+
+Broker on one 8 vCPU host (all eight cores available, nothing else running),
+load generator on the other, both at 100 Mbps:
+
+| Subscribers | Payload | Actual send | Delivered | Completion | Round-trip traffic | Broker CPU |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 256 B | 19,897 /s | 19,757 /s | 99.0% | 9.68 MB/s (77.5 Mbps) | 0.67 cores |
+| 8 | 256 B | 4,973 /s | 39,675 /s | **99.7%** | 10.90 MB/s (87.2 Mbps) | **0.51 cores** |
+
+Set against the 5 Mbps run on the same broker:
+
+| Link | Delivered | Completion | Round-trip traffic |
+| --- | --- | --- | --- |
+| 5 Mbps (2 vCPU client) | 2,563 /s | 13.9% | 1.00 MB/s |
+| 100 Mbps (8 vCPU client) | 39,675 /s | 99.7% | 10.90 MB/s |
+
+**15.5x the throughput, and the completion rate goes from 14% to 99.7%.** The
+congestion disappears when the wire widens, which is what a link bottleneck
+looks like and is not what a broker bottleneck looks like.
+
+The second row is the more informative one, because the broker is doing 44,648
+message operations per second - 4,973 inbound publishes plus 39,675 deliveries -
+on **0.51 cores**. That is 87,000 operations per second per core, and 6.4% of
+the machine. Peak RSS is 28.6 MB.
+
+So on an uncongested link the broker is nowhere near saturation while the wire
+is already at 87% of its 100 Mbps allowance. The measured hierarchy is:
+
+1. The link saturates first (87 Mbps of 100 available).
+2. The broker uses half a core to keep it saturated.
+3. Memory is 28.6 MB and flat.
+
+At 256 bytes per message, 100 Mbps carries roughly 48,000 deliveries per second
+of round-trip traffic. The broker's same-host ceiling is 280,000, so this link
+can still only observe about a sixth of what the broker can do - but that sixth
+is enough to show which of the two is the constraint.
 
 ## Broker scaling, and the ceiling this host cannot reach
 
