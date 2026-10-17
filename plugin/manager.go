@@ -60,6 +60,11 @@ type Plugin interface {
 }
 
 // Manager manages plugins and dispatches hook events.
+// maxConcurrentHooks caps concurrent plugin hook executions. It is generous
+// enough for a broker at full rate with a responsive plugin, and small enough
+// that a plugin ignoring its context cannot grow goroutines without bound.
+const maxConcurrentHooks = 256
+
 type Manager struct {
 	mu      sync.RWMutex
 	plugins map[Hook][]Plugin
@@ -87,6 +92,15 @@ type Manager struct {
 	// dispatch.
 	stageMu sync.RWMutex
 	stages  map[string]stage
+
+	// execSlots bounds how many plugin hook executions may be in flight at
+	// once. A plugin that ignores its context keeps its goroutine alive after
+	// the hook timeout, so without a cap a packet flood against a stuck plugin
+	// leaks one goroutine per packet until the process runs out of memory. At
+	// the cap the hook is refused, which surfaces through the broker's error
+	// metric instead of showing up as an invisible leak. Nil means uncapped
+	// (zero-value Manager).
+	execSlots chan struct{}
 }
 
 // NewManager creates a new plugin manager.
@@ -96,6 +110,7 @@ func NewManager() *Manager {
 		hookTimeout: 10 * time.Second,
 		bus:         NewBus(),
 		stages:      make(map[string]stage),
+		execSlots:   make(chan struct{}, maxConcurrentHooks),
 	}
 }
 
@@ -206,9 +221,24 @@ func (pm *Manager) run(ctx context.Context, p Plugin, hook Hook, data *Context, 
 	hookCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	result := make(chan error, 1)
+
+	// Bound the number of concurrent executions before starting another
+	// goroutine. A plugin that ignores hookCtx survives the timeout, so without
+	// this cap a stuck plugin under load leaks one goroutine per packet.
+	if pm.execSlots != nil {
+		select {
+		case pm.execSlots <- struct{}{}:
+		default:
+			return fmt.Errorf("plugin %s: hook dropped, %d executions already in flight", p.Name(), maxConcurrentHooks)
+		}
+	}
+
 	go func() {
 		var runErr error
 		defer func() {
+			if pm.execSlots != nil {
+				<-pm.execSlots
+			}
 			if r := recover(); r != nil {
 				runErr = fmt.Errorf("plugin %s panic: %v\n%s", p.Name(), r, debug.Stack())
 			}

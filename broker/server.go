@@ -43,6 +43,13 @@ type MQTTServer struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	wg          sync.WaitGroup
+	// wgMu and closing make "register a connection goroutine" atomic with
+	// respect to "begin shutting down". sync.WaitGroup panics with
+	// "Add called concurrently with Wait" when Add races a Wait that already
+	// observed zero, which is exactly what a WebSocket handshake or a late
+	// accept does during Stop.
+	wgMu    sync.Mutex
+	closing bool
 	mu          sync.Mutex
 	conns       map[net.Conn]struct{}
 	wsEndpoints []*wsEndpoint // WebSocket listeners (plain WS and/or WSS, R5)
@@ -137,6 +144,11 @@ func (s *MQTTServer) SetHandler(h ConnectionHandler) {
 
 // Start begins accepting TCP connections.
 func (s *MQTTServer) Start() error {
+	// Re-arm connection admission for a Stop -> Start cycle; Stop leaves it
+	// closed so a late handshake cannot register against a retired WaitGroup.
+	s.wgMu.Lock()
+	s.closing = false
+	s.wgMu.Unlock()
 	if s.started.Swap(true) {
 		return fmt.Errorf("server already started")
 	}
@@ -199,7 +211,9 @@ func (s *MQTTServer) Start() error {
 
 	for _, ln := range s.listeners {
 		ln := ln
-		s.wg.Add(1)
+		if !s.addConnGoroutine() {
+			break
+		}
 		go s.acceptLoop(ln)
 	}
 
@@ -223,6 +237,23 @@ func (s *MQTTServer) Start() error {
 }
 
 // Stop gracefully shuts down the server.
+// addConnGoroutine registers a connection goroutine, refusing once shutdown has
+// begun. It returns false when the server is closing and the caller must drop
+// the connection instead of serving it.
+//
+// The mutex plus flag is what makes Add and Wait non-overlapping: closing is set
+// under the same lock that guards Add, so no Add can start after Wait observed
+// an empty WaitGroup.
+func (s *MQTTServer) addConnGoroutine() bool {
+	s.wgMu.Lock()
+	defer s.wgMu.Unlock()
+	if s.closing {
+		return false
+	}
+	s.wg.Add(1)
+	return true
+}
+
 func (s *MQTTServer) Stop() {
 	s.cancel()
 	// Close every bound listener, not just the primary: a multi-port Start may
@@ -251,6 +282,13 @@ func (s *MQTTServer) Stop() {
 	}
 	s.conns = make(map[net.Conn]struct{})
 	s.mu.Unlock()
+
+	// No new connection goroutine may register from here on: see
+	// addConnGoroutine. Set before Wait so a late WS handshake is refused
+	// rather than racing the counter.
+	s.wgMu.Lock()
+	s.closing = true
+	s.wgMu.Unlock()
 
 	s.wg.Wait()
 	s.listener = nil
@@ -351,7 +389,11 @@ func (s *MQTTServer) acceptLoop(ln net.Listener) {
 		// for clients that disable the MQTT keep-alive (KeepAlive=0).
 		configureTCPKeepAlive(conn, s.cfg.TCPKeepAlivePeriod.Duration())
 
-		s.wg.Add(1)
+		if !s.addConnGoroutine() {
+			// Shutdown began between accept and here.
+			conn.Close()
+			return
+		}
 		go func(c net.Conn) {
 			defer s.wg.Done()
 			defer func() {
@@ -581,7 +623,13 @@ func (s *MQTTServer) wsHandler(w http.ResponseWriter, r *http.Request) {
 	s.conns[conn] = struct{}{}
 	s.mu.Unlock()
 
-	s.wg.Add(1)
+	if !s.addConnGoroutine() {
+		// The server began stopping while this handshake was in progress. The
+		// upgrade already succeeded, so close it rather than leave a WebSocket
+		// the shutdown will not wait for.
+		conn.Close()
+		return
+	}
 	go func() {
 		defer s.wg.Done()
 		defer func() {
