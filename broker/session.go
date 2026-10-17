@@ -119,6 +119,15 @@ type Session struct {
 
 	// Stats tracking
 	stats Stats
+
+	// sentCount and sentBytes are the two counters on the delivery hot path.
+	// They are atomic rather than part of stats because TrackSent runs once per
+	// message per subscriber: with them under s.mu a single published message
+	// took the session write lock as many times as it had subscribers, and
+	// every subscriber of that message serialised on the same mutex. They are
+	// cumulative, and Stats merges them into the snapshot.
+	sentCount atomic.Uint64
+	sentBytes atomic.Uint64
 }
 
 // Spec returns the capability table for the session's negotiated protocol
@@ -897,12 +906,23 @@ func (s *Session) IsConnected() bool {
 // --- Stats tracking ---
 
 // Stats returns a snapshot of session statistics.
+// Stats returns a snapshot of the session's counters.
+//
+// sentCount and sentBytes are read outside the session lock and merged into
+// the snapshot. They are the two counters on the fan-out hot path: one call per
+// delivered message, per subscriber, and taking the session write lock there
+// serialised every subscriber of the same message against each other. They are
+// cumulative for the lifetime of the session, so adding them to the (no longer
+// written) fields in s.stats keeps the snapshot monotonic.
 func (s *Session) Stats() Stats {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
 	stats := s.stats
 	stats.Subscriptions = len(s.Subscriptions)
 	stats.InflightCount = len(s.Inflight)
+	s.mu.RUnlock()
+
+	stats.MessagesSent += s.sentCount.Load()
+	stats.BytesSent += s.sentBytes.Load()
 	return stats
 }
 
@@ -938,10 +958,8 @@ func (s *Session) ResolveTopicAlias(alias uint16) (string, bool) {
 
 // TrackSent increments the sent message and byte counters.
 func (s *Session) TrackSent(msgSize int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.stats.MessagesSent++
-	s.stats.BytesSent += uint64(msgSize)
+	s.sentCount.Add(1)
+	s.sentBytes.Add(uint64(msgSize))
 }
 
 // CanSendOutbound reports whether another QoS 1/2 message can be sent to this
