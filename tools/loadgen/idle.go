@@ -91,9 +91,15 @@ func runIdle(addr string, n int, hold time.Duration, concurrency int) {
 // instead of the broker. The whole 127/8 block is loopback on both Windows and
 // Linux, so rotating over it multiplies the available port space.
 func dialAndConnect(addr string, id int) (net.Conn, error) {
-	d := net.Dialer{
-		Timeout:   10 * time.Second,
-		LocalAddr: &net.TCPAddr{IP: net.IPv4(127, 0, 0, byte(2+id%16)).To4()},
+	d := net.Dialer{Timeout: 10 * time.Second}
+	// Rotating loopback source addresses only works when the destination is
+	// loopback too: binding 127.0.0.x to reach a routable address fails at bind
+	// time, and every connection in a cross-host run reports EOF with no
+	// corresponding entry anywhere in the broker's log.
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+			d.LocalAddr = &net.TCPAddr{IP: net.IPv4(127, 0, 0, byte(2+id%16)).To4()}
+		}
 	}
 	c, err := d.Dial("tcp", addr)
 	if err != nil {

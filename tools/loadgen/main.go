@@ -20,6 +20,7 @@
 package main
 
 import (
+	"net"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -73,6 +74,10 @@ type config struct {
 	// payloadMix is a size ratio such as "64:80,4096:20"; when set it overrides
 	// -payload per message.
 	payloadMix string
+	// online opens N connections that connect and stay idle, without
+	// subscribing. A device fleet is not ten thousand subscribers of one topic;
+	// it is ten thousand connections of which a few carry traffic.
+	online int
 }
 
 var cfg config
@@ -99,6 +104,7 @@ func init() {
 	flag.StringVar(&cfg.mix, "mix", "", "QoS ratio, e.g. \"qos0:70,qos1:30\"; overrides -qos per message")
 	flag.DurationVar(&cfg.sampleInterval, "sample-interval", 0, "record a timeline point every N (0 disables); use during soaks to see RSS trend")
 	flag.StringVar(&cfg.payloadMix, "payload-mix", "", "payload size ratio, e.g. \"64:80,4096:20\"; overrides -payload per message")
+	flag.IntVar(&cfg.online, "online", 0, "additional connections that connect but never subscribe (models an online fleet with a small active subset)")
 }
 
 // stats aggregates counters across all connections.
@@ -167,6 +173,43 @@ func main() {
 	var st stats
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Connections that stay online and silent. Without this, subscribers is
+	// both "how many devices are connected" and "how many receive every
+	// message", which conflates two very different costs: a fleet of ten
+	// thousand devices does not fan out every publish to all of them.
+	var onlineConns []net.Conn
+	if cfg.online > 0 {
+		onlineConns = make([]net.Conn, 0, cfg.online)
+		var onlineMu sync.Mutex
+		var onlineWG sync.WaitGroup
+		onlineSem := make(chan struct{}, 256)
+		for i := 0; i < cfg.online; i++ {
+			onlineWG.Add(1)
+			onlineSem <- struct{}{}
+			go func(i int) {
+				defer onlineWG.Done()
+				defer func() { <-onlineSem }()
+				// Offset the id space so these client IDs never collide with the
+				// loadgen subscribers and publishers.
+				c, err := dialAndConnect(cfg.addr, 1000000+i)
+				if err != nil {
+					st.errors.Add(1)
+					return
+				}
+				onlineMu.Lock()
+				onlineConns = append(onlineConns, c)
+				onlineMu.Unlock()
+			}(i)
+		}
+		onlineWG.Wait()
+		fmt.Fprintf(os.Stderr, "online: %d silent connections established\n", len(onlineConns))
+		defer func() {
+			for _, c := range onlineConns {
+				_ = c.Close()
+			}
+		}()
+	}
 
 	// Latency samples live per-subscriber so the hot path needs no lock.
 	latency := make([][]int64, cfg.subscribers)
@@ -496,7 +539,7 @@ func report(st *stats, lat []int64, samples []rssSample, elapsed float64, pid in
 		"config": map[string]any{
 			"addr": cfg.addr, "subscribers": cfg.subscribers, "publishers": cfg.publishers,
 			"qos": cfg.qos, "rate_target": cfg.rate, "payload": cfg.payload,
-			"mix": cfg.mix, "payload_mix": cfg.payloadMix,
+			"mix": cfg.mix, "payload_mix": cfg.payloadMix, "online": cfg.online,
 			"duration_s": cfg.duration.Seconds(),
 		},
 		"sent": sent, "received": recv, "errors": errs,
