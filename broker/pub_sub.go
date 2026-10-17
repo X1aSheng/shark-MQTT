@@ -19,6 +19,8 @@ import (
 	"github.com/X1aSheng/shark-mqtt/store"
 )
 
+// unsubscribeTopics removes a set of topic filters (regular or $share shared)
+// from the topic tree for a client.
 func (b *Broker) unsubscribeTopics(clientID string, topics []string) {
 	for _, topic := range topics {
 		if IsSharedSubscription(topic) {

@@ -21,18 +21,7 @@ var _ ConnectionHandler = (*Broker)(nil)
 // writeLoop to flush the DISCONNECT(0x8B) "server shutting down" notice before
 // the sockets are closed. The notice is best-effort: the delay is deliberately
 // short so a shutdown is never held up by a client that stopped reading.
-
-// shutdownNotifyDelay bounds how long Stop waits for the per-connection
-// writeLoop to flush the DISCONNECT(0x8B) "server shutting down" notice before
-// the sockets are closed. The notice is best-effort: the delay is deliberately
-// short so a shutdown is never held up by a client that stopped reading.
 const shutdownNotifyDelay = 50 * time.Millisecond
-
-// finalWriteTimeout bounds how long a teardown path waits for the writer
-// goroutine to put a final control packet on the wire, and is imposed as that
-// packet's socket write deadline too. A teardown must not be held open by a peer
-// that stopped reading, and the packet is a DISCONNECT: a couple of seconds is
-// already generous.
 
 // finalWriteTimeout bounds how long a teardown path waits for the writer
 // goroutine to put a final control packet on the wire, and is imposed as that
@@ -44,17 +33,11 @@ const finalWriteTimeout = 2 * time.Second
 // syncWrite is one write request handed to a connection's writer goroutine,
 // together with the channel its result is reported on. It is how a teardown
 // path sends a packet that has to reach the peer before the connection closes.
-
-// syncWrite is one write request handed to a connection's writer goroutine,
-// together with the channel its result is reported on. It is how a teardown
-// path sends a packet that has to reach the peer before the connection closes.
 type syncWrite struct {
 	pkt      protocol.Packet
 	deadline time.Duration
 	done     chan error
 }
-
-// clientState holds the connection and codec for a client.
 
 // clientState holds the connection and codec for a client.
 type clientState struct {
@@ -97,9 +80,6 @@ type clientState struct {
 	// classifyWriteError.
 	metrics metrics.Metrics
 }
-
-// Broker is the core MQTT message broker that orchestrates TopicTree, QoSEngine,
-// WillHandler, and session management. It implements server.ConnectionHandler.
 
 // Broker is the core MQTT message broker that orchestrates TopicTree, QoSEngine,
 // WillHandler, and session management. It implements server.ConnectionHandler.
@@ -177,8 +157,6 @@ type Broker struct {
 }
 
 // New creates a new Broker with the given options.
-
-// New creates a new Broker with the given options.
 func New(opts ...Option) *Broker {
 	o := defaultBrokerOptions()
 
@@ -240,44 +218,12 @@ func New(opts ...Option) *Broker {
 	return b
 }
 
-// connAckForConnectRejection maps a ValidateConnect failure to the CONNACK
-// return/reason code. MQTT 5.0 uses 0x82 Protocol Error; MQTT 3.1.1 uses the
-// 0x01 Unacceptable Protocol Version code (unchanged from before the refactor);
-// MQTT 3.1 reports a ClientID rule violation with 0x02 Identifier Rejected.
-
-// HandleConnection implements server.ConnectionHandler.
-// It consumes a protocol-neutral Conn whose handshake has already been
-// performed by the network server's protocol adapter; the broker core no
-// longer decodes the MQTT CONNECT itself.
-//
-// # Context scopes
-//
-// Two contexts reach this package and they are NOT interchangeable:
-//
-//   - ctx (this parameter) is the CONNECTION scope. Every per-connection path
-//     takes it as its first parameter -- readLoop, handlePublish, handleSubscribe,
-//     deliverToClient, queueOfflineMessage, plugin dispatch -- so a store write
-//     or authorization check started by this connection ends when the connection
-//     ends. This is what a ctx-taking function should use unless it says otherwise.
-//   - b.ctx is the BROKER scope, owned by Start/Stop. It belongs to the three
-//     background loops (session expiry sweep, retained expiry sweep, $SYS
-//     publisher) and to work that outlives its connection: the will publish
-//     callback (fires from the will handler's own timer), the QoS retry republish,
-//     and the connection teardown store writes (see teardownCtx).
-//
-// The distinction is not cosmetic: a per-connection store write issued with
-// b.ctx survives its client, and a teardown write issued with the connection ctx
-// is cancelled before it stores anything, losing session state that MQTT 5.0
-// 3.1.2.11.2 requires the server to keep.
 // FlappingEnabled reports whether connection-flap detection is active.
 //
 // Exposed so a status endpoint can show whether the protection is actually
 // running, rather than leaving an operator to infer it from the config file
 // they hoped was applied.
 func (b *Broker) FlappingEnabled() bool { return b.flapping != nil }
-
-// FlappingTracked reports how many client keys the detector is holding, so an
-// operator can see whether the memory bound is being approached.
 
 // FlappingTracked reports how many client keys the detector is holding, so an
 // operator can see whether the memory bound is being approached.
@@ -290,15 +236,12 @@ func (b *Broker) Metrics() metrics.Metrics {
 
 // IsStarted reports whether the broker's internal subsystems are running
 // (Start has completed and Stop has not). Used by readiness probes.
-
-// IsStarted reports whether the broker's internal subsystems are running
-// (Start has completed and Stop has not). Used by readiness probes.
 func (b *Broker) IsStarted() bool {
 	return b.started.Load()
 }
 
-// sessionCleanupLoop periodically removes expired sessions from the store.
-// It exits when the broker context is cancelled.
+// dispatch runs every plugin that subscribed to the given hook, in registration
+// order. Plugin errors are logged and do not abort the remaining plugins.
 func (b *Broker) dispatch(ctx context.Context, hook plugin.Hook, data *plugin.Context) {
 	if b.pluginMgr == nil {
 		return
@@ -316,17 +259,9 @@ func (b *Broker) dispatch(ctx context.Context, hook plugin.Hook, data *plugin.Co
 // separate bus from the ordered hook dispatch.
 //
 // The optional hook argument lets an event also fire the legacy hook, so
-// plugins written against the four-hook API keep working unchanged.
-
-// publishEvent reports an occurrence on the plugin event bus.
-//
-// It is best-effort by design: a subscriber that fails or times out is recorded
-// and logged, never propagated. An observer must not be able to fail the
-// publish path it is observing -- that is the whole reason events live on a
-// separate bus from the ordered hook dispatch.
-//
-// The optional hook argument lets an event also fire the legacy hook, so
-// plugins written against the four-hook API keep working unchanged.
+// plugins written against the four-hook API keep working unchanged. The bus
+// stamps the event kind itself (Publish takes it as an argument), so a dispatch
+// site cannot forget to set it and silently deliver to nobody.
 func (b *Broker) publishEvent(ctx context.Context, ev plugin.Event, data plugin.EventData, hook plugin.Hook, hookData *plugin.Context) {
 	if b.pluginMgr == nil {
 		return
@@ -339,9 +274,3 @@ func (b *Broker) publishEvent(ctx context.Context, ev plugin.Event, data plugin.
 		b.dispatch(ctx, hook, hookData)
 	}
 }
-
-// The bus stamps the event kind itself (Publish takes it as an argument), so a
-// dispatch site cannot forget to set it and silently deliver to nobody.
-
-// unsubscribeTopics removes a set of topic filters (regular or $share shared)
-// from the topic tree for a client.

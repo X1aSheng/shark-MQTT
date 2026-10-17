@@ -18,6 +18,10 @@ import (
 	"github.com/X1aSheng/shark-mqtt/store"
 )
 
+// connAckForConnectRejection maps a ValidateConnect failure to the CONNACK
+// return/reason code. MQTT 5.0 uses 0x82 Protocol Error; MQTT 3.1.1 uses the
+// 0x01 Unacceptable Protocol Version code; MQTT 3.1 reports a ClientID rule
+// violation with 0x02 Identifier Rejected.
 func connAckForConnectRejection(sp protocol.Spec, connectPkt *protocol.ConnectPacket) byte {
 	if sp.ConnAckHasReasonCode {
 		return protocol.ConnAckProtocolError
@@ -30,6 +34,31 @@ func connAckForConnectRejection(sp protocol.Spec, connectPkt *protocol.ConnectPa
 	return protocol.ConnAckUnacceptableProtocol
 }
 
+// HandleConnection implements server.ConnectionHandler.
+//
+// It consumes a protocol-neutral Conn whose handshake has already been
+// performed by the network server's protocol adapter; the broker core does not
+// decode the MQTT CONNECT itself.
+//
+// # Context scopes
+//
+// Two contexts reach this package and they are NOT interchangeable:
+//
+//   - ctx (this parameter) is the CONNECTION scope. Every per-connection path
+//     takes it as its first parameter -- readLoop, handlePublish, handleSubscribe,
+//     deliverToClient, queueOfflineMessage, plugin dispatch -- so a store write
+//     or authorization check started by this connection ends when the connection
+//     ends. This is what a ctx-taking function should use unless it says otherwise.
+//   - b.ctx is the BROKER scope, owned by Start/Stop. It belongs to the three
+//     background loops (session expiry sweep, retained expiry sweep, $SYS
+//     publisher) and to work that outlives its connection: the will publish
+//     callback (fires from the will handler's own timer), the QoS retry republish,
+//     and the connection teardown store writes (see teardownCtx).
+//
+// The distinction is not cosmetic: a per-connection store write issued with
+// b.ctx survives its client, and a teardown write issued with the connection ctx
+// is cancelled before it stores anything, losing session state that MQTT 5.0
+// 3.1.2.11.2 requires the server to keep.
 func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 	conn := c.Raw
 	codec := c.Codec

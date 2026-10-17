@@ -262,7 +262,6 @@ func (s *MQTTServer) Stop() {
 	}
 }
 
-// Addr returns the server's listening address.
 // Addrs returns every bound MQTT-over-TCP address, primary first. It is empty
 // before Start and after Stop, matching Addr's contract of never advertising an
 // address nobody listens on.
@@ -281,6 +280,9 @@ func (s *MQTTServer) Addrs() []net.Addr {
 	return out
 }
 
+// Addr returns the server's primary listening address, or nil when the server
+// is not listening. It returns only the first of several addresses; prefer
+// Addrs for reporting.
 func (s *MQTTServer) Addr() net.Addr {
 	if s.listener != nil {
 		return s.listener.Addr()

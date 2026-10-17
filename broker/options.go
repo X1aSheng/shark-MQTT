@@ -134,7 +134,6 @@ func WithAuthorizer(a Authorizer) Option {
 	}
 }
 
-// WithPluginManager sets the plugin manager.
 // WithFlappingDetection installs a connection-flapping detector.
 //
 // Passing a detector with Enabled false is equivalent to passing none, so a
@@ -149,6 +148,7 @@ func WithFlappingDetection(d *FlappingDetector) Option {
 	}
 }
 
+// WithPluginManager sets the plugin manager.
 func WithPluginManager(m *plugin.Manager) Option {
 	return func(o *brokerOptions) {
 		o.pluginManager = m
