@@ -177,31 +177,45 @@ KeepAlive 设为 0, broker 不会主动超时清理, 因此观察的是稳态占
 
 **线程数与连接数几乎无关**: 空载 9, 1,000 连接 21, 4,500 连接 19。Go 的 netpoller 不为每个连接起线程, 这与"每连接一线程"的实现有本质区别, 也是能把万级设备压住的原因。进程句柄数与连接数同阶 (5,000 连接时 Handles=5290)。
 
-### 10000 连接只成功一半 -- 定位结果: 是压测端, 不是 broker
+### 10000 连接只成功一半 -- 最终定位: broker 的槽位泄漏 (已修)
 
-**在阿里云 Ubuntu 26.04 (2C4G) 上复现了完全相同的现象**: 干净 broker、串行建连 (`-idle-parallel 1`)、并发 64, 三种方式都是**恰好 5,000 成功、5,000 失败**, 客户端首次错误 `EOF`。
+这一节前后改了三次结论, 前两次都错, 过程保留下来因为它比结论更有用。
 
-排查过程与证据:
+**现象**: 10,000 个连接, 恰好 5,000 成功、5,000 失败, 客户端报 `EOF`。
 
-| 检查项 | 结果 |
-|--------|------|
-| broker 日志 | 5011 行全部是 `client disconnected`, **没有任何拒绝/超限日志** (`grep -icE 'max|limit|reject'` = 0) |
-| 成功的 clientID | 全部是 `idle-0` .. `idle-4999`, 失败的 id >= 5000 完全没出现在服务端 |
-| 代码搜索 | `broker/` `config/` `api/` 全仓库无 `5000` 字面量; `max_connections` 默认 10000 |
-| 内核参数 | `ip_local_port_range` 28232、`somaxconn` 8192、`tcp_tw_reuse` 2 (loopback 允许重用)、`ulimit -n` 65535, 均正常 |
-| `dmesg` | 无 SYN flood 或 listen queue overflow 记录 |
+**第一次归因 (错)**: Windows 回环限制。理由是 Linux 上也复现, 于是改说"跨平台一致"。
 
-**决定性对照**: 在同一台服务器上用 20 行 Python 裸 socket (不走 loadgen, 但用**同样的 16 源 IP 轮转**策略) 建连并完成 CONNECT/CONNACK:
+**第二次归因 (错)**: loadgen 客户端。理由是同一台机器上, 一段 Python 裸 socket 脚本
+串行建 8,000 个连接全部成功。这个对照看起来很有力, 但它有个漏洞 -- 那次 Python 跑的是
+**另一台主机上的 broker**, 不是被测的那个进程。
 
+**真正的原因**: `reserveConnectionSlot` 在 CONNECT 之前从 `pendingConns` 占一个槽位,
+`releaseConnectionSlot` 在失败路径上归还, 成功注册时**既不归还也不消耗**:
+
+```go
+b.connections[clientID] = cs   // 增加了 len(connections)
+                               // pendingConns 仍然是 1
 ```
-mode=connect ok=8000 err=0 elapsed=0.33s
-```
 
-**8,000 个连接全部成功, 零错误。** 同一台机器、同一个 broker、同样的多源 IP 策略。
+于是每个在线连接被数两次: `len(connections) + pendingConns` 在 5,000 个连接时达到
+10,000 的配置上限, 第 5,001 个被拒。**实际上限恰好是配置值的一半**, 这就是那个 5,000。
 
-结论: **broker 能稳定处理 8,000 空闲连接; 5,000 这个上限属于 Go 版 loadgen 客户端。** 待查的是客户端侧 (最可疑的是 `net.IPv4()` 返回的 16 字节 IPv4-mapped 地址用于 `LocalAddr` 绑定时的行为差异), 这属于测试工具问题, 不影响 broker。
+更严重的是残留计数**断开后不回收** -- 每服务一个连接就永久消耗一个槽位, 一个跑够久的
+broker 最终会拒绝所有人。这不是"少了一半容量", 是"容量会耗尽"。
 
-对外口径因此修正为: **单机已验证 8,000 空闲连接, 每连接约 31 KB**。
+**决定性实验, 本来一轮就能做**: 用 `-max-conn 20000` 启动, 上限立刻变成 10,000。
+限制与 `maxConnections` 成正比这件事, 直接说明问题在连接计数, 不在客户端。当时却没试,
+因为"Python 能建 8000"让我过早地接受了客户端假设。
+
+**修复与验证**: 注册处消耗预留 (`broker/conn_lifecycle.go`)。修复后默认配置下 10,000
+连接全部成功。回归测试 `tests/integration/connection_slot_test.go` 建满 -> 全关 -> 再建满,
+**回退修复时它在第二轮的第一个连接就报 `CONNACK failed: EOF`** -- 同一个 EOF, 之前被
+当成客户端问题。
+
+**这条教训值得单列**: 排除法的每一环都必须落在同一个被测对象上。Python 脚本那次对照
+在"能建 8000"这一点上是对的, 但它比的不是同一个 broker 进程, 于是它证明的是"Python
+比 Go 强", 而不是"broker 没问题"。**而 `-max-conn` 那个一行实验, 才是在同一对象上做的
+控制变量。**
 
 ### Linux 上的资源数据 (阿里云 2C4G)
 

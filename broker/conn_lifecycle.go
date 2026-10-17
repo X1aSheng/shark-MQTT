@@ -594,6 +594,13 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 		metrics:      b.metrics,
 	}
 	b.connections[clientID] = cs
+	// Consume the reservation: from here on the connection is counted by
+	// len(b.connections), and leaving it in pendingConns as well made the real
+	// limit half of maxConnections -- and worse, the stale count survived
+	// disconnects, so every connection ever made permanently consumed a slot.
+	if b.pendingConns > 0 {
+		b.pendingConns--
+	}
 	online := len(b.connections)
 	b.mu.Unlock()
 	// The reservation made at the top of HandleConnection is now spent: this

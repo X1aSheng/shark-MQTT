@@ -195,17 +195,22 @@ awk '{print $14, $15}' /proc/<pid>/stat; getconf CLK_TCK
 
 **线程数不应随连接数增长**; 若增长, 说明每连接起了 OS 线程, 是设计问题。
 
-> **已知限制: `-mode idle` 在 5000 个连接处停住。** 现象是恰好 5000 成功、其余全部
-> 失败, 客户端报 `EOF`, 且**串行 (`-idle-parallel 1`) 与并发 64 结果一致**, Windows 与
-> Linux 也一致。已排除: broker 拒绝 (日志里 0 条 `max connections`)、并发度、TIME_WAIT
-> 残留 (清空后仍 5000)、端口耗尽 (同一台机器同一时刻, 一段 20 行的 Python 裸 socket
-> 串行建 8000 个全部成功)。
+> **5000 连接上限的真相 (2026-10-17 修)**: 那个上限**不是工具的, 是 broker 的**。
+> `reserveConnectionSlot` 在 CONNECT 前占用 `pendingConns` 槽位, 注册时本应消耗, 但
+> 注册只写了 `b.connections[clientID]`, 没有递减 `pendingConns` -- 于是每个连接被
+> **双计**, 实际上限是 `maxConnections` 的一半; 更糟的是这个残留计数**断开后不回收**,
+> 长跑服务会越用越少, 最终拒绝所有连接。
 >
-> 因此这是 **loadgen 客户端**的问题, 不是 broker 的, 根因未定位。**测 5000 以上连接时
-> 用 Python 脚本, 不要用 `-mode idle`** -- 见 3.2 节。这个限制值得修, 但在修好之前
-> 用它得出的"连接数上限"结论都是错的。
+> 修复在 `broker/conn_lifecycle.go` 的注册处, 回归测试
+> `tests/integration/connection_slot_test.go` -- 它建满 -> 全关 -> 再建满, 修复前第二轮
+> 第一个连接就 `CONNACK failed: EOF`。
+>
+> **教训**: 当时把 `EOF` 归因于 Go 客户端, 理由是"同一台机器的 Python 脚本能建 8000 个"。
+> 那个对照实验本身有问题 (Python 那轮跑的是另一台主机上的 broker), 而真正的证据就在
+> 手边: `-max-conn 20000` 会让上限变成 10000, 说明限制与 `maxConnections` 成正比 --
+> 这条一试就知道, 却被跳过了。
 
-### 5.6 长稳 (可选, 30 分钟以上)
+## 5.6 长稳 (可选, 30 分钟以上)
 
 固定一个 70% 负载点跑 30 分钟, 加 `-sample-interval 30s` 让 JSON 里带 `rss_timeline` 数组 (每次采样含 `t_s` / `rss_mb` / `peak_mb` / `threads` / `cpu_nano`), 再按序列判断趋势而不是只看首尾两个数。判据:
 
