@@ -190,6 +190,10 @@
 | D8 | P1 | `broker/conn_lifecycle.go:465,503` | `CreateSession` 已把会话发布进 Manager 之后, 仍无锁写 `ExpiryInterval` / `ReceiveMax` / `OutboundWindow`; 而 `CanSendOutbound` 从投递 goroutine 无锁读窗口, `Session.Save` 也从别的 goroutine 快照这些字段 | 三处写入改持 `sess.mu`, `CanSendOutbound` 改 `RLock` 读窗口; `go test -race ./broker/` 14.4s 通过 |
 | D7 | P1 | `cmd/main.go` | CLI 从不为 `storage_backend: redis/badger` 注入 store, 而 `api.NewBroker` 见非 memory 后端未注入 store 时返回 `initErr` ⇒ 按文档配置必然启动失败 | 新增 `cmd/stores*.go`: `openPersistence` 按后端分派; redis/badger 各自 build tag (`store_redis` / `store_badger`), 未编入时给「rebuild with ...」明确错误而非静默回落 memory。三种构建组合均编译通过, 运行时错误文案已实测 |
 | D10 | P1 | `broker/pub_sub.go:339` | `handleRetainedMessage` 持全局 `retainedMu` 做 `GetRetained`/`SaveRetained`/`DeleteRetained` (Redis RTT / Badger fsync) ⇒ 每条保留发布串行排队, 管理端点一并停摆 | 改为 64 条 topic stripe (FNV-1a): 同 topic 串行保住 check-then-write, 不同 topic 并行; `retainedMu` 只护内存 map/count。`cleanupExpiredRetained` 同样改为锁内扫描、锁外删除, 并在 stripe 内复核 deadline |
+| D16 | P1 | `broker/lifecycle.go:331` | `Stop()` 先整体摘除 `connections` 再关 socket, 各 readLoop 的 `disconnect()` 在身份校验处 return ⇒ session map / topic tree / QoS 表残留上一轮的条目; 随后 `Start` 会把它们报成在线, 共享订阅投给无连接的会话, 非 clean 重连被告知 SessionPresent=1 | 改为先关 socket, 给 readLoop 200ms 自行注销, 再兜底摘除 + 广播写协程停止信号。**作用域说明**: 经 `api.Broker.Stop` 时 `srv.Stop()` 先于 `broker.Stop()` 并 join 连接协程, 主路径本不触发; 修复保护直接调用 `broker.Broker.Stop` 的嵌入方 |
+| D17 | P1 | `broker/conn_lifecycle.go:825` | `disconnect` 在身份校验之前就执行 Save/DeleteSession/ClearMessages/清 offlineCount; 同 ID 接管后旧 readLoop 迟到的拆除会删改新连接的持久记录 | 身份校验提到所有 store 写之前 (写锁下的权威校验仍保留), 不匹配直接返回 |
+| D13 | P1 | `plugin/manager.go:203` | 每个带超时的 hook 都新起 goroutine; 插件忽略 ctx 时 goroutine 在超时后继续存活 ⇒ 卡死插件 + 报文洪泛 = 每包泄漏一个 goroutine, 无上界 | 加 256 槽信号量: 到顶直接拒绝并返回错误 (broker 计入 plugin 错误指标), 把隐形泄漏变为可见拒绝。`eventbus.deliver` 同构, 本轮未改, 留作后续 |
+| D14 | P1 | `broker/server.go:584` | WS handler 与 accept 路径在 `Stop()` 的 `wg.Wait()` 之后仍可能 `wg.Add`, 触发 `sync: WaitGroup misuse: Add called concurrently with Wait` | 新增 `wgMu` + `closing` : `addConnGoroutine` 与 Stop 置位共用同一把锁, Wait 运行后不再有 Add; `Start` 重新放开以保住 Stop -> Start |
 
 修复后复跑 (第二轮 D11 / D12 / D18): `go build ./...`、`go vet ./...`、`go test -count=1 ./...` 全部通过 (47 s, 其中 `tests/integration` 34.3 s)。新增回归 6 条: 单测 4 条 (`broker/rate_limit_test.go`), 集成 2 条 (`tests/integration/shared_subscription_test.go`); 因此本轮之后计数为 单测 537 / 集成 196。
 
@@ -199,10 +203,6 @@
 
 | ID | 位置 | 缺陷 | 影响 | 状态 |
 |----|------|------|------|------|
-| D13 | `plugin/manager.go:209`、`eventbus.go:286` | Execute 超时返回后执行 goroutine 仍在, 且每个报文新起一个; 插件忽略 ctx 时永不退出 | 一个阻塞插件可让 goroutine 数随流量线性增长 | 待确证 |
-| D14 | `broker/server.go:583` | WS handler 在 HTTP goroutine 里 `wg.Add(1)`, 与 `Stop()` 的 `wg.Wait()` 并发 | 握手恰好与 Stop 并发时触发 `sync: WaitGroup misuse` panic | 待确证 |
-| D16 | `broker/lifecycle.go:325` | `Stop()` 先把 `b.connections` 整体摘除再关 socket, 各 readLoop 的 `disconnect()` 在身份校验处提前 return | Stop -> Start 后 session map 与 topic tree 残留旧订阅, `Clients()` 误报在线 | 待确证 |
-| D17 | `broker/conn_lifecycle.go:751` | `disconnect` 在连接身份校验之前就按 clientID 执行 Save/Delete/ClearMessages | 同 ID 接管后, 旧连接迟到的拆除会删掉新会话的持久记录 | 待确证 |
 
 ### 5.3 文档缺陷
 
