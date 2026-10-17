@@ -51,6 +51,14 @@ type config struct {
 	pid         int
 	jsonOut     bool
 	latency     bool
+
+	// mode selects what the tool measures: "load" runs the publish/subscribe
+	// benchmark, "idle" only establishes connections and holds them.
+	mode string
+	// connections is the connection count for idle mode; concurrency bounds how
+	// many dials are in flight at once.
+	connections  int
+	idleParallel int
 }
 
 var cfg config
@@ -70,6 +78,9 @@ func init() {
 	flag.BoolVar(&cfg.jsonOut, "json", false, "emit JSON instead of a table")
 	flag.BoolVar(&cfg.latency, "latency", true, "record end-to-end latency samples; "+
 		"disable at very high subscriber counts, where the recording itself becomes load")
+	flag.StringVar(&cfg.mode, "mode", "load", "what to measure: load (pub/sub benchmark) or idle (connections only)")
+	flag.IntVar(&cfg.connections, "connections", 1000, "connection count for -mode idle")
+	flag.IntVar(&cfg.idleParallel, "idle-parallel", 64, "concurrent dials for -mode idle")
 }
 
 // stats aggregates counters across all connections.
@@ -91,6 +102,19 @@ type rssSample struct {
 
 func main() {
 	flag.Parse()
+
+	if cfg.mode == "idle" {
+		if cfg.connections <= 0 {
+			fmt.Fprintln(os.Stderr, "need a positive -connections")
+			os.Exit(2)
+		}
+		runIdle(cfg.addr, cfg.connections, cfg.duration, cfg.idleParallel)
+		return
+	}
+	if cfg.mode != "load" {
+		fmt.Fprintf(os.Stderr, "unknown -mode %q (want load or idle)\n", cfg.mode)
+		os.Exit(2)
+	}
 
 	if cfg.publishers <= 0 || cfg.subscribers <= 0 {
 		fmt.Fprintln(os.Stderr, "need at least one publisher and one subscriber")
