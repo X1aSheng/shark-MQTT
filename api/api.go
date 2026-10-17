@@ -652,7 +652,7 @@ func (b *Broker) startHealthServer() {
 
 	ln, err := net.Listen("tcp", b.cfg.MetricsAddr)
 	if err != nil {
-		b.logr.Error("health/metrics server failed to start — endpoints unavailable", "addr", b.cfg.MetricsAddr, "error", err)
+		b.logr.Error("health/metrics server failed to start - endpoints unavailable", "addr", b.cfg.MetricsAddr, "error", err)
 		return
 	}
 	srv := &http.Server{
