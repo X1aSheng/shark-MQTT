@@ -32,24 +32,24 @@ type MQTTServer struct {
 	// listeners holds every bound TCP listener, primary first. A failure to
 	// bind any one of them aborts Start, so the set is only ever read after a
 	// successful Start and is rebuilt from scratch on each Start.
-	listeners   []net.Listener
-	handler     ConnectionHandler
-	connCount   atomic.Int64
-	earlyClose  atomic.Int64
-	tlsConfig   *tls.Config
-	tlsErr      error       // set when TLS config fails to load
-	started     atomic.Bool // prevents double Start
-	logr        logger.Logger
-	ctx         context.Context
-	cancel      context.CancelFunc
-	wg          sync.WaitGroup
+	listeners  []net.Listener
+	handler    ConnectionHandler
+	connCount  atomic.Int64
+	earlyClose atomic.Int64
+	tlsConfig  *tls.Config
+	tlsErr     error       // set when TLS config fails to load
+	started    atomic.Bool // prevents double Start
+	logr       logger.Logger
+	ctx        context.Context
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
 	// wgMu and closing make "register a connection goroutine" atomic with
 	// respect to "begin shutting down". sync.WaitGroup panics with
 	// "Add called concurrently with Wait" when Add races a Wait that already
 	// observed zero, which is exactly what a WebSocket handshake or a late
 	// accept does during Stop.
-	wgMu    sync.Mutex
-	closing bool
+	wgMu        sync.Mutex
+	closing     bool
 	mu          sync.Mutex
 	conns       map[net.Conn]struct{}
 	wsEndpoints []*wsEndpoint // WebSocket listeners (plain WS and/or WSS, R5)

@@ -14,7 +14,7 @@ type slotBlockingPlugin struct {
 	started sync.WaitGroup
 }
 
-func (p *slotBlockingPlugin) Name() string      { return "blocking" }
+func (p *slotBlockingPlugin) Name() string  { return "blocking" }
 func (p *slotBlockingPlugin) Hooks() []Hook { return []Hook{OnMessage} }
 func (p *slotBlockingPlugin) Execute(ctx context.Context, hook Hook, data *Context) error {
 	p.started.Done()

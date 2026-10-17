@@ -331,6 +331,7 @@ func (b *Broker) closeProtocolViolationWithReason(clientID string, sess *Session
 		cs.conn.Close()
 	}
 }
+
 // retainedStripeCount is the number of retained-message mutexes. A power of two
 // keeps the modulo cheap; 64 stripes already lets a multi-client workload spread
 // out, and the memory cost is one mutex each.
