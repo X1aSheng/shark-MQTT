@@ -45,7 +45,8 @@ docs/
 | [Deployment](architecture/DEPLOY.md) | Docker, docker-compose, K8s |
 | [Testing](guides/TESTING.md) | Unit, integration, benchmark tests |
 | [Protocol Audit](reports/archive/PROTOCOL-AUDIT-260602-215254.md) | MQTT 3.1.1/5.0 compliance |
-| [Latest Review](reports/PROJECT-REVIEW-260806-143527.md) | V7 reference comparison (smart-mqtt / mica-mqtt) |
+| [Latest Review](reports/PROJECT-REVIEW-261017-100640.md) | Full-project review: architecture, tests, 23 defects, doc drift |
+| [Previous Review](reports/PROJECT-REVIEW-260806-143527.md) | V7 reference comparison (smart-mqtt / mica-mqtt) |
 | [Smart-MQTT Gap Analysis](reports/SMART-MQTT-GAP-ANALYSIS-261012.md) | Unfinished-detail checklist vs Java smart-mqtt (P0/P1/P2) |
 | [K8s / Helm Validation](reports/K8S-HELM-VALIDATION-261016.md) | Real-cluster Helm rollout; multi-port IANA_SVC_NAME defect found and fixed |
 | [Cross-Host Throughput](benchmarks/2026-10-15-cross-host-throughput.md) | Cross-host saturation ceiling, QoS 1 RTT bound, write-queue sizing |

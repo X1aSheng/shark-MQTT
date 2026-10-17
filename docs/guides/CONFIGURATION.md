@@ -100,11 +100,42 @@ qos_max_inflight: 200
 | `session_expiry_interval` | duration | `24h` | Session expiration time |
 | `sys_interval` | duration | `30s` | $SYS status topic publish interval (0 disables) |
 
+> **Limitation — the CLI binary only runs the memory backend.**
+>
+> `cmd/main.go` never injects a `SessionStore` / `MessageStore` / `RetainedStore`,
+> and `api.NewBroker` refuses to start a non-memory backend without them. Setting
+> `storage_backend: redis` (or `badger`) on the command line therefore fails at
+> startup with
+> `storage_backend "redis" requires explicit stores (WithSessionStore/WithMessageStore/WithRetainedStore)`.
+>
+> The redis and badger backends are usable only from code that passes the stores
+> explicitly:
+>
+> ```go
+> import (
+>     badgerstore "github.com/X1aSheng/shark-mqtt/store/badger"
+>     "github.com/X1aSheng/shark-mqtt/api"
+> )
+>
+> ss, err := badgerstore.NewSessionStore(badgerstore.SessionStoreConfig{DB: db})
+> // ... message and retained stores the same way
+> b := api.NewBroker(
+>     api.WithConfig(cfg),
+>     api.WithSessionStore(ss),
+>     api.WithMessageStore(ms),
+>     api.WithRetainedStore(rs),
+> )
+> ```
+>
+> Both store packages are build-tagged: `store_redis` and `store_badger`. The
+> stock Docker image does not compile them in. Closing this CLI gap is tracked as
+> D7 in [PROJECT-REVIEW-261017-100640](../reports/PROJECT-REVIEW-261017-100640.md).
+
 #### Redis Backend
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `redis_addr` | string | `localhost:6379` | Redis server address |
+| `redis_addr` | string | (empty) | Redis server address; required when `storage_backend: redis` |
 | `redis_password` | string | - | Redis password |
 | `redis_db` | int | `0` | Redis database number |
 
@@ -125,7 +156,7 @@ export MQTT_REDIS_PASSWORD="secret"
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `badger_path` | string | `badger-data` | Path to BadgerDB data directory |
+| `badger_path` | string | (empty) | Path to BadgerDB data directory; required when `storage_backend: badger` |
 
 **Examples:**
 ```yaml
@@ -315,7 +346,7 @@ All configuration options can be set via environment variables with the `MQTT_` 
 | `MQTT_QOS_MAX_RETRIES` | `qos_max_retries` |
 | `MQTT_QOS_MAX_INFLIGHT` | `qos_max_inflight` |
 | `MQTT_STORAGE_BACKEND` | `storage_backend` |
-| `MQTT_SESSION_EXPIRY_INTERVAL` | `session_expiry_interval` |
+| `MQTT_SESSION_EXPIRY` | `session_expiry_interval` |
 | `MQTT_SYS_INTERVAL` | `sys_interval` |
 | `MQTT_WS_LISTEN_ADDR` | `ws_listen_addr` |
 | `MQTT_WSS_LISTEN_ADDR` | `wss_listen_addr` |

@@ -1,6 +1,17 @@
-# Shark-MQTT Architecture Design Document v1.0.0
+# Shark-MQTT Architecture Design Document
 
-> Version: 1.0.0 | Last Updated: 2026-05-06 | Go Version: 1.26.1
+> Status: partially outdated | Last Updated: 2026-10-17 | Go Version: 1.26.1
+>
+> This document predates the protocol-adapter refactor and the split of
+> broker/broker.go into conn_lifecycle.go, pub_sub.go and qos_outbound.go. The
+> design principles (section 3) and the layered topology (section 4) are still
+> accurate. Code samples in sections 6-16 are NOT: the signatures shown for
+> HandleConnection, Authorizer, Metrics, SessionStore, RetainedStore, QoSEngine,
+> WillHandler and the api facade no longer match the code, and the directory
+> trees predate roughly 30 files. Treat the repository as the source of truth.
+> The full drift list is in
+> [PROJECT-REVIEW-261017-100640](../reports/PROJECT-REVIEW-261017-100640.md),
+> section 5.3.
 
 ---
 
@@ -331,7 +342,7 @@ shark-mqtt/
 |   |-- logger/
 |   |   |-- logger.go                 # Logger interface + slog implementation + Noop
 |   |-- metrics/
-|   |   |-- metrics.go                # Metrics interface (17 methods) + Noop implementation
+|   |   |-- metrics.go                # Metrics interface (12 methods) + Noop implementation
 |   |-- bufferpool/
 |       |-- pool.go                   # Read buffer pool
 |       |-- pool_test.go
@@ -475,7 +486,7 @@ type MQTTServer struct {
 
 // ConnectionHandler is called when a new connection is accepted.
 type ConnectionHandler interface {
-    HandleConnection(ctx context.Context, conn net.Conn, codec *protocol.Codec) error
+    HandleConnection(ctx context.Context, c *Conn) error   // handshake done by protocol.Adapter
 }
 
 func NewMQTTServer(cfg *config.Config, opts ...ServerOption) *MQTTServer
@@ -659,7 +670,7 @@ type Broker struct {
 func New(opts ...Option) *Broker
 func (b *Broker) Start() error
 func (b *Broker) Stop()
-func (b *Broker) HandleConnection(ctx context.Context, conn net.Conn, codec *protocol.Codec) error
+func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error
 ```
 
 Connection lifecycle in `HandleConnection`:
@@ -1024,8 +1035,8 @@ type Authenticator interface {
 
 // Authorizer handles topic-level authorization.
 type Authorizer interface {
-    CanPublish(ctx context.Context, clientID, topic string) bool
-    CanSubscribe(ctx context.Context, clientID, topic string) bool
+    CanPublish(ctx context.Context, username, topic string) bool
+    CanSubscribe(ctx context.Context, username, topic string) bool
 }
 ```
 
@@ -1036,8 +1047,8 @@ type Authorizer interface {
 type AllowAllAuth struct{}
 
 func (AllowAllAuth) Authenticate(ctx context.Context, clientID, username, password string) error { return nil }
-func (AllowAllAuth) CanPublish(ctx context.Context, clientID, topic string) bool   { return true }
-func (AllowAllAuth) CanSubscribe(ctx context.Context, clientID, topic string) bool { return true }
+func (AllowAllAuth) CanPublish(ctx context.Context, username, topic string) bool   { return true }
+func (AllowAllAuth) CanSubscribe(ctx context.Context, username, topic string) bool { return true }
 ```
 
 **DenyAllAuth** -- denies all authentication:
@@ -1045,8 +1056,8 @@ func (AllowAllAuth) CanSubscribe(ctx context.Context, clientID, topic string) bo
 type DenyAllAuth struct{}
 
 func (DenyAllAuth) Authenticate(ctx context.Context, clientID, username, password string) error { return ErrAuthFailed }
-func (DenyAllAuth) CanPublish(ctx context.Context, clientID, topic string) bool   { return false }
-func (DenyAllAuth) CanSubscribe(ctx context.Context, clientID, topic string) bool { return false }
+func (DenyAllAuth) CanPublish(ctx context.Context, username, topic string) bool   { return false }
+func (DenyAllAuth) CanSubscribe(ctx context.Context, username, topic string) bool { return false }
 ```
 
 **StaticAuth** -- static credentials with ACL support:
@@ -1061,8 +1072,8 @@ func NewStaticAuth() *StaticAuth
 func (s *StaticAuth) AddCredentials(username, password string)
 func (s *StaticAuth) AddACL(username string, acl *ACL)
 func (s *StaticAuth) Authenticate(ctx context.Context, clientID, username, password string) error
-func (s *StaticAuth) CanPublish(ctx context.Context, clientID, topic string) bool
-func (s *StaticAuth) CanSubscribe(ctx context.Context, clientID, topic string) bool
+func (s *StaticAuth) CanPublish(ctx context.Context, username, topic string) bool
+func (s *StaticAuth) CanSubscribe(ctx context.Context, username, topic string) bool
 ```
 
 **FileAuth** -- YAML/JSON file-based authentication:
@@ -1208,7 +1219,7 @@ func (b *Broker) Start() error
 func (b *Broker) Stop()
 func (b *Broker) Addr() string
 func (b *Broker) ConnCount() int64
-func (b *Broker) Broker() *broker.Broker
+func (b *Broker) Core() Core
 
 // Blocking mode
 func Run(ctx context.Context, opts ...Option) error
@@ -1380,7 +1391,7 @@ Default implementation uses Go's `log/slog`.
 ```go
 // pkg/metrics/metrics.go
 
-// Metrics defines the interface for MQTT metrics collection (17 methods).
+// Metrics defines the interface for MQTT metrics collection (12 methods).
 type Metrics interface {
     // Connection metrics
     IncConnections()
@@ -1570,11 +1581,11 @@ broker := api.NewBroker(
 ```go
 type MyAuthorizer struct{}
 
-func (a *MyAuthorizer) CanPublish(ctx context.Context, clientID, topic string) bool {
+func (a *MyAuthorizer) CanPublish(ctx context.Context, username, topic string) bool {
     return true // your logic
 }
 
-func (a *MyAuthorizer) CanSubscribe(ctx context.Context, clientID, topic string) bool {
+func (a *MyAuthorizer) CanSubscribe(ctx context.Context, username, topic string) bool {
     return true // your logic
 }
 ```
