@@ -183,6 +183,7 @@ log_format: json
 |--------|------|---------|-------------|
 | `metrics_enabled` | bool | `true` | Serve the Prometheus /metrics endpoint (healthz/readyz always served) |
 | `metrics_addr` | string | `:18999` | Metrics server address |
+| `pprof_enabled` | bool | `false` | Serve `/debug/pprof/` on the metrics listener. **Validate rejects it unless `metrics_addr` is loopback**: a heap profile contains message payloads and usernames |
 
 **Examples:**
 ```yaml

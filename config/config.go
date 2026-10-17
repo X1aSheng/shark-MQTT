@@ -123,6 +123,11 @@ type Config struct {
 	// Validate warns rather than silently allowing it.
 	ManagementToken string `yaml:"management_token" toml:"management_token" env:"MQTT_MANAGEMENT_TOKEN"`
 	MetricsAddr     string `yaml:"metrics_addr" toml:"metrics_addr" env:"MQTT_METRICS_ADDR"`
+	// PprofEnabled serves net/http/pprof on the metrics listener. Off by
+	// default, and Validate requires that listener to be loopback: a heap
+	// profile is a dump of everything the process holds, including message
+	// payloads and usernames, which is not something to expose by accident.
+	PprofEnabled bool `yaml:"pprof_enabled" toml:"pprof_enabled" env:"MQTT_PPROF_ENABLED"`
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -235,6 +240,9 @@ func (c *Config) Validate() error {
 	}
 	if c.ManagementEnabled && c.ManagementToken == "" && !strings.HasPrefix(c.MetricsAddr, "127.0.0.1") && !strings.HasPrefix(c.MetricsAddr, "localhost") {
 		add("management_enabled without management_token exposes client data; bind metrics_addr to loopback or set a token")
+	}
+	if c.PprofEnabled && !strings.HasPrefix(c.MetricsAddr, "127.0.0.1") && !strings.HasPrefix(c.MetricsAddr, "localhost") && !strings.HasPrefix(c.MetricsAddr, "[::1]") {
+		add("pprof_enabled requires metrics_addr on a loopback address; a heap profile exposes message payloads and usernames")
 	}
 	if len(c.EffectiveWSSListenAddrs()) > 0 && !c.TLSEnabled {
 		add("wss_listen_addr(s) requires TLS to be enabled (tls_enabled)")

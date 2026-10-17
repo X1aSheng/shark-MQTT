@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	hpprof "net/http/pprof"
 	"net/url"
 	"strings"
 	"sync"
@@ -632,6 +633,21 @@ func (b *Broker) startHealthServer() {
 		if m, ok := interface{}(b.broker.Metrics()).(interface{ Handler() http.Handler }); ok {
 			mux.Handle("/metrics", m.Handler())
 		}
+	}
+
+	// Profiling is opt-in and registered on this mux rather than the global
+	// DefaultServeMux, so importing the package does not silently publish
+	// profiles on whatever else the host serves.
+	//
+	// Validate requires a loopback listener when this is enabled: a heap
+	// profile contains every message payload and username the process holds,
+	// which is a data dump, not a diagnostic.
+	if b.cfg.PprofEnabled {
+		mux.HandleFunc("/debug/pprof/", hpprof.Index)
+		mux.HandleFunc("/debug/pprof/cmdline", hpprof.Cmdline)
+		mux.HandleFunc("/debug/pprof/profile", hpprof.Profile)
+		mux.HandleFunc("/debug/pprof/symbol", hpprof.Symbol)
+		mux.HandleFunc("/debug/pprof/trace", hpprof.Trace)
 	}
 
 	ln, err := net.Listen("tcp", b.cfg.MetricsAddr)
