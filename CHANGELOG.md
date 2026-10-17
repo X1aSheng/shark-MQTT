@@ -7,6 +7,74 @@ This project uses semantic versioning. Pre-release tags use the form
 
 ## Unreleased
 
+### Security-related defaults, connection accounting and fan-out fixes (2026-10-17)
+
+A full-project review produced 23 defects plus a documentation pass. Two of the
+fixes were found while measuring, not while reading code, and both are the kind
+that only show up under load.
+
+**Behaviour changes worth reading before upgrading**
+
+- **An unauthenticated broker no longer starts by accident.** Previously the CLI
+  only ran deny-all or allow-all depending on flags; now the absence of both
+  `auth_file` and `-allow-all` is a startup error. An open broker has to be an
+  explicit decision.
+- **`/clients` and `/topics` are off by default.** They expose client IDs,
+  usernames and topic filters, which is reconnaissance material. Enabling them
+  without `management_token` is rejected unless the listener is loopback, and
+  the token is compared with `subtle.ConstantTimeCompare`.
+- **`storage_backend: redis|badger` requires a matching build tag.** Asking a
+  binary for a backend it was not compiled with is a startup error rather than a
+  silent fallback to memory - a fallback would start clean, look healthy, and
+  lose every session on restart.
+
+**Fixed**
+
+- **Connection slots leaked on every successful connection.** `pendingConns`
+  was incremented before CONNECT and released only on failure paths, so each
+  online client was counted twice: the effective limit was half of
+  `max_connections`, and the stale count survived disconnect, meaning a
+  long-running broker would eventually refuse everyone. 10,000 idle connections
+  now succeed at the default configuration.
+- Decode over-consumption: a rejected packet now consumes only its own Remaining
+  Length, so a peer-controlled topic length cannot read into the next packet.
+- `TopicTree.Stats` walked the tree without the lock, racing concurrent
+  subscribe/unsubscribe into a crashed process.
+- A failed write left the write queue with no consumer and the channel open,
+  blocking every producer - including the single retransmission goroutine, so
+  one dead peer could stop retransmission for all clients.
+- Retained messages past their expiry were still delivered.
+- Re-authentication with reason code 0x00 (success) was treated as a disconnect.
+- Shared subscriptions were not restored after a reconnect.
+- `No Local` was not honoured for overlapping subscriptions.
+- Fractional message rates were rejected outright by config validation.
+- Connection accounting was check-then-act, so a burst could exceed the limit.
+- Giving up on a QoS retry left the inflight slot charged forever.
+- A PUBREC was sent for a delivery that had already been refused.
+- Receive-maximum was written without the lock that guards reads.
+- Retained-message I/O happened while holding the tree lock.
+- Two teardown-ordering bugs: the drain loop ran after the connections were
+  closed, and a wrapper's `Stop` did not drive its own teardown before closing
+  the network layer.
+- Plugin hook goroutines were unbounded; a blocking hook could grow without
+  limit.
+- A race on the WebSocket server's `sync.WaitGroup` during shutdown.
+
+**Added**
+
+- `pprof_enabled`: opt-in `/debug/pprof/` on the metrics listener, registered on
+  the broker's own mux rather than `DefaultServeMux`. `Validate` requires a
+  loopback listener - a heap profile contains message payloads and usernames.
+- `tools/loadgen` gained `-mode idle`, `-mix`, `-payload-mix`, `-online`,
+  `-sample-interval`, `-note`, and a `_meta` block in its JSON output.
+- `docs/benchmarks/LOAD-TEST-PLAN.md`: dimensions, environment rules, pass
+  thresholds and ten measurement traps; `docs/benchmarks/2026-10-17-aliyun-2c4g.md`
+  freezes the measurements taken on a 2 vCPU / 4 GB host.
+- `docs/reports/CROSS-BROKER-COMPARISON-261017-121500.md`: comparison against
+  smart-mqtt, smart-mqtt-4g and mica-mqtt, including two optimisation attempts
+  that were reverted because measurement said so.
+
+
 ### broker.go split by responsibility (2026-10-15)
 
 `broker/broker.go` was 3,876 lines holding 99 functions spanning the entire
