@@ -80,12 +80,3 @@ func parsePayloadMix(spec string) (*payloadPlan, error) {
 func (p *payloadPlan) frame(sent int64) []byte {
 	return p.bufs[p.pattern[int(sent)%len(p.pattern)]]
 }
-
-// describe renders the plan for the human-readable report line.
-func (p *payloadPlan) describe() string {
-	parts := make([]string, 0, len(p.sizes))
-	for _, sz := range p.sizes {
-		parts = append(parts, strconv.Itoa(sz))
-	}
-	return strings.Join(parts, "/") + "B mixed"
-}

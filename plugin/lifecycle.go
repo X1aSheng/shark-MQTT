@@ -43,7 +43,6 @@ type LifecycleFuncs struct {
 	OnStart       func(context.Context) error
 	OnStop        func(context.Context) error
 	OnUninstall   func(context.Context) error
-	stageTimeouts time.Duration
 }
 
 func (l *LifecycleFuncs) Name() string { return l.PluginName }
