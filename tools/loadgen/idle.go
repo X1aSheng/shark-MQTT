@@ -93,7 +93,7 @@ func runIdle(addr string, n int, hold time.Duration, concurrency int) {
 func dialAndConnect(addr string, id int) (net.Conn, error) {
 	d := net.Dialer{
 		Timeout:   10 * time.Second,
-		LocalAddr: &net.TCPAddr{IP: net.IPv4(127, 0, 0, byte(2+id%16))},
+		LocalAddr: &net.TCPAddr{IP: net.IPv4(127, 0, 0, byte(2+id%16)).To4()},
 	}
 	c, err := d.Dial("tcp", addr)
 	if err != nil {

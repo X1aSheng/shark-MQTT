@@ -195,6 +195,16 @@ awk '{print $14, $15}' /proc/<pid>/stat; getconf CLK_TCK
 
 **线程数不应随连接数增长**; 若增长, 说明每连接起了 OS 线程, 是设计问题。
 
+> **已知限制: `-mode idle` 在 5000 个连接处停住。** 现象是恰好 5000 成功、其余全部
+> 失败, 客户端报 `EOF`, 且**串行 (`-idle-parallel 1`) 与并发 64 结果一致**, Windows 与
+> Linux 也一致。已排除: broker 拒绝 (日志里 0 条 `max connections`)、并发度、TIME_WAIT
+> 残留 (清空后仍 5000)、端口耗尽 (同一台机器同一时刻, 一段 20 行的 Python 裸 socket
+> 串行建 8000 个全部成功)。
+>
+> 因此这是 **loadgen 客户端**的问题, 不是 broker 的, 根因未定位。**测 5000 以上连接时
+> 用 Python 脚本, 不要用 `-mode idle`** —— 见 3.2 节。这个限制值得修, 但在修好之前
+> 用它得出的"连接数上限"结论都是错的。
+
 ### 5.6 长稳 (可选, 30 分钟以上)
 
 固定一个 70% 负载点跑 30 分钟, 加 `-sample-interval 30s` 让 JSON 里带 `rss_timeline` 数组 (每次采样含 `t_s` / `rss_mb` / `peak_mb` / `threads` / `cpu_nano`), 再按序列判断趋势而不是只看首尾两个数。判据:
