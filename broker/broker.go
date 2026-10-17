@@ -196,6 +196,22 @@ func New(opts ...Option) *Broker {
 	}
 
 	// Setup QoS callbacks
+	b.qos.SetGiveUpCallback(func(clientID string, packetID uint16) {
+		// The engine dropped its copy after maxRetries; the session owns the
+		// same delivery. Clearing both keeps the outbound window honest -- a
+		// leftover entry would be replayed on the next reconnect and would
+		// count against the window for the rest of the session's life.
+		sess, ok := b.sessions.GetSession(clientID)
+		if !ok {
+			return
+		}
+		if sess.RemoveInflight(packetID) {
+			sess.DecOutboundUnacked()
+			b.metrics.IncMessagesDropped("max_retries")
+			b.logger.Debug("delivery abandoned after max retries",
+				"clientID", clientID, "packetID", packetID)
+		}
+	})
 	b.qos.SetCallbacks(
 		func(clientID string, packetID uint16) error {
 			return b.sendPubAck(clientID, packetID)

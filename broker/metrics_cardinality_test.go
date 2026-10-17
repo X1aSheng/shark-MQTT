@@ -29,6 +29,7 @@ var allowedMetricLabels = map[string]map[string]bool{
 	"IncMessagesDropped": {
 		"invalid_topic_alias":           true,
 		"malformed_topic":               true,
+		"max_retries":                   true,
 		"message_expired":               true,
 		"offline_queue_full":            true,
 		"offline_stale":                 true,

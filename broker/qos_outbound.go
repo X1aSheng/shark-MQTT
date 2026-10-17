@@ -208,14 +208,17 @@ func (b *Broker) republish(ctx context.Context, clientID string, packetID uint16
 			return nil
 		}
 	}
-	pubRec := &protocol.PubRecPacket{
-		FixedHeader: protocol.FixedHeader{
-			PacketType: protocol.PacketTypePubRec,
-		},
-		PacketID:   packetID,
-		ReasonCode: protocol.ReasonCodeSuccess,
-	}
-	b.writePacket(clientID, pubRec)
+	// Nothing left to resend. The session's Inflight is the authority, and it
+	// no longer holds this packet id: either the delivery was acknowledged
+	// between the engine's snapshot and this call, or the session is gone. Both
+	// mean there is nothing to retransmit -- and a PUBREC here would be a
+	// protocol error, since a PUBREC answers an inbound PUBLISH whose packet id
+	// belongs to the peer, not to a delivery the broker sent.
+	//
+	// The inbound direction is not routed through this callback at all: inbound
+	// QoS 2 is tracked by Session.inboundQoS2, and TrackQoS1/TrackQoS2 have no
+	// caller outside the benchmarks. If inbound retry is ever wired up it needs
+	// its own callback, not this fallback.
 	return nil
 }
 

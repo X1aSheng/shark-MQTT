@@ -75,6 +75,16 @@ type QoSEngine struct {
 
 	onError func(clientID string, packetID uint16, err error)
 
+	// onGiveUp is invoked when a delivery has exhausted its retries and the
+	// engine has dropped its own entry. It exists because the engine is not the
+	// only owner of that delivery: the session holds the same packet id in
+	// Inflight and counts it against the outbound window. Dropping only the
+	// engine's copy left the session's entry and the unacked counter behind
+	// forever, so each abandoned delivery permanently shrank the window until
+	// new deliveries stopped fitting -- with no log and no metric, because the
+	// error callback was never registered either.
+	onGiveUp func(clientID string, packetID uint16)
+
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -196,6 +206,17 @@ func (q *QoSEngine) SetErrorCallback(fn func(clientID string, packetID uint16, e
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.onError = fn
+}
+
+// SetGiveUpCallback sets the callback invoked when a delivery exhausts
+// maxRetries. The engine has already removed its own tracking entry by then; the
+// callback is where the session clears the matching Inflight record and the
+// outbound-unacked count. It must not block, or it delays the retry loop for
+// every client.
+func (q *QoSEngine) SetGiveUpCallback(fn func(clientID string, packetID uint16)) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.onGiveUp = fn
 }
 
 func (q *QoSEngine) reportError(clientID string, packetID uint16, err error) {
@@ -483,9 +504,13 @@ func (q *QoSEngine) doRetry() {
 	republish := q.republish
 	sendPubRel := q.sendPubRel
 	onError := q.onError
+	onGiveUp := q.onGiveUp
 	q.mu.Unlock()
 
 	for _, item := range toReport {
+		if onGiveUp != nil {
+			onGiveUp(item.clientID, item.packetID)
+		}
 		if onError != nil {
 			onError(item.clientID, item.packetID, item.err)
 		}
