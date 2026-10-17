@@ -15,12 +15,12 @@
 
 | 结论 | 证据 |
 | --- | --- |
-| 多端口 Helm 部署**此前是坏的**, 现已修复 | 修复前 `helm upgrade` 被 API 直接拒绝(见 §3) |
-| 修复后 Service / Deployment / Endpoints 三者端口名一致 | §4 |
-| 每个声明的监听端口**真的可达**, 未声明端口真的不可达 | §5(含对照端口) |
-| 经 ClusterIP 的 QoS 0 / QoS 1 往返完整 | §5 |
-| 滚动更新正常, 无 `FailedPreStopHook`, 无探针失败 | §6 |
-| 管理/健康端点在集群内可用 | §7 |
+| 多端口 Helm 部署**此前是坏的**, 现已修复 | 修复前 `helm upgrade` 被 API 直接拒绝(见 Section 3) |
+| 修复后 Service / Deployment / Endpoints 三者端口名一致 | Section 4 |
+| 每个声明的监听端口**真的可达**, 未声明端口真的不可达 | Section 5(含对照端口) |
+| 经 ClusterIP 的 QoS 0 / QoS 1 往返完整 | Section 5 |
+| 滚动更新正常, 无 `FailedPreStopHook`, 无探针失败 | Section 6 |
+| 管理/健康端点在集群内可用 | Section 7 |
 
 一句话: 本次验证发现并修复了一个**只在多端口配置下才会触发**的真实缺陷, 修复后整条链路全绿;
 单端口默认配置从未触发该缺陷, 因此既有的 `helm lint` / `helm template` / CI 全部漏过.
@@ -92,7 +92,7 @@ Service port name 与 container port name 都是 `IANA_SVC_NAME`, **上限 15 �
 | CI | 否 | 不跑真实集群 |
 | `deploy_test.go`(44 个用例) | 否 | 解析渲染后的 YAML 文本, 不施加 15 字符约束 |
 
-**只有真实集群能发现** —— 这正好复现了项目记忆里那条经验: "`helm lint` 只保证语法,
+**只有真实集群能发现** -- 这正好复现了项目记忆里那条经验: "`helm lint` 只保证语法,
 `helm template` 看渲染值; 只有实部署 + 真连一次能发现真实问题".
 
 ### 3.4 修复
@@ -171,7 +171,7 @@ Endpoints 三个端口全部解析到同一个 Pod IP:
 - **对照端口必须保留**. 早先一版用 `grep -E '"(sent|received)"'` 判成功, 未配置的 38983
   因为 grep 空输出被**误判为成功**. 改成 `/dev/tcp` 原始探测 + 对照端口后才得到可信结论.
 - 两轮结果一致(修复后首次验证与模板同步后的 revision 5 复跑), 18983/28983 均 500/500.
-- `/root/loadgen` 报告 `broker_cpu_cores: 0.014` —— 这是 loadgen 读 `/proc/PID/stat` 得到的值,
+- `/root/loadgen` 报告 `broker_cpu_cores: 0.014` -- 这是 loadgen 读 `/proc/PID/stat` 得到的值,
   但它读的是**节点上**的 PID, 容器内 broker 的 CPU 需要从 cgroup 取; 此处的核数不具参考性.
 
 ---

@@ -143,7 +143,7 @@ Returns the current number of active connections.
 #### Broker()
 
 ```go
-func (b *Broker) Broker() *broker.Broker
+func (b *Broker) Core() Core
 ```
 
 Returns the underlying broker core for advanced usage.
@@ -222,7 +222,7 @@ cfg.LogLevel = "info"
 ### From YAML
 
 ```go
-cfg, err := config.LoadFromFile("config.yaml")
+cfg, err := config.NewLoader("config.yaml").Load()
 ```
 
 ### From Environment
@@ -476,7 +476,7 @@ broker := api.NewBroker(
 
 ### Custom Metrics
 
-Implement `metrics.Metrics` interface (17 methods):
+Implement `metrics.Metrics` interface (12 methods):
 
 ```go
 type Metrics interface {

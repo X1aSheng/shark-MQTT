@@ -70,7 +70,7 @@ mgr.Register(&plugin.LifecycleFuncs{
 ## Lifecycle
 
 ```
-Initialize ──► Start ──► Stop ──► Uninstall
+Initialize --> Start --> Stop --> Uninstall
 ```
 
 The `Manager` drives these; the plugin holds no state about its own progress.

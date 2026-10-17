@@ -28,7 +28,7 @@ shark-mqtt/
 |   +-- badger/       # BadgerDB store (embedded)
 +-- pkg/              # Infrastructure (logger, metrics, bufferpool)
 |   +-- logger/       # Structured logging (slog)
-|   +-- metrics/      # Prometheus metrics interface (17 methods)
+|   +-- metrics/      # Prometheus metrics interface (12 methods)
 |   +-- bufferpool/   # Buffer pool for GC reduction
 +-- config/           # Configuration loading (YAML/ENV) with validation
 +-- plugin/           # Plugin system (hook-based architecture, error-collecting dispatch)
@@ -200,7 +200,7 @@ Client session management is handled by `Manager` in `broker/session.go`.
 Storage abstraction with multiple backends.
 
 **Interfaces (store/interfaces.go):**
-- `SessionStore` - Session persistence (5 methods)
+- `SessionStore` - Session persistence (6 methods)
 - `MessageStore` - QoS message persistence (5 methods)
 - `RetainedStore` - Retained message storage (4 methods)
 

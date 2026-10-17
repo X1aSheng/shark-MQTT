@@ -44,6 +44,12 @@ Shark-MQTT supports configuration from multiple sources with the following prior
 | `tls_mutual` | bool | `false` | Enable mTLS client cert verification |
 | `tls_ca_cert_file` | string | - | CA cert file for mTLS |
 | `connect_timeout` | duration | `10s` | Connection timeout |
+| `tcp_keepalive_period` | duration | `60s` | OS-level TCP keep-alive period applied to accepted sockets; 0 disables |
+| `drain_timeout` | duration | `5s` | How long Stop waits for in-flight QoS 1/2 handshakes before closing sockets |
+| `ws_listen_addr` | string | - | MQTT over WebSocket address; empty disables |
+| `ws_listen_addrs` | []string | - | Additional WebSocket addresses; takes precedence over `ws_listen_addr` |
+| `wss_listen_addr` | string | - | MQTT over TLS WebSocket address; requires `tls_enabled` |
+| `wss_listen_addrs` | []string | - | Additional WSS addresses; takes precedence over `wss_listen_addr` |
 
 **Examples:**
 ```yaml
@@ -100,36 +106,30 @@ qos_max_inflight: 200
 | `session_expiry_interval` | duration | `24h` | Session expiration time |
 | `sys_interval` | duration | `30s` | $SYS status topic publish interval (0 disables) |
 
-> **Limitation — the CLI binary only runs the memory backend.**
+> **The redis and badger backends must be compiled in.**
 >
-> `cmd/main.go` never injects a `SessionStore` / `MessageStore` / `RetainedStore`,
-> and `api.NewBroker` refuses to start a non-memory backend without them. Setting
-> `storage_backend: redis` (or `badger`) on the command line therefore fails at
-> startup with
-> `storage_backend "redis" requires explicit stores (WithSessionStore/WithMessageStore/WithRetainedStore)`.
+> The CLI wires the stores itself (`cmd/stores*.go`), but each backend lives
+> behind a build tag because it pulls in its own client library:
 >
-> The redis and badger backends are usable only from code that passes the stores
-> explicitly:
->
-> ```go
-> import (
->     badgerstore "github.com/X1aSheng/shark-mqtt/store/badger"
->     "github.com/X1aSheng/shark-mqtt/api"
-> )
->
-> ss, err := badgerstore.NewSessionStore(badgerstore.SessionStoreConfig{DB: db})
-> // ... message and retained stores the same way
-> b := api.NewBroker(
->     api.WithConfig(cfg),
->     api.WithSessionStore(ss),
->     api.WithMessageStore(ms),
->     api.WithRetainedStore(rs),
-> )
+> ```bash
+> go build -tags store_redis  -o shark ./cmd   # storage_backend: redis
+> go build -tags store_badger -o shark ./cmd   # storage_backend: badger
+> go build                     -o shark ./cmd   # memory only
 > ```
 >
-> Both store packages are build-tagged: `store_redis` and `store_badger`. The
-> stock Docker image does not compile them in. Closing this CLI gap is tracked as
-> D7 in [PROJECT-REVIEW-261017-100640](../reports/PROJECT-REVIEW-261017-100640.md).
+> Asking a binary for a backend it was not built with is a startup error, not a
+> silent fallback:
+>
+> ```
+> Failed to open storage backend: storage_backend is "redis" but this binary was
+> built without the store_redis tag; rebuild with: go build -tags store_redis ./cmd
+> ```
+>
+> A fallback to memory would start cleanly, look healthy and lose every session
+> on the next restart, which is the worst outcome for a persistence setting.
+>
+> Embedders that build their own stores keep using `api.WithSessionStore` /
+> `WithMessageStore` / `WithRetainedStore` instead of the CLI path.
 
 #### Redis Backend
 
@@ -188,6 +188,42 @@ log_format: json
 ```yaml
 metrics_enabled: true
 metrics_addr: ":18999"
+```
+
+### Authentication Configuration
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `auth_file` | string | - | Path to a users file (`name: bcrypt-hash`). When neither `auth_file` nor `-allow-all` is given, the broker refuses to start: an open broker must be an explicit decision |
+
+The CLI also accepts `-allow-all`, which installs an authenticator that accepts
+every client and prints a warning at startup. Use it for local testing only.
+
+**Examples:**
+```yaml
+auth_file: "/etc/shark-mqtt/users.yaml"
+```
+
+```bash
+export MQTT_AUTH_FILE="/etc/shark-mqtt/users.yaml"
+```
+
+### Management Endpoint Configuration
+
+The management endpoints (`/clients`, `/topics`) expose client IDs, usernames
+and topic names, so they are **off by default**. Enabling them without a token is
+rejected unless the listener is loopback-only, and the token is compared with
+`subtle.ConstantTimeCompare`.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `management_enabled` | bool | `false` | Serve the read-only management endpoints |
+| `management_token` | string | - | Bearer token required by every management request |
+
+**Examples:**
+```yaml
+management_enabled: true
+management_token: "change-me"
 ```
 
 ---
@@ -358,6 +394,25 @@ All configuration options can be set via environment variables with the `MQTT_` 
 | `MQTT_LOG_FORMAT` | `log_format` |
 | `MQTT_METRICS_ENABLED` | `metrics_enabled` |
 | `MQTT_METRICS_ADDR` | `metrics_addr` |
+| `MQTT_WS_LISTEN_ADDR` | `ws_listen_addr` |
+| `MQTT_WS_LISTEN_ADDRS` | `ws_listen_addrs` |
+| `MQTT_WSS_LISTEN_ADDR` | `wss_listen_addr` |
+| `MQTT_WSS_LISTEN_ADDRS` | `wss_listen_addrs` |
+| `MQTT_TCP_KEEPALIVE_PERIOD` | `tcp_keepalive_period` |
+| `MQTT_DRAIN_TIMEOUT` | `drain_timeout` |
+| `MQTT_TLS_MIN_VERSION` | `tls_min_version` |
+| `MQTT_TLS_MAX_VERSION` | `tls_max_version` |
+| `MQTT_TLS_MUTUAL` | `tls_mutual` |
+| `MQTT_TLS_CA_CERT_FILE` | `tls_ca_cert_file` |
+| `MQTT_AUTH_FILE` | `auth_file` |
+| `MQTT_MANAGEMENT_ENABLED` | `management_enabled` |
+| `MQTT_MANAGEMENT_TOKEN` | `management_token` |
+| `MQTT_FLAPPING_ENABLED` | `flapping_enabled` |
+| `MQTT_FLAPPING_MAX_CONNECTS` | `flapping_max_connects` |
+| `MQTT_FLAPPING_WINDOW` | `flapping_window` |
+| `MQTT_FLAPPING_PENALTY_DURATION` | `flapping_penalty_duration` |
+| `MQTT_FLAPPING_MAX_TRACKED_CLIENTS` | `flapping_max_tracked_clients` |
+| `MQTT_FLAPPING_CLEANUP_INTERVAL` | `flapping_cleanup_interval` |
 
 ### Example Environment Configuration
 

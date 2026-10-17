@@ -20,7 +20,7 @@
 
 **最需要立刻知道的三件事**
 
-1. `TopicTree.Stats()` 曾无锁遍历共享订阅 map。管理端点 `/topics` 与任一客户端 SUBSCRIBE 并发时会触发 Go 运行时 `concurrent map iteration and map write` —— 进程直接 abort, 不可 recover。已修。
+1. `TopicTree.Stats()` 曾无锁遍历共享订阅 map。管理端点 `/topics` 与任一客户端 SUBSCRIBE 并发时会触发 Go 运行时 `concurrent map iteration and map write` -- 进程直接 abort, 不可 recover。已修。
 2. `writeLoop` 写失败退出时不广播停止信号。对端停止读取后, 该连接的写队列填满, 阻塞的不只是它自己: QoS 重试 republish 由**全 broker 单 goroutine** 驱动, 一条死连接可让所有客户端的重传停摆。已修。
 3. `docs/guides/CONFIGURATION.md` 教用户配 `storage_backend: redis`, 但 `cmd/main.go` 从不注入 store, 按文档操作必然启动失败。文档未修, 见第 6 节。
 
@@ -93,7 +93,7 @@
    +--------------------+                        +----------------------+
 ```
 
-关键契约: 网络层把已完成握手的 `*Conn` 交给内核, 内核不再解码 CONNECT。这是 2026 年重构的主要收益 —— 在此之前两层共享 `*protocol.Codec`, 任何协议扩展都要改内核。
+关键契约: 网络层把已完成握手的 `*Conn` 交给内核, 内核不再解码 CONNECT。这是 2026 年重构的主要收益 -- 在此之前两层共享 `*protocol.Codec`, 任何协议扩展都要改内核。
 
 ### 3.2 设计决策评估
 
@@ -179,20 +179,20 @@
 | D1 | P0 | `broker/topic_tree.go:283` | `Stats()` 在 `tt.sharedSubsMu` 之外遍历共享订阅 map, 且 RLock/RUnlock 成对写在内层循环里。与 `SubscribeShared` 并发时 Go 运行时 abort (进程级, 不可 recover); 某个 group 的 filter map 为空时 `RLock` 之后没有内层循环, 读锁永久泄漏, 后续所有共享订阅写阻塞 | 快照整体持锁一次, `defer RUnlock` |
 | D2 | P0 | `broker/client_state.go:54` | `writeLoop` 写失败时 `conn.Close()` 后直接 return, **不关闭 `stopWrites`**。此后队列无人消费且通道仍开, `writeOrEnqueue` 在队列填满后永久阻塞; 调用方包括该连接的 readLoop、QoS 重试 republish、遗嘱发布。重试 republish 由全 broker 单 goroutine 驱动, 故一条死连接可让所有客户端停止重传 | 引入 `stopOnce sync.Once` + `stopWriter()`, 四个关闭方 (接管 / 拆除 / Stop / 写协程自身) 统一走幂等入口 |
 | D3 | P1 | `broker/lifecycle.go:193` | `cleanupExpiredRetained` 在 `retainedExpiry <= 0` 时提前 return, 但 `handleRetainedMessage` 会把发布者自带的 MQTT 5.0 Message Expiry Interval 记为 deadline。默认配置下这些过期永不执行, 保留消息累积到 `maxRetainedTopics` 上限后新消息被静默丢弃 | 守卫改为只看 `retainedStore != nil`, 与 `Start()` 注释声明的语义一致 |
-| D4 | P1 | `broker/conn_lifecycle.go:1026` | 会话中重认证收到 AUTH 0x00 (Success) 后, 走 `reason != 0x18 -> gracefulDisconnect`, 把认证成功的活连接断开并发布其遗嘱。规范 §4.12.1 要求成功后连接继续 | 0x18 (Continue) 与 0x00 (Success) 均保持连接, 其余原因码才断开 |
+| D4 | P1 | `broker/conn_lifecycle.go:1026` | 会话中重认证收到 AUTH 0x00 (Success) 后, 走 `reason != 0x18 -> gracefulDisconnect`, 把认证成功的活连接断开并发布其遗嘱。规范 Section 4.12.1 要求成功后连接继续 | 0x18 (Continue) 与 0x00 (Success) 均保持连接, 其余原因码才断开 |
 | D5 | P1 | `broker/conn_lifecycle.go:254` | 从存储恢复持久会话时, 所有 filter 一律走 `TopicTree.Subscribe`, 包括 `$share/g/a`。共享订阅存放在 `sharedSubs` 而非 trie, 被写进 trie 后挂在字面 `$share` 节点下永不匹配真实 topic: 订阅静默失效, 且留下 `UnsubscribeShared` 删不掉的残留 | 恢复时按 `IsSharedSubscription` 分流到 `SubscribeShared` |
 | D6 | P2 | `broker/broker.go`、`server.go`、`options.go` | 文件拆分时注释未随函数体迁移: 7 处重复注释块, 5 处悬空注释。其中 `HandleConnection` 的完整契约 (含 ctx 作用域说明, 本包最关键的注释) 挂到了 `FlappingEnabled` 上; `Addr` 的注释挂在 `Addrs` 上; `WithPluginManager` 的注释挂在 `WithFlappingDetection` 上 | 去重 + 归位, 无行为变更 (5 文件, -78/+40 行) |
 | D11 | P1 | `broker/pub_sub.go:488` | 共享订阅分支未检查 `NoLocal`。No Local 由下游"投递 topic 与已存 filter 匹配"实现, 而共享订阅存的 filter 是 `$share/g/a`, 永不匹配真实 topic `a`, 于是 No Local 静默失效, 订阅方仍收到自己发布的消息。违反 [MQTT-3.8.3-4] (Protocol Error) | 判定为 Protocol Error, 按 `closeProtocolViolation` 送 DISCONNECT 0x82 并拆链 |
-| D12 | P1 | `broker/rate_limit.go:48` | `int(maxRate*window.Seconds())` 在速率小于 1/窗口时截断为 0, 随后 `len(timestamps) >= 0` 恒真, 全部连接被拒 —— 配置项做的事与字面相反 | `math.Ceil` 向上取整并保底 1 个名额 |
+| D12 | P1 | `broker/rate_limit.go:48` | `int(maxRate*window.Seconds())` 在速率小于 1/窗口时截断为 0, 随后 `len(timestamps) >= 0` 恒真, 全部连接被拒 -- 配置项做的事与字面相反 | `math.Ceil` 向上取整并保底 1 个名额 |
 | D18 | P1 | `broker/conn_lifecycle.go:67` | `maxConnections` 只采样 `len(connections)` 便放行, 而真正的注册发生在授权/会话恢复/store 写之后, 并发 CONNECT 突发可超限任意倍 | 新增 `pendingConns` 预留: `reserveConnectionSlot` / `releaseConnectionSlot`, 注册成功才占用名额, 失败路径由 defer 归还 |
 | D9 | P1 | `broker/qos_engine.go:459` | 重试耗尽时只删引擎自身 inflight 表项, 不同步删 `Session.Inflight`、不 `DecOutboundUnacked`; `SetErrorCallback` 从未被注册, 于是整条放弃路径无日志无指标。后果: 每条被放弃的投递永久占用出站窗口, 窗口逐条收紧至零, 且重连时还会被 `resendSessionInflight` 重放 | 新增 `SetGiveUpCallback`, broker 注册后同步清 session 记账 + 计数 `messages_dropped{reason=max_retries}` + 打日志 |
 | D15 | P1 | `broker/qos_outbound.go:206` | `republish` 在 session 中找不到该 packet id 时落入 PUBREC 分支。该分支本为入站 QoS 2 设计, 但入站路径 (`TrackQoS1/2`) 在生产代码中无调用者 (仅 benchmark 使用), 于是出站的重试回调在 ack 竞争或会话消失时会向客户端发一条无对应 PUBLISH 的 PUBREC | 找不到条目直接返回 nil; 注释写明入站方向若将来接入需独立回调, 不得复用此兜底 |
 | D8 | P1 | `broker/conn_lifecycle.go:465,503` | `CreateSession` 已把会话发布进 Manager 之后, 仍无锁写 `ExpiryInterval` / `ReceiveMax` / `OutboundWindow`; 而 `CanSendOutbound` 从投递 goroutine 无锁读窗口, `Session.Save` 也从别的 goroutine 快照这些字段 | 三处写入改持 `sess.mu`, `CanSendOutbound` 改 `RLock` 读窗口; `go test -race ./broker/` 14.4s 通过 |
-| D7 | P1 | `cmd/main.go` | CLI 从不为 `storage_backend: redis/badger` 注入 store, 而 `api.NewBroker` 见非 memory 后端未注入 store 时返回 `initErr` ⇒ 按文档配置必然启动失败 | 新增 `cmd/stores*.go`: `openPersistence` 按后端分派; redis/badger 各自 build tag (`store_redis` / `store_badger`), 未编入时给「rebuild with ...」明确错误而非静默回落 memory。三种构建组合均编译通过, 运行时错误文案已实测 |
-| D10 | P1 | `broker/pub_sub.go:339` | `handleRetainedMessage` 持全局 `retainedMu` 做 `GetRetained`/`SaveRetained`/`DeleteRetained` (Redis RTT / Badger fsync) ⇒ 每条保留发布串行排队, 管理端点一并停摆 | 改为 64 条 topic stripe (FNV-1a): 同 topic 串行保住 check-then-write, 不同 topic 并行; `retainedMu` 只护内存 map/count。`cleanupExpiredRetained` 同样改为锁内扫描、锁外删除, 并在 stripe 内复核 deadline |
-| D16 | P1 | `broker/lifecycle.go:331` | `Stop()` 先整体摘除 `connections` 再关 socket, 各 readLoop 的 `disconnect()` 在身份校验处 return ⇒ session map / topic tree / QoS 表残留上一轮的条目; 随后 `Start` 会把它们报成在线, 共享订阅投给无连接的会话, 非 clean 重连被告知 SessionPresent=1 | 改为先关 socket, 给 readLoop 200ms 自行注销, 再兜底摘除 + 广播写协程停止信号。**作用域说明**: 经 `api.Broker.Stop` 时 `srv.Stop()` 先于 `broker.Stop()` 并 join 连接协程, 主路径本不触发; 修复保护直接调用 `broker.Broker.Stop` 的嵌入方 |
+| D7 | P1 | `cmd/main.go` | CLI 从不为 `storage_backend: redis/badger` 注入 store, 而 `api.NewBroker` 见非 memory 后端未注入 store 时返回 `initErr` => 按文档配置必然启动失败 | 新增 `cmd/stores*.go`: `openPersistence` 按后端分派; redis/badger 各自 build tag (`store_redis` / `store_badger`), 未编入时给「rebuild with ...」明确错误而非静默回落 memory。三种构建组合均编译通过, 运行时错误文案已实测 |
+| D10 | P1 | `broker/pub_sub.go:339` | `handleRetainedMessage` 持全局 `retainedMu` 做 `GetRetained`/`SaveRetained`/`DeleteRetained` (Redis RTT / Badger fsync) => 每条保留发布串行排队, 管理端点一并停摆 | 改为 64 条 topic stripe (FNV-1a): 同 topic 串行保住 check-then-write, 不同 topic 并行; `retainedMu` 只护内存 map/count。`cleanupExpiredRetained` 同样改为锁内扫描、锁外删除, 并在 stripe 内复核 deadline |
+| D16 | P1 | `broker/lifecycle.go:331` | `Stop()` 先整体摘除 `connections` 再关 socket, 各 readLoop 的 `disconnect()` 在身份校验处 return => session map / topic tree / QoS 表残留上一轮的条目; 随后 `Start` 会把它们报成在线, 共享订阅投给无连接的会话, 非 clean 重连被告知 SessionPresent=1 | 改为先关 socket, 给 readLoop 200ms 自行注销, 再兜底摘除 + 广播写协程停止信号。**作用域说明**: 经 `api.Broker.Stop` 时 `srv.Stop()` 先于 `broker.Stop()` 并 join 连接协程, 主路径本不触发; 修复保护直接调用 `broker.Broker.Stop` 的嵌入方 |
 | D17 | P1 | `broker/conn_lifecycle.go:825` | `disconnect` 在身份校验之前就执行 Save/DeleteSession/ClearMessages/清 offlineCount; 同 ID 接管后旧 readLoop 迟到的拆除会删改新连接的持久记录 | 身份校验提到所有 store 写之前 (写锁下的权威校验仍保留), 不匹配直接返回 |
-| D13 | P1 | `plugin/manager.go:203` | 每个带超时的 hook 都新起 goroutine; 插件忽略 ctx 时 goroutine 在超时后继续存活 ⇒ 卡死插件 + 报文洪泛 = 每包泄漏一个 goroutine, 无上界 | 加 256 槽信号量: 到顶直接拒绝并返回错误 (broker 计入 plugin 错误指标), 把隐形泄漏变为可见拒绝。`eventbus.deliver` 同构, 本轮未改, 留作后续 |
+| D13 | P1 | `plugin/manager.go:203` | 每个带超时的 hook 都新起 goroutine; 插件忽略 ctx 时 goroutine 在超时后继续存活 => 卡死插件 + 报文洪泛 = 每包泄漏一个 goroutine, 无上界 | 加 256 槽信号量: 到顶直接拒绝并返回错误 (broker 计入 plugin 错误指标), 把隐形泄漏变为可见拒绝。`eventbus.deliver` 同构, 本轮未改, 留作后续 |
 | D14 | P1 | `broker/server.go:584` | WS handler 与 accept 路径在 `Stop()` 的 `wg.Wait()` 之后仍可能 `wg.Add`, 触发 `sync: WaitGroup misuse: Add called concurrently with Wait` | 新增 `wgMu` + `closing` : `addConnGoroutine` 与 Stop 置位共用同一把锁, Wait 运行后不再有 Add; `Start` 重新放开以保住 Stop -> Start |
 
 修复后复跑 (第二轮 D11 / D12 / D18): `go build ./...`、`go vet ./...`、`go test -count=1 ./...` 全部通过 (47 s, 其中 `tests/integration` 34.3 s)。新增回归 6 条: 单测 4 条 (`broker/rate_limit_test.go`), 集成 2 条 (`tests/integration/shared_subscription_test.go`); 因此本轮之后计数为 单测 537 / 集成 196。
@@ -212,7 +212,7 @@
 |------|------|------|
 | 高 (直接导致编译/启动/操作失败) | 47 | `storage_backend: redis` 不可用 (D7); `deploy/k8s/app/deployment.yaml` 实际 `replicas: 1` 而 DEPLOY.md 写 2 (该仓库明确"多副本=丢消息"); `Authorizer.CanPublish` 第二参实为 username 而非 clientID (按文档实现会按用户名判权); Metrics 接口文档 17 方法实为 12; `api.Broker.Broker()` 实为 `Core()`; `config.LoadFromFile` 不存在; `MQTT_SESSION_EXPIRY_INTERVAL` 实为 `MQTT_SESSION_EXPIRY` |
 | 中 (结论错误, 但不阻断操作) | 26 | 指标名全错 (`mqtt_connections_active` 实为 `shark_mqtt_connections_total`); `redis_addr` / `badger_path` 默认值为空而非文档所写; `Config` 字段少列 21 个; `DefaultConfig().MetricsEnabled` 实为 true |
-| 低 (表述漂移) | 26 | 目录树文件清单停留在拆分前; `examples/standalone.go` 实为目录; 指标/基准计数过期; README 使用 `->`、`|--`、`u`、`§` 等非 ASCII 符号 |
+| 低 (表述漂移) | 26 | 目录树文件清单停留在拆分前; `examples/standalone.go` 实为目录; 指标/基准计数过期; README 使用 `->`、`|--`、`u`、`Section ` 等非 ASCII 符号 |
 
 `docs/guides/TESTING.md` 是**唯一**统计数字仍准确的活文档, 其余计数类描述一律过期。
 

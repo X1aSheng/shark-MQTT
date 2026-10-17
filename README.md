@@ -8,33 +8,33 @@ Shark-MQTT is a high-performance MQTT broker written in Go, implementing the
 **MQTT 3.1.1 and 5.0** specifications end to end. It is engineered for
 predictable behavior under load:
 
-- **Zero external dependencies to run** — in-memory storage by default;
+- **Zero external dependencies to run** - in-memory storage by default;
   Redis and BadgerDB are opt-in backends compiled behind build tags.
-- **Bounded concurrency** — every queue and buffer has a hard cap
+- **Bounded concurrency** - every queue and buffer has a hard cap
   (write queue, flow-control buffer, inflight, retained count), and the
   publish hot path is allocation-tuned (pooled codecs, tiered buffer pool).
-- **Prompt dead-link detection** — MQTT keep-alive deadlines, configurable
+- **Prompt dead-link detection** - MQTT keep-alive deadlines, configurable
   OS TCP keep-alive, and write-failure reaping keep zombie connections from
   lingering as "online".
-- **Pluggable and observable** — auth/authorization chains, hook-based
+- **Pluggable and observable** - auth/authorization chains, hook-based
   plugins, custom storage/metrics, structured logging, and Prometheus
   metrics with health/readiness endpoints.
 
-On an AMD Ryzen 7 8845HS, the end-to-end QoS 0 round trip runs at ~68 µs/message
-with 34 allocs; 128 KB payloads encode at ~103 µs with 135 KB allocated per
+On an AMD Ryzen 7 8845HS, the end-to-end QoS 0 round trip runs at ~68 us/message
+with 34 allocs; 128 KB payloads encode at ~103 us with 135 KB allocated per
 message.
 
 ## Features
 
 **Protocol (MQTT 3.1.1 & 5.0)**
 - All 15 packet types with complete property encoding/decoding
-- Enhanced authentication (§4.12), Topic Alias, Message/Session Expiry,
+- Enhanced authentication (Section 4.12), Topic Alias, Message/Session Expiry,
   RequestResponseInformation, ReceiveMaximum flow control, shared
   subscriptions, spec-compliant `$SYS` topic protection
 
 **QoS & Delivery**
 - QoS 0/1/2 state machines with automatic retry and inflight tracking
-- Overlapping subscriptions deliver once at the **maximum** matching QoS (§3.3.5)
+- Overlapping subscriptions deliver once at the **maximum** matching QoS (Section 3.3.5)
 - Offline message queue for persistent sessions; Message Expiry enforced
   across queue, flow-control buffer, and inflight retries
 
@@ -72,17 +72,17 @@ message.
 ## Architecture
 
 ```
-cmd (CLI) → api (public facade + health server)
-                 └─ broker: MQTTServer (TCP/TLS/WS) + Broker
-                      ├─ TopicTree (wildcard matching, $SYS protection)
-                      ├─ QoSEngine (retry + inflight)
-                      ├─ WillHandler (delayed wills)
-                      └─ Session Manager (persistence, takeover)
-                 ↓        ↓        ↓
-           protocol/  store/   pkg/
-           (codec)    (memory/ (logger/
-                      redis/   metrics/
-                      badger)  bufferpool)
+cmd (CLI) -> api (public facade + health server)
+                  +- broker: MQTTServer (TCP/TLS/WS) + Broker
+                  |    +- TopicTree (wildcard matching, $SYS protection)
+                  |    +- QoSEngine (retry + inflight)
+                  |    +- WillHandler (delayed wills)
+                  |    +- Session Manager (persistence, takeover)
+                  v          v          v
+             protocol/    store/     pkg/
+             (codec)      (memory/   (logger/
+                           redis/     metrics/
+                           badger)    bufferpool)
 ```
 
 Layers depend one-directionally; the network layer and business logic are
@@ -96,7 +96,7 @@ separated, and connections are decoupled from sessions.
 | `broker/` | Core: server, broker, TopicTree, QoSEngine, WillHandler, sessions, auth |
 | `protocol/` | MQTT 3.1.1 & 5.0 codec (15 packet types, properties) |
 | `store/` | Storage interfaces + memory (default); redis/badger behind build tags |
-| `client/` | MQTT 3.1.1/5.0 client |
+| `client/` | MQTT 3.1.1 client (5.0 support lives in the broker) |
 | `plugin/` `config/` `errs/` | Plugin system; configuration; error sentinels |
 | `pkg/` | logger, metrics, tiered buffer pool |
 | `tests/` | integration/, bench/, defects/ + logs & artifacts (gitignored) |
@@ -127,7 +127,7 @@ defer b.Stop()
 > The broker defaults to **deny-all** authentication; without an explicit
 > authenticator (or `-allow-all`), connections are rejected.
 
-More: [Examples](examples/) · [Configuration](docs/guides/CONFIGURATION.md) ·
+More: [Examples](examples/) ,  [Configuration](docs/guides/CONFIGURATION.md) , 
 [Docker & K8s](docs/architecture/DEPLOY.md)
 
 ## Performance
@@ -139,11 +139,11 @@ Measured on AMD Ryzen 7 8845HS / Windows 11 / Go 1.26.1 (`go test -bench . ./tes
 | Codec Encode Publish | 153 ns | 94 | 5 |
 | Codec Decode Publish | 446 ns | 429 | 7 |
 | Codec RoundTrip Publish | 565 ns | 528 | 12 |
-| E2E QoS 0 (full round trip) | 68 µs | 956 | 34 |
-| E2E QoS 1 | 105 µs | 1,705 | 54 |
-| E2E QoS 2 | 226 µs | 2,876 | 87 |
-| E2E 64 KB payload | 226 µs | 181 KB | 36 |
-| Codec 128 KB payload encode | 103 µs | 135 KB | 24 |
+| E2E QoS 0 (full round trip) | 68 us | 956 | 34 |
+| E2E QoS 1 | 105 us | 1,705 | 54 |
+| E2E QoS 2 | 226 us | 2,876 | 87 |
+| E2E 64 KB payload | 226 us | 181 KB | 36 |
+| Codec 128 KB payload encode | 103 us | 135 KB | 24 |
 | TopicTree match (exact) | 280 ns | 160 | 2 |
 | Buffer pool Get/Put | 34 ns | 24 | 1 |
 

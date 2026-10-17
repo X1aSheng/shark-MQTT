@@ -278,14 +278,14 @@ optional; defaults are sensible for general use.
 
 ### Go runtime
 
-- **`GOMEMLIMIT`** — set a soft memory limit so the GC stays ahead of the heap
+- **`GOMEMLIMIT`** - set a soft memory limit so the GC stays ahead of the heap
   instead of reacting to it. Recommended: 80% of the container/instance RAM,
   e.g. `GOMEMLIMIT=8GiB` for a 10GiB heap budget. Improves latency
   predictability under load.
-- **`GOGC`** — the default `100` (GC when heap doubles) is a good throughput
+- **`GOGC`** - the default `100` (GC when heap doubles) is a good throughput
   choice. For lower tail latency, raise it (e.g. `200`) to GC less often and
   let `GOMEMLIMIT` bound the heap.
-- **`GOMAXPROCS`** — leave unset; Go uses all CPUs by default. For noisy
+- **`GOMAXPROCS`** - leave unset; Go uses all CPUs by default. For noisy
   neighbours in shared VMs you may cap it, but measure first.
 
 ### Broker options
@@ -300,8 +300,8 @@ optional; defaults are sensible for general use.
 
 ### Authentication
 
-- **bcrypt cost** — `StaticAuth.SetBcryptCost(N)` controls the work factor for
-  `SetHashedPassword`. The default `10` (~50–100ms CPU per login) is fine for
+- **bcrypt cost** - `StaticAuth.SetBcryptCost(N)` controls the work factor for
+  `SetHashedPassword`. The default `10` (~50-100ms CPU per login) is fine for
   moderate connection rates; lower it (e.g. `4`) for very high connect rates,
   accepting weaker hash resistance. Verification cost is embedded in the hash.
 

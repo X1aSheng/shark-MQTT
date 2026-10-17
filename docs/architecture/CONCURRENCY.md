@@ -26,7 +26,7 @@
 
 1. **`b.mu` is the top-level broker lock.** Connection registration,
    takeover, and cleanup hold `b.mu` and may acquire `b.topics.mu`,
-   `sess.mu`, or `b.receivedQoS2Mu` while holding it — never the reverse.
+   `sess.mu`, or `b.receivedQoS2Mu` while holding it - never the reverse.
 
 2. **Heavy work happens outside locks.** Session persistence
    (`Session.Save`) and message-store writes are executed before/after the
@@ -36,7 +36,7 @@
 3. **Callbacks run lock-free.** QoS engine and will callbacks
    (`republish`, `sendPubAck`, `publishWill`) are invoked after the engine
    releases its lock; they acquire broker locks in normal order. Never call a
-   broker method while holding `q.mu` (would invert `b.mu → q.mu`).
+   broker method while holding `q.mu` (would invert `b.mu -> q.mu`).
 
 4. **Session takeover is identity-checked.** `disconnect` verifies
    `cs.conn == conn` under `b.mu` before removing state, so a stale readLoop
@@ -71,14 +71,14 @@
 
 ## Deadlock audit (2026-08-31)
 
-- `b.mu → b.topics.mu` / `b.mu → sess.mu` / `b.mu → receivedQoS2Mu`: one-way,
+- `b.mu -> b.topics.mu` / `b.mu -> sess.mu` / `b.mu -> receivedQoS2Mu`: one-way,
   no cycle.
 - `TopicTree` acquires `sharedSubsMu` then `sharedLastMu`; `UnsubscribeShared`
-  holds `sharedSubsMu` and takes `sharedLastMu` — consistent order.
+  holds `sharedSubsMu` and takes `sharedLastMu` - consistent order.
 - `QoSEngine.doRetry` collects state under `q.mu`, releases, then invokes
   callbacks (rule 3).
 - `WillHandler` never takes broker locks while holding `wh.mu`; delayed-will
-  goroutines call `publishWill` (→ `publishWill` → broker) without `wh.mu`.
+  goroutines call `publishWill` (-> `publishWill` -> broker) without `wh.mu`.
 - `Session.Save` snapshots under `s.mu.RLock`, deep-copies payloads after
   releasing it (no large copy under lock).
 
@@ -96,7 +96,7 @@ connections as online. Detection layers:
 | CONNECT deadline | 10s read deadline during the handshake | Half-open connections that never send CONNECT |
 | Write-failure reap | A failed encode/write in `writePacket` or `writeLoop` closes the socket immediately, unblocking the reader | Peers that close with RST or become unreachable |
 
-Design rule: **any socket write error closes the connection** — a peer that
+Design rule: **any socket write error closes the connection** - a peer that
 cannot receive is considered dead, and lingering state (session, subscriptions,
 write queue) is torn down promptly rather than waiting for a keep-alive
 deadline.

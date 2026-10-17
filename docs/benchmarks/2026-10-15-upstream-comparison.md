@@ -10,7 +10,7 @@ the comparison.
 the upstream repository, rendered on the project site. The scenario and the test
 environment are stated on the page itself:
 
-> 测试环境：8核16G 云服务器 · 2000 并发连接 · 128 字节 payload
+> 测试环境：8核16G 云服务器 ,  2000 并发连接 ,  128 字节 payload
 > 数据来源于 bench-plugin 官方压测插件
 
 Two charts are published, both at 128-byte payload.

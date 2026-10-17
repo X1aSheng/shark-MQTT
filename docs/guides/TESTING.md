@@ -90,7 +90,7 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 四点注意事项：
 
 - **构建标签**：`store/redis/`（18 个测试 + 9 个基准）仅在 `-tags store_redis` 下编译，`store/badger/`（10 个测试）仅在 `-tags store_badger` 下编译，因此**不计入**默认口径。
-- **存储层格式测试**：`store/` 根包（8 个测试）不带构建标签，直接验证 `encoding/json` 的会话与保留消息记录布局 —— 这是 `store/badger` 与 `store/redis` 共用的持久化格式，因此无需任一后端即可回归。
+- **存储层格式测试**：`store/` 根包（8 个测试）不带构建标签，直接验证 `encoding/json` 的会话与保留消息记录布局 -- 这是 `store/badger` 与 `store/redis` 共用的持久化格式，因此无需任一后端即可回归。
 - **Windows 跳过**：`tests/bench/` 中 3 个连接 churn 基准在 Windows 下主动 `b.Skip`（见 [基准测试](#基准测试)），故本地执行数为 `72 - 3 = 69`。
 - **历史日志**：`tests/logs/` 下的历史运行日志（如 `20260806_*`）记录的是当时的运行条数口径，与上表不可直接比较。
 
@@ -98,7 +98,7 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 
 | 包 | 测试数 | 基准测试数 | 说明 |
 |----|--------|-----------|------|
-| broker/ | 237 | 0 | 核心逻辑：TopicTree、QoS 引擎、会话、遗嘱、认证、服务器、retained metrics、MQTT 5.0 属性中继与过期边界、重连重传、按协议版本门控的连接内重传、解码失败与 keepalive 超时的原因码回执、会话接管拆除（§3.1.4 确定性 DISCONNECT 0x8E）、入站 Receive Maximum 超限拆除（§3.3.4 DISCONNECT 0x93，预算取 CONNACK 广播值）、畸形主题名/过滤器的 Protocol Error 拆链（§4.7.1 / §4.13.1 DISCONNECT 0x82）、Clean Start 与 Session Expiry Interval 解耦（§3.1.2.4 / §3.1.2.11.2：按协商值留存会话、CONNACK 广播实际采用值、遗嘱延迟不再被折零）、插件钩子上下文 |
+| broker/ | 237 | 0 | 核心逻辑：TopicTree、QoS 引擎、会话、遗嘱、认证、服务器、retained metrics、MQTT 5.0 属性中继与过期边界、重连重传、按协议版本门控的连接内重传、解码失败与 keepalive 超时的原因码回执、会话接管拆除（Section 3.1.4 确定性 DISCONNECT 0x8E）、入站 Receive Maximum 超限拆除（Section 3.3.4 DISCONNECT 0x93，预算取 CONNACK 广播值）、畸形主题名/过滤器的 Protocol Error 拆链（Section 4.7.1 / Section 4.13.1 DISCONNECT 0x82）、Clean Start 与 Session Expiry Interval 解耦（Section 3.1.2.4 / Section 3.1.2.11.2：按协商值留存会话、CONNACK 广播实际采用值、遗嘱延迟不再被折零）、插件钩子上下文 |
 | protocol/ | 95 | 0 | MQTT 3.1 / 3.1.1 / 5.0 编解码、属性、报文 flags 校验（解码与编码对称）、流对齐不变量、属性出现次数与所属报文类型校验（Table 2-4，解码与编码双向）、DISCONNECT 原因码的协议版本门控、协议适配层（15 种报文；握手失败仍返回 codec，供服务端回 CONNACK） |
 | client/ | 40 | 0 | MQTT 客户端连接、发布、订阅、断开清理、QoS 2 入站 ack（PUBREC 保留 flags）与对端 reason-code 守卫 |
 | config/ | 34 | 0 | 配置解析与校验 |
@@ -122,7 +122,7 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 
 ## 代码规模
 
-和测试计数一样，这里是**唯一维护点**：架构文档请引用本节，不要内嵌这些数字 —— 内嵌必然漂移
+和测试计数一样，这里是**唯一维护点**：架构文档请引用本节，不要内嵌这些数字 -- 内嵌必然漂移
 （`PROTOCOL-ADAPTER-DESIGN.md` 与 `CLUSTER-FEASIBILITY.md` 就曾长期停留在 27,265 行）。
 
 | 指标 | 数量 |
@@ -131,9 +131,9 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 | 非测试代码行数 | 19,738 |
 | 测试代码行数 | 33,233 |
 
-主要模块的非测试行数：`broker` 8,376（25 文件）· `protocol` 3,851（13）· `store` 1,459（10）·
-`client` 916（2）· `api` 733（2）· `pkg` 466（7）· `config` 632（3）· `plugin` 902（3）·
-`cmd` 195（1）· `errs` 43（1）；其余分布在 `examples/`、`scripts/`、`tests/`。
+主要模块的非测试行数：`broker` 8,376（25 文件）,  `protocol` 3,851（13）,  `store` 1,459（10）, 
+`client` 916（2）,  `api` 733（2）,  `pkg` 466（7）,  `config` 632（3）,  `plugin` 902（3）, 
+`cmd` 195（1）,  `errs` 43（1）；其余分布在 `examples/`、`scripts/`、`tests/`。
 
 ```bash
 # 全部 .go 文件数
@@ -220,7 +220,7 @@ func TestTopicTree_Subscribe(t *testing.T) {
 | `multi_listener_test.go` | 5 | 多监听地址：数组覆盖标量、标量仍可用、Stop 关闭全部端口、绑定失败整体回滚 |
 | `graceful_shutdown_test.go` | 4 | 优雅停机：抑制遗嘱风暴、MQTT 5.0 DISCONNECT 0x8B（本轮修复回归） |
 | `mqtt31_test.go` | 4 | MQTT 3.1 连接、版本协商与字节级兼容 |
-| `will_test.go` | 8 | 遗嘱触发、优雅断开不触发、遗嘱 QoS、Will Properties 中继（§3.1.3.2 + §3.3.2.3）、Will Delay 与会话结束取先到者（§3.1.3.2.2：Clean Start 立即发布、Session Expiry 上界、Clean Start 重连丢弃旧会话时立即发布） |
+| `will_test.go` | 8 | 遗嘱触发、优雅断开不触发、遗嘱 QoS、Will Properties 中继（Section 3.1.3.2 + Section 3.3.2.3）、Will Delay 与会话结束取先到者（Section 3.1.3.2.2：Clean Start 立即发布、Session Expiry 上界、Clean Start 重连丢弃旧会话时立即发布） |
 | `disconnect_client_test.go` | 4 | 主动踢客户端：关闭 socket、抑制遗嘱、批量断开、未启动 broker |
 | `observability_test.go` | 3 | 拒绝连接的审计日志与凭据脱敏（本轮加固回归） |
 | `pubsub_test.go` | 3 | 基础发布-订阅、自发布投递、MQTT 5.0 No Local |
@@ -245,7 +245,7 @@ func TestTopicTree_Subscribe(t *testing.T) {
 | `subscription_id_test.go` | 2 | MQTT 5.0 Subscription Identifier，含重叠订阅单副本携带全部标识（[MQTT-3.3.4-4]） |
 | `write_queue_test.go` | 1 | 写队列与背压 |
 | `topic_alias_test.go` | 2 | Topic Alias 协商方向与非法值 0x94 拆链、客户端声明 0 时服务端仍可用别名 |
-| `receive_max_test.go` | 1 | CONNACK 广播服务端自身的 Receive Maximum：客户端声明更小值时服务端不得回显该值（§3.2.2.3.3），出站窗口另行取 min |
+| `receive_max_test.go` | 1 | CONNACK 广播服务端自身的 Receive Maximum：客户端声明更小值时服务端不得回显该值（Section 3.2.2.3.3），出站窗口另行取 min |
 | **合计** | **194** | |
 
 具体测试函数名可用 `go test -list '.*' ./tests/integration/...` 列出。本表**不逐条维护函数名**，
@@ -384,7 +384,7 @@ Windows 说明：`BenchmarkConnectionEstablish`、`BenchmarkMQTTConnect` 与 `Be
 ### 文档链接检查
 
 文档相对链接（根目录 `*.md` 与 `docs/**`，排除 `docs/reports/archive/` 历史快照）由
-`scripts/check_links.go` 校验——任何指向不存在文件的链接都会使检查失败：
+`scripts/check_links.go` 校验--任何指向不存在文件的链接都会使检查失败：
 
 ```bash
 go run scripts/check_links.go
@@ -403,7 +403,7 @@ go run scripts/check_links.go
 | `tests/logs/` | 测试日志（`{ts}_*.json` / `{ts}_*.log`） | `run_tests.go` 默认输出（`-logdir` 可覆盖）；已 gitignore |
 | `tests/artifacts/` | 覆盖率（`coverage*.out` / `*.html`）、profile（`*.prof`、`mem*.out`）、基准输出等过程产物 | 手动运行 `go test -coverprofile tests/artifacts/coverage.out` 等命令时的约定输出位置；已 gitignore |
 
-约定：**任何测试产生的临时/过程文件不得写入项目根目录**——根目录只保留源码、配置与文档。
+约定：**任何测试产生的临时/过程文件不得写入项目根目录**--根目录只保留源码、配置与文档。
 
 ### 脚本对应关系
 
@@ -489,13 +489,13 @@ make ci                # CI 完整流水线
 | `tests/defects/topic_filter_defect_test.go` | `TestDefectTopicFiltersMayContainEmptyLevels` | MQTT topic filter 中合法的零长度 topic level |
 | `tests/defects/windows_benchmark_test.go` | `TestDefectWindowsConnectionChurnBenchmarksDoNotPoisonSuite` | Windows 连接 churn 基准不得污染同进程后续基准 |
 | `tests/defects/windows_benchmark_test.go` | `TestDefectWindowsWillMessageBenchmarkDoesNotPoisonSuite` | Windows 遗嘱基准不得污染同进程后续基准 |
-| `tests/integration/` | `integration.TestRetainedMessageRelaysPublisherProperties` | retained 记录只保存 topic/QoS/payload，订阅时重放会丢掉全部 MQTT 5 中继属性（Payload Format / Content Type / Response Topic / Correlation Data / User Properties），违反 §3.3.2.3；经 retained 引导的请求 / 响应流程永远无法完成 |
-| `tests/integration/` | `integration.TestPublishPropertiesRelayedForQoS2` | QoS 2 发布在 PUBREL 之前暂存于 `InboundQoS2`，但暂存记录不携带属性，中转时属性被丢弃：在线可达的 §3.3.2.3 违规，直接破坏 QoS 2 的请求 / 响应流 |
+| `tests/integration/` | `integration.TestRetainedMessageRelaysPublisherProperties` | retained 记录只保存 topic/QoS/payload，订阅时重放会丢掉全部 MQTT 5 中继属性（Payload Format / Content Type / Response Topic / Correlation Data / User Properties），违反 Section 3.3.2.3；经 retained 引导的请求 / 响应流程永远无法完成 |
+| `tests/integration/` | `integration.TestPublishPropertiesRelayedForQoS2` | QoS 2 发布在 PUBREL 之前暂存于 `InboundQoS2`，但暂存记录不携带属性，中转时属性被丢弃：在线可达的 Section 3.3.2.3 违规，直接破坏 QoS 2 的请求 / 响应流 |
 | `broker/` | `broker.TestForwardedPublishProperties` | 已过期的 Message Expiry 截止时间换算剩余秒数时发生无符号回绕，会把 4294963696 秒写进 Message Expiry Interval，令消息在过期后长期存活 |
-| `broker/` | `broker.TestSessionRestoreKeepsForwardedProperties` | 会话快照 / 恢复路径既不持久化中继属性也不持久化过期截止时间，重启后重传的 PUBLISH 丢失属性，且 §3.3.2.3.3 无法执行 |
-| `broker/` | `broker.TestBroker_QoS2OutboundResendsPubRelOnReconnect` | 会话恢复路径无条件按 `StateSent` 重新登记 inflight，已过 PUBREC 的 QoS 2 投递被当作未确认 PUBLISH 重发：违反 §4.4 与 [MQTT-4.3.3-6]，握手从 PUBLISH 重新开始而非以 PUBREL 收尾（同族：`TestSessionInflightPubRelStageSurvivesRestart`、`TestRestoreSessionInflightUsesTheSavedStage`、`TestBroker_QoS2OutboundResendsPublishBeforePubRec`） |
-| `broker/` | `broker.TestBroker_QoS2PubRecReasonCodeSelectsTheHandshakeEnding` | 订户 PUBREC 的 Reason Code 被整条丢弃（`handlePubRec(clientID, p.PacketID)` 根本没传），于是每个 PUBREC 都被当成「接受」：`>= 0x80` 时仍然回 PUBREL 并继续重传，违反 [MQTT-4.3.3-4] / [MQTT-4.4.0-2]，且 Packet Identifier 与接收窗口槽位都不释放（§4.3.3） |
-| `broker/` | `broker.TestBroker_RetransmissionFollowsTheSessionVersion` | 重传循环完全不区分协议版本：MQTT 5.0 §4.4 在同一 MUST-resend 条款之外追加了禁止性规定「Clients and Servers MUST NOT resend messages at any other time」[MQTT-4.4.0-1]，而 3.1.1 §4.4 只把重投递限定为「REQUIRED」、并不禁止，于是 5.0 订户在连接内被反复重发（同族：`TestQoSEngine_Retry_FollowsProtocolVersionPolicy`、`TestQoSEngine_Retry_GateIsPerSessionAndSkipsTheGiveUp`、`TestQoSEngine_Retry_VersionClearedWithClient`、`integration.TestQoS1OutboundRetrySuppressedForMQTT5`、`integration.TestQoS1OutboundRetryResends`） |
+| `broker/` | `broker.TestSessionRestoreKeepsForwardedProperties` | 会话快照 / 恢复路径既不持久化中继属性也不持久化过期截止时间，重启后重传的 PUBLISH 丢失属性，且 Section 3.3.2.3.3 无法执行 |
+| `broker/` | `broker.TestBroker_QoS2OutboundResendsPubRelOnReconnect` | 会话恢复路径无条件按 `StateSent` 重新登记 inflight，已过 PUBREC 的 QoS 2 投递被当作未确认 PUBLISH 重发：违反 Section 4.4 与 [MQTT-4.3.3-6]，握手从 PUBLISH 重新开始而非以 PUBREL 收尾（同族：`TestSessionInflightPubRelStageSurvivesRestart`、`TestRestoreSessionInflightUsesTheSavedStage`、`TestBroker_QoS2OutboundResendsPublishBeforePubRec`） |
+| `broker/` | `broker.TestBroker_QoS2PubRecReasonCodeSelectsTheHandshakeEnding` | 订户 PUBREC 的 Reason Code 被整条丢弃（`handlePubRec(clientID, p.PacketID)` 根本没传），于是每个 PUBREC 都被当成「接受」：`>= 0x80` 时仍然回 PUBREL 并继续重传，违反 [MQTT-4.3.3-4] / [MQTT-4.4.0-2]，且 Packet Identifier 与接收窗口槽位都不释放（Section 4.3.3） |
+| `broker/` | `broker.TestBroker_RetransmissionFollowsTheSessionVersion` | 重传循环完全不区分协议版本：MQTT 5.0 Section 4.4 在同一 MUST-resend 条款之外追加了禁止性规定「Clients and Servers MUST NOT resend messages at any other time」[MQTT-4.4.0-1]，而 3.1.1 Section 4.4 只把重投递限定为「REQUIRED」、并不禁止，于是 5.0 订户在连接内被反复重发（同族：`TestQoSEngine_Retry_FollowsProtocolVersionPolicy`、`TestQoSEngine_Retry_GateIsPerSessionAndSkipsTheGiveUp`、`TestQoSEngine_Retry_VersionClearedWithClient`、`integration.TestQoS1OutboundRetrySuppressedForMQTT5`、`integration.TestQoS1OutboundRetryResends`） |
 | `client/` | `client.TestDisconnectClosesConnectionBeforeWaitingForReadLoop` | 客户端主动断开时必须先唤醒阻塞读循环，避免 `Disconnect` 卡住 |
 | `broker/` | `broker.TestQoSEngine_Retry_MaxRetriesExceededReportsError` | QoS inflight 消息达到最大重试次数被丢弃时必须发出错误回调 |
 | `broker/` | `broker.TestRepublishKeepsExpiredDeliveryThatWasAlreadySent` | 重传路径把 Message Expiry 当成**重试期**过滤器：`republish` 在截止时间已过时删掉会话记录并丢弃投递，而 [MQTT-3.3.2-5] 只在「尚未开始向订阅者转发」时才要求删除、[MQTT-4.3.3-7] 更禁止对已发出的 PUBLISH 施加过期。该丢弃同时破坏记账：会话记录没了而 QoS 引擎仍在重试同一个 packet id，下一 tick 落到入站兜底分支，向线上的**出站**投递发出一个凭空出现的 PUBREC（同族：`TestRepublishRetriesExpiredDeliveryWithoutStrayPubRec`、`TestDoDeliverStillDropsExpiryBeforeTheFirstAttempt`） |
@@ -506,10 +506,10 @@ make ci                # CI 完整流水线
 | `protocol/` | `protocol.TestDecodeRejectsInvalidFixedHeaderFlags`、`protocol.TestDecodeAcceptsDupOnQoS2ControlPackets` | 解码端保留位校验把 flags 只由 QoS / RETAIN 折叠而成，漏掉 DUP 位（`0x08`）：对端发来 nibble 为 `0b1000` 的控制报文（如 `0xC8` PINGREQ+DUP、`0x18` CONNECT+DUP、`0x48` PUBACK+DUP）会被接受，违反 [MQTT-2.2.2-1] / [MQTT-2.2.2-2]。PUBREL / SUBSCRIBE / UNSUBSCRIBE 的 DUP 位**故意不校验**并由第二个测试单独锁定：smart-mqtt 重传时会给它们置 DUP（`InflightQueue` 的 `PUB_REL_HEADER_DUP` / `SUBSCRIBE_HEADER_DUP`），收紧会断连该对端 |
 | `protocol/` | `protocol.TestEncodeRejectsInvalidFixedHeaderFlags`、`protocol.TestEncodeAcceptsSpecCompliantFixedHeaderFlags` | `Encode` 从不校验固定头 flags，是 PUBREC 缺陷逃过全部单测的根因：非法 nibble 直接上线缆，只有真实对端才会拒绝并断连。现改为与 `Decode` 对称（写出前拒绝），并把 20 处用 `QoS: 0` 构造 SUBSCRIBE / UNSUBSCRIBE / PUBREL 的测试脚手架改为规范值 |
 | `protocol/` | `protocol.TestDecodeRejectedPacketDoesNotOverConsumeTheStream` | SUBSCRIBE / UNSUBSCRIBE / PUBLISH 在读取首个报文字段（packetID、topic 长度前缀）**之后**才检查 Remaining Length 是否容得下它：RL=0 的报文会把下一个报文的字节吃掉（PUBLISH 更会用攻击者可控的 topic 长度向流里再索取最多 64 KiB），流被静默错位。`decodeSubAck` / `decodeUnsubAck` 本就有这道守卫，现补齐为全族一致的不变量：被拒报文最多只消费自己的 Remaining Length |
-| `protocol/` | `protocol.TestDecodeRejectsDuplicateAtMostOnceProperty`、`protocol.TestDecodeAcceptsRepeatedSubscriptionIdentifierOnlyInPublish`、`protocol.TestDecodeAcceptsRepeatedUserProperty` | `decodeProperties` 不跟踪属性出现次数，重复的属性静默「后者胜出」，而规范为每处属性定义写明 "It is a Protocol Error to include the X more than once"。唯一有实际后果的是 SUBSCRIBE 里的 Subscription Identifier：`decodeSubscribe` 把包级标识符盖到每一个 Topic Filter 上，客户端按 ID=1 标注的过滤器会静默继承 ID=2 的语义（§3.8.2.1.2 明令禁止）。可重复性取决于报文类型（PUBLISH 中的多标识符合法，§3.3.2.3.8），故按 (报文类型, 属性 ID) 判定并返回新的 `ErrProtocolError`（0x82） |
-| `protocol/` | `protocol.TestPropertyLegalityMatchesTable24`、`protocol.TestDecodeRejectsPropertyNotValidForPacketType`、`protocol.TestDecodeRoundTripsServerReference` | 解码器只认属性 ID 的数据类型、从不校验它是否属于该报文类型，违反 §2.2.2.2（此错误是 0x81 Malformed Packet，与重复属性的 0x82 分属不同 reason code）。该检查当场抓出 broker 把 CONNECT 专有的 `Request Response Information`（0x19）写进 CONNACK：合规客户端必须判其为 Malformed Packet 并断连，而本地单测因共用同一个宽松解码器而全绿。另补上 `Server Reference`（0x1C，CONNACK / DISCONNECT）—— 它在常量、类型表、结构、解码 switch 四处全缺，使重定向流程整包解码失败 |
-| `tests/integration/` | `integration.TestRequestResponseInformation` | 该测试原先断言 CONNACK 回显 `Request Response Information`（0x19），而 Table 2-4 把 0x19 归为 CONNECT 专有 —— 等于把违规行为钉成了预期契约。现改为断言合规契约：CONNACK 带 `Response Information`（0x1A）且不带 0x19 |
-| `protocol/` | `protocol.TestEncodeLocusMatchesTable24`、`protocol.TestPropertyProbesCoverPropertyLoci`、`protocol.TestEncodeRejectsConnectOnlyPropertyOnConnAck` | 编码端从不校验属性归属，是上一行 0x19 缺陷逃过全部单测的根因：`encodeProperties` 只写调用方给的字段，只有真实对端才会拒绝。现与解码端共用同一张 `propertyLoci` 表，在写出前按 `locus` 校验并返回 `ErrMalformedPacket`（与解码端同分类，§2.2.2.2），使两侧对称；`TestPropertyProbesCoverPropertyLoci` 锁定探针表与 Table 2-4 成员完全一致，防止新增属性静默绕过校验。顺带修正 `TestPropertySectionVersionGatedAcrossPackets` 的 fixture —— 它原先拿 PUBLISH 专有的 Content Type 当全部 9 种报文的属性，等于把非法组合钉成了脚手架 |
+| `protocol/` | `protocol.TestDecodeRejectsDuplicateAtMostOnceProperty`、`protocol.TestDecodeAcceptsRepeatedSubscriptionIdentifierOnlyInPublish`、`protocol.TestDecodeAcceptsRepeatedUserProperty` | `decodeProperties` 不跟踪属性出现次数，重复的属性静默「后者胜出」，而规范为每处属性定义写明 "It is a Protocol Error to include the X more than once"。唯一有实际后果的是 SUBSCRIBE 里的 Subscription Identifier：`decodeSubscribe` 把包级标识符盖到每一个 Topic Filter 上，客户端按 ID=1 标注的过滤器会静默继承 ID=2 的语义（Section 3.8.2.1.2 明令禁止）。可重复性取决于报文类型（PUBLISH 中的多标识符合法，Section 3.3.2.3.8），故按 (报文类型, 属性 ID) 判定并返回新的 `ErrProtocolError`（0x82） |
+| `protocol/` | `protocol.TestPropertyLegalityMatchesTable24`、`protocol.TestDecodeRejectsPropertyNotValidForPacketType`、`protocol.TestDecodeRoundTripsServerReference` | 解码器只认属性 ID 的数据类型、从不校验它是否属于该报文类型，违反 Section 2.2.2.2（此错误是 0x81 Malformed Packet，与重复属性的 0x82 分属不同 reason code）。该检查当场抓出 broker 把 CONNECT 专有的 `Request Response Information`（0x19）写进 CONNACK：合规客户端必须判其为 Malformed Packet 并断连，而本地单测因共用同一个宽松解码器而全绿。另补上 `Server Reference`（0x1C，CONNACK / DISCONNECT）-- 它在常量、类型表、结构、解码 switch 四处全缺，使重定向流程整包解码失败 |
+| `tests/integration/` | `integration.TestRequestResponseInformation` | 该测试原先断言 CONNACK 回显 `Request Response Information`（0x19），而 Table 2-4 把 0x19 归为 CONNECT 专有 -- 等于把违规行为钉成了预期契约。现改为断言合规契约：CONNACK 带 `Response Information`（0x1A）且不带 0x19 |
+| `protocol/` | `protocol.TestEncodeLocusMatchesTable24`、`protocol.TestPropertyProbesCoverPropertyLoci`、`protocol.TestEncodeRejectsConnectOnlyPropertyOnConnAck` | 编码端从不校验属性归属，是上一行 0x19 缺陷逃过全部单测的根因：`encodeProperties` 只写调用方给的字段，只有真实对端才会拒绝。现与解码端共用同一张 `propertyLoci` 表，在写出前按 `locus` 校验并返回 `ErrMalformedPacket`（与解码端同分类，Section 2.2.2.2），使两侧对称；`TestPropertyProbesCoverPropertyLoci` 锁定探针表与 Table 2-4 成员完全一致，防止新增属性静默绕过校验。顺带修正 `TestPropertySectionVersionGatedAcrossPackets` 的 fixture -- 它原先拿 PUBLISH 专有的 Content Type 当全部 9 种报文的属性，等于把非法组合钉成了脚手架 |
 | `tests/integration/` | `integration.TestSecondConnectReceivesDisconnectBeforeClose`、`integration.TestUnknownTopicAliasReceivesDisconnectBeforeClose` | 服务端 DISCONNECT 与随后的拆链互相竞争：两条路径都是先 `writePacket` 把报文投进写队列、再立刻关连接（`closeProtocolViolation` 直接 `cs.conn.Close()`，二次 CONNECT 走 `abnormalDisconnect` 关闭 `cs.stopWrites`），而写循环的 `select` 在「队列里有报文」与「拆链信号已就绪」之间随机选择，报文只有约一半概率真正上线缆。探针实测：把 `sendDisconnectBeforeClose` 换回 `writePacket` 后 `-count=30` 出现 59 次 `expected a DISCONNECT 0x82, got EOF`。现由写协程同步交接（`clientState.syncWrites` + `writeFinal`），确认写完才拆链，且不引入新锁、不让报文与队列中的其他报文在线缆上交错 |
 
 运行方式：

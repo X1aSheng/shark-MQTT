@@ -192,8 +192,8 @@ k3s). Four defects and three Helm-chart defects surfaced that no local test
 could have caught.
 
 - **The binary started with no authenticator at all.** It printed a hint and
-  carried on, meaning any deployment that forgot `auth_file` — or mistyped the
-  key — accepted every client, with a line of stdout as the only symptom. It now
+  carried on, meaning any deployment that forgot `auth_file` - or mistyped the
+  key - accepted every client, with a line of stdout as the only symptom. It now
   fails closed with exit code 1. Every deployment asset in this repo passes
   `-allow-all` explicitly, so nothing broke.
 - **`-auth-file ""` could not clear the config value.** `if authFile != ""`
@@ -226,8 +226,8 @@ k3s). Four defects and three Helm-chart defects surfaced that no local test
 could have caught.
 
 - **The binary started with no authenticator at all.** It printed a hint and
-  carried on, meaning any deployment that forgot `auth_file` — or mistyped the
-  key — accepted every client, with a line of stdout as the only symptom. It now
+  carried on, meaning any deployment that forgot `auth_file` - or mistyped the
+  key - accepted every client, with a line of stdout as the only symptom. It now
   fails closed with exit code 1. Every deployment asset in this repo passes
   `-allow-all` explicitly, so nothing broke.
 - **`-auth-file ""` could not clear the config value.** `if authFile != ""`
@@ -355,16 +355,16 @@ host.
   connection ending no longer cancelled that work, and a shutdown cancelling
   `b.ctx` could skip an authorization check rather than deny it. All sixteen now
   take `ctx` as their first parameter and the body uses it.
-- **Not a blind replacement — four call sites keep `b.ctx` on purpose**, because
+- **Not a blind replacement - four call sites keep `b.ctx` on purpose**, because
   their work outlives the connection: the will publish callback (fired from the
   will handler's own timer), the QoS retry `republish` (driven by the QoS
   engine's scheduler), `$SYS` publishing (a background loop), and the connection
   teardown writes (below).
 - **`disconnect` takes a context, and teardown writes deliberately use a
-  broker-scoped one.** Session persistence must survive the connection's death —
-  that is the entire point of Session Expiry Interval > 0 — so passing the dying
+  broker-scoped one.** Session persistence must survive the connection's death -
+  that is the entire point of Session Expiry Interval > 0 - so passing the dying
   connection's context there would abort the store call and lose exactly the
-  state MQTT 5.0 §3.1.2.11.2 requires the server to keep. The new `teardownCtx`
+  state MQTT 5.0 Section 3.1.2.11.2 requires the server to keep. The new `teardownCtx`
   derives from the broker lifetime instead, so a broker-wide shutdown still cuts
   these writes off.
 - **The scoping rule is documented at the entry point.** `HandleConnection`'s doc
@@ -372,7 +372,7 @@ host.
   scope, and why conflating them loses session state.
 - **`DisconnectClient` / `DisconnectAllClients` added** (also on the `api.Core`
   interface). Management code, quota enforcers and test harnesses previously had
-  no way to evict a client — the teardown helpers were unexported. They behave
+  no way to evict a client - the teardown helpers were unexported. They behave
   as a server-initiated disconnect: the Will is suppressed (an operator did not
   observe a failure) and session state is kept per the negotiated expiry. Four
   integration tests cover eviction, will suppression, the bulk variant, and
@@ -385,7 +385,7 @@ host.
 ### Idiomatic Go cleanups (2026-10-15)
 
 - `StaticAuth.CanPublish` / `CanSubscribe` use `slices.ContainsFunc` instead of
-  hand-written `for ... if ... return true` loops — the intent is a search, not a
+  hand-written `for ... if ... return true` loops - the intent is a search, not a
   transformation.
 - `unsubscribeSessionTopics` uses `slices.Collect(maps.Keys(...))` instead of a
   manual preallocated append loop.
@@ -528,7 +528,7 @@ Full record with per-commit details, regression tests and upgrade notes:
   0` really means unlimited.
 - **Will trigger ownership:** a takeover's superseded connection can no
   longer fire the new connection's will.
-- **Toolchain:** upgrade Go to ≥ 1.26.6 to address standard-library
+- **Toolchain:** upgrade Go to >= 1.26.6 to address standard-library
   vulnerabilities reported by govulncheck (11 reachable CVEs in go1.26.1).
 
 ### Reliability: zombie-connection handling (2026-08-31)
@@ -542,8 +542,8 @@ Full record with per-commit details, regression tests and upgrade notes:
   bounding how long a peer that disables the MQTT keep-alive (KeepAlive=0)
   stays registered as online.
 - **Keep-alive timeouts are observable:** the read loop now distinguishes an
-  MQTT keep-alive expiry (read deadline exceeded) — logged at info and counted
-  via `rejections{reason="keepalive_timeout"}` — from other read errors.
+  MQTT keep-alive expiry (read deadline exceeded) - logged at info and counted
+  via `rejections{reason="keepalive_timeout"}` - from other read errors.
 - **Test fix:** `TestBroker_SysStatusTopics` now uses a well-formed SUBSCRIBE
   (PacketID) and starts its reader before subscribing; previously a malformed
   SUBACK silently masked both issues.
@@ -551,7 +551,7 @@ Full record with per-commit details, regression tests and upgrade notes:
 ### Design / reliability (2026-08-31)
 
 - **Deduped system-topic matcher:** `matchSysProtected` is now the single MQTT
-  §4.7.2 system-topic protection implementation shared by the topic tree,
+  Section 4.7.2 system-topic protection implementation shared by the topic tree,
   session matching, and ACL checks (the duplicated
   `matchWithSysProtection` in auth.go was removed), eliminating a correctness
   drift risk.
@@ -569,7 +569,7 @@ Full record with per-commit details, regression tests and upgrade notes:
   `Broker.setKeepAliveDeadline`.
 - **Store decoupled from protocol:** `store/memory` now uses `strings.Split`
   instead of `protocol.SplitTopic` (identical semantics for MQTT topic levels),
-  removing the storage→protocol dependency.
+  removing the storage->protocol dependency.
 - **Metrics interface cleaned:** removed six never-called methods
   (`IncInflight`, `DecInflight`, `DecInflightBatch`, `IncInflightDropped`,
   `IncRetries`, `SetOfflineSessions`) and their never-populated Prometheus
@@ -596,7 +596,7 @@ Full record with per-commit details, regression tests and upgrade notes:
   per-connection "generation" context (`connCtx`/`connCancel`/`connDone`)
   instead of a shared client-wide context and WaitGroup. A stale readLoop or
   keep-alive loop shutting down after a takeover (same client ID) previously
-  cancelled the shared context — killing the brand-new connection's pending
+  cancelled the shared context - killing the brand-new connection's pending
   operations. Now each generation's goroutines hold their own context as
   parameters: an old connection's shutdown can never cancel or tear down a
   newer one, and `Disconnect` waits on exactly its own generation's done
@@ -604,12 +604,12 @@ Full record with per-commit details, regression tests and upgrade notes:
   snapshot. Regression test:
   `TestClientConnectTOCTOU_StaleReadLoopDoesNotKillNewConnection` (5 takeover
   rounds with QoS 1 round-trips). Race-clean.
-- **Session Expiry Interval 0 honored (MQTT 5.0 §3.1.2.11.2):** an explicit
+- **Session Expiry Interval 0 honored (MQTT 5.0 Section 3.1.2.11.2):** an explicit
   `SessionExpiryInterval=0` in CONNECT previously fell through to the
   server-configured maximum (24h default), so "end the session when the
   connection closes" was silently ignored. The CONNACK now reports 0 and the
   disconnect path deletes any stored session/messages instead of saving.
-  DISCONNECT may now also update the interval (§3.14.2.2.2, capped at the
+  DISCONNECT may now also update the interval (Section 3.14.2.2.2, capped at the
   server maximum; 0 ends the session immediately). Absent property still
   defaults to the server maximum. Tests:
   `TestSessionExpiryZero_EndsSessionOnDisconnect`,
@@ -620,7 +620,7 @@ Full record with per-commit details, regression tests and upgrade notes:
 
 - **Max QoS on overlapping subscriptions:** a client with multiple matching
   filters is now delivered once at the **maximum** QoS of the matching
-  subscriptions (MQTT 3.1.1 §3.3.5 / 5.0 §3.3.5). Previously the delivered
+  subscriptions (MQTT 3.1.1 Section 3.3.5 / 5.0 Section 3.3.5). Previously the delivered
   QoS was whichever filter the randomized map/trie iteration hit first, so a
   QoS 1 publish could arrive as QoS 0 or QoS 1 nondeterministically. Fixed in
   `TopicTree.Match` (dedup map now tracks QoS, `addSubscriber` keeps the max),
@@ -630,14 +630,14 @@ Full record with per-commit details, regression tests and upgrade notes:
   `TestSessionMatchesSubscriptionMaxQoS`,
   `TestOverlappingSubscriptionsMaxQoS`.
 - **SubIDAvailable=1 advertised:** the CONNACK now advertises Subscription
-  Identifier support (MQTT 5.0 §3.8.2.1.2) — the broker already parsed,
+  Identifier support (MQTT 5.0 Section 3.8.2.1.2) - the broker already parsed,
   stored, and echoed the SUBSCRIBE packet-level SubscriptionIdentifier in
   delivered PUBLISH packets, so the previous SubIDAvailable=0 claim was
   inconsistent with its behavior. New end-to-end test
   (`TestSubscriptionIdentifierAdvertisedAndEchoed`).
 - **Protocol fuzz tests (L-008):** `FuzzDecodeNeverPanics` (arbitrary bytes
   into the codec decoder) and `FuzzPublishRoundTrip` (structured
-  encode→decode round-trip) added to the protocol package. 8.4M executions
+  encode->decode round-trip) added to the protocol package. 8.4M executions
   across both fuzzers with zero crashes/panics.
 
 ### Performance (2026-08-29)
@@ -651,15 +651,15 @@ Full record with per-commit details, regression tests and upgrade notes:
   pooled 4 KB buffer (the codec's buffer pool) instead of a fresh
   `bytes.Buffer`, removing the per-packet assembly allocation and most buffer
   growth. Measured on Ryzen 7 8845HS: `BenchmarkCodec_EncodePublish`
-  433→144 ns/op (422→94 B/op); `DecodePublish` 489→372 ns/op (454→430 B/op,
-  8→7 allocs); `RoundTripPublish` 908→665 ns/op (882→528 B/op, 14→12 allocs);
-  E2E QoS 0 71.6→62.2 µs/op (36→34 allocs, 1089→959 B/op); E2E QoS 1/2
-  −4/−8 allocs per message.
+  433->144 ns/op (422->94 B/op); `DecodePublish` 489->372 ns/op (454->430 B/op,
+  8->7 allocs); `RoundTripPublish` 908->665 ns/op (882->528 B/op, 14->12 allocs);
+  E2E QoS 0 71.6->62.2 us/op (36->34 allocs, 1089->959 B/op); E2E QoS 1/2
+  -4/-8 allocs per message.
 - **TopicTree.Match dedup map pooled:** the per-call subscriber-dedup map is
   now reused via `sync.Pool` (maps that grew past 64 entries are dropped so
   the pool does not pin large heaps), removing one allocation per published
-  message on the match path. `BenchmarkTopicTree_Match_Exact` 370→264 ns/op
-  (−29%) with unchanged 2 allocs/op.
+  message on the match path. `BenchmarkTopicTree_Match_Exact` 370->264 ns/op
+  (-29%) with unchanged 2 allocs/op.
 - **Tiered buffer pool:** `pkg/bufferpool` now uses size tiers
   (512B/1KB/2KB/16KB/32KB/64KB/256KB) instead of a single 4KB bucket.
   `Get(size)` picks the smallest bucket that fits, so small messages no longer
@@ -667,9 +667,9 @@ Full record with per-commit details, regression tests and upgrade notes:
   from 4KB. `encodePublish` sizes its request from the body estimate;
   `readString`/`decodePublish` request exactly the byte count they need.
   Measured on Ryzen 7 8845HS: `BenchmarkCodec_EncodeLargePayload` 96 B/op
-  (5 allocs); `BenchmarkPayload_128KB` 262→122 µs/op (551→136 KB/op);
-  `BenchmarkE2E_Payload_64KB` 469→202 µs/op (431→180 KB/op); `DecodePublish`
-  372→357 ns/op; `EncodePublishQos1` 244→183 ns/op.
+  (5 allocs); `BenchmarkPayload_128KB` 262->122 us/op (551->136 KB/op);
+  `BenchmarkE2E_Payload_64KB` 469->202 us/op (431->180 KB/op); `DecodePublish`
+  372->357 ns/op; `EncodePublishQos1` 244->183 ns/op.
 
 ### Storage (2026-08-29)
 
@@ -677,7 +677,7 @@ Full record with per-commit details, regression tests and upgrade notes:
   store derives the key TTL from `SessionData.ExpiryTime` (absolute) or
   `ExpiryInterval` (relative) instead of a fixed default, so Redis can no
   longer delete a session before the broker's negotiated Session Expiry
-  Interval — which silently turned a reconnect into a fresh session
+  Interval - which silently turned a reconnect into a fresh session
   (SessionPresent=0). The message store likewise keeps a queued message alive
   at least until its Message Expiry deadline, leaving expiry decisions to the
   broker's delivery path. Regression tests
@@ -713,15 +713,15 @@ Full record with per-commit details, regression tests and upgrade notes:
   `store/redis` now build only under `-tags=store_badger,store_redis`, so the
   default build no longer compiles them (faster builds/CI). `make test-stores`
   and a CI step run their tests under the tags.
-- **Dependency upgrades:** prometheus 1.23→1.24, badger 4.7→4.9,
-  redis 9.7→9.22, x/crypto 0.53→0.54, plus transitive deps. `govulncheck`
+- **Dependency upgrades:** prometheus 1.23->1.24, badger 4.7->4.9,
+  redis 9.7->9.22, x/crypto 0.53->0.54, plus transitive deps. `govulncheck`
   reports the 8 standard-library advisories are fixed by **Go 1.26.2+** (the
   local toolchain is 1.26.1); imported-package advisories are unreachable.
 - **Configurable bcrypt cost:** `StaticAuth.SetBcryptCost(N)` sets the work
   factor for `SetHashedPassword` (default 10); lower costs trade weaker hash
   resistance for faster logins at high connection rates. Verification always
   uses the cost embedded in the stored hash.
-- **QoS 2 path (evaluated):** the remaining allocations are structural — the
+- **QoS 2 path (evaluated):** the remaining allocations are structural - the
   QoS engine/session inflight records and ack packet bodies are escaping
   references that cannot be safely pooled. Attempting to pool the fixed-header
   write buffer measured *worse* (the compiler already stack-allocates it) and
@@ -730,14 +730,14 @@ Full record with per-commit details, regression tests and upgrade notes:
 
 ### Protocol gaps (2026-08-06)
 
-- **Enhanced authentication (MQTT 5.0 §4.12):** `EnhancedAuthenticator` interface
+- **Enhanced authentication (MQTT 5.0 Section 4.12):** `EnhancedAuthenticator` interface
   + `WithEnhancedAuth` option. A CONNECT carrying an `AuthenticationMethod` now
-  runs the enhanced auth exchange (AUTH packets: 0x18 continue → 0x00 success)
+  runs the enhanced auth exchange (AUTH packets: 0x18 continue -> 0x00 success)
   instead of being rejected; an unregistered method returns CONNACK 0x8C; a
   failed exchange ends with a DISCONNECT (AUTH packets only carry
   0x00/0x18/0x19). Re-authentication during a session is handled in the read
   loop.
-- **Message Expiry Interval fully enforced (MQTT 5.0 §3.3.2.3.2):** an absolute
+- **Message Expiry Interval fully enforced (MQTT 5.0 Section 3.3.2.3.2):** an absolute
   expiry deadline is tracked per message and carried through the offline message
   queue, the flow-control buffer, and the inflight retry. Expired queued
   messages are dropped on reconnect instead of being delivered late; inflight
@@ -747,7 +747,7 @@ Full record with per-commit details, regression tests and upgrade notes:
   MQTT-over-WebSocket over TLS using the broker's TLS certificate (requires
   `tls_enabled`); plain `ws_listen_addr` and `wss_listen_addr` can run
   simultaneously. `WSSAddr()` exposed on the api/server.
-- **Request Response Information (MQTT 5.0 §3.2.2.3.8/.9):** the CONNACK now
+- **Request Response Information (MQTT 5.0 Section 3.2.2.3.8/.9):** the CONNACK now
   honors the client's RequestResponseInformation: when requested it advertises
   RequestResponseInfo=1 and returns the client ID as the Response Information
   base; otherwise neither is sent.
@@ -772,20 +772,20 @@ Details in `docs/reports/PROJECT-REVIEW-260806-143527.md`.
 - **R2 fixed:** `decodePublish` no longer allocates a transient body buffer plus
   a payload copy. MQTT 3.1.1 payloads are read straight into the packet-owned
   buffer (no copy); MQTT 5.0 bodies use the buffer pool for the intermediate
-  buffer. `BenchmarkCodec_DecodePublish`: 10→8 allocs/op, 758→455 B/op,
-  454→328 ns/op; `RoundTripPublish`: 16→14 allocs.
+  buffer. `BenchmarkCodec_DecodePublish`: 10->8 allocs/op, 758->455 B/op,
+  454->328 ns/op; `RoundTripPublish`: 16->14 allocs.
 - **R7 fixed:** shared-subscription round-robin is now deterministic and stays
   fair across membership changes. Members are ordered stably (previously the
   selection ran over a map-iteration-randomized slice with `counter % len`, so
   it was not a real round-robin and skewed when a member left/went offline).
   Selection now tracks the last-selected client per share and picks the next
   member after it, so no member is double-selected or starved by a change.
-- **R3 (evaluated):** `TopicTree.Match` allocs reduced 3→2/op by pre-sizing the
+- **R3 (evaluated):** `TopicTree.Match` allocs reduced 3->2/op by pre-sizing the
   results slice for the common fanout case; pooling the dedup map and replacing
   the trie with a bitmap/bloom index were measured to give no further benefit at
   this scale (the report already judged the trie sufficient for normal load).
 - **R4 fixed:** a `nometrics` build tag drops the Prometheus metrics backend
-  from the binary — **11.5 MB → 7.0 MB (-37%)** (`make build-minimal`). The
+  from the binary - **11.5 MB -> 7.0 MB (-37%)** (`make build-minimal`). The
   default build is unchanged and still serves `/metrics`; the minimal build uses
   a no-op metrics backend. Note: badger/redis were *not* actually linked into
   the broker binary (only go.mod modules for the opt-in store packages); the

@@ -136,7 +136,7 @@ deploy/k8s/
 |   +-- kustomization.yaml
 |   +-- namespace.yaml         # shark-mqtt namespace
 |   +-- configmap.yaml         # broker configuration
-|   +-- deployment.yaml        # replicas: 2, health probes on :18999
+|   +-- deployment.yaml        # replicas: 1, health probes on :18999
 |   +-- service.yaml           # ClusterIP (MQTT + health ports)
 +-- infra/
     +-- prometheus/
@@ -170,7 +170,7 @@ curl http://localhost:18999/healthz
 ### Delete
 
 ```bash
-kubectl delete -k k8s/base/
+kubectl delete -k deploy/k8s/app/
 # Or: make k8s-delete
 ```
 
@@ -323,11 +323,11 @@ stream {
 ### Monitoring
 
 Recommended metrics to monitor:
-- `mqtt_connections_active`
-- `mqtt_messages_published_total`
+- `shark_mqtt_connections_total`
+- `shark_mqtt_messages_published_total`
 - `mqtt_messages_delivered_total`
 - `mqtt_messages_dropped_total`
-- `mqtt_inflight_count`
+- `shark_mqtt_qos_inflight`
 - `mqtt_session_count`
 
 ---

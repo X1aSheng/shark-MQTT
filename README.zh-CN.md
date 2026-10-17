@@ -7,28 +7,28 @@
 Shark-MQTT 是一个使用 Go 编写的高性能 MQTT 代理（Broker），完整实现 **MQTT 3.1.1 与
 MQTT 5.0** 协议，为可预测的高负载行为而设计：
 
-- **零外部依赖即可运行** —— 默认内存存储；Redis 与 BadgerDB 为可选后端，通过构建标签
+- **零外部依赖即可运行** -- 默认内存存储；Redis 与 BadgerDB 为可选后端，通过构建标签
   编译启用。
-- **并发有界** —— 所有队列与缓冲均有硬上限（写队列、流控缓冲、inflight、保留消息数），
+- **并发有界** -- 所有队列与缓冲均有硬上限（写队列、流控缓冲、inflight、保留消息数），
   发布热路径经过分配优化（编解码池化、分档缓冲池）。
-- **死链快速回收** —— MQTT 保活期限、可配置的 OS TCP 保活、写失败即断开，避免僵尸连接
+- **死链快速回收** -- MQTT 保活期限、可配置的 OS TCP 保活、写失败即断开，避免僵尸连接
   长期被计为"在线"。
-- **可插拔、可观测** —— 认证/授权链、钩子式插件、自定义存储与指标、结构化日志、
+- **可插拔、可观测** -- 认证/授权链、钩子式插件、自定义存储与指标、结构化日志、
   Prometheus 指标与健康/就绪探针。
 
-在 AMD Ryzen 7 8845HS 上，端到端 QoS 0 往返约 **68 µs/条**（34 次分配）；128 KB 负载编码
-约 **103 µs**（每条分配 135 KB）。
+在 AMD Ryzen 7 8845HS 上，端到端 QoS 0 往返约 **68 us/条**（34 次分配）；128 KB 负载编码
+约 **103 us**（每条分配 135 KB）。
 
 ## 特性
 
 **协议（MQTT 3.1.1 与 5.0）**
 - 全部 15 种报文类型与完整属性编解码
-- 增强认证（§4.12）、主题别名、消息/会话过期、RequestResponseInformation、
+- 增强认证（Section 4.12）、主题别名、消息/会话过期、RequestResponseInformation、
   ReceiveMaximum 流控、共享订阅、符合规范的 `$SYS` 主题保护
 
 **QoS 与投递**
 - QoS 0/1/2 状态机，自动重试与 inflight 跟踪
-- 重叠订阅按**最大**匹配 QoS 投递一次（§3.3.5）
+- 重叠订阅按**最大**匹配 QoS 投递一次（Section 3.3.5）
 - 持久会话离线消息队列；消息过期在队列、流控缓冲与重试路径全程生效
 
 **会话**
@@ -59,13 +59,13 @@ MQTT 5.0** 协议，为可预测的高负载行为而设计：
 ## 架构
 
 ```
-cmd（CLI）→ api（公共门面 + 健康服务）
-                 └─ broker：MQTTServer（TCP/TLS/WS）+ Broker
-                      ├─ TopicTree（通配符匹配、$SYS 保护）
-                      ├─ QoSEngine（重试 + inflight）
-                      ├─ WillHandler（延迟遗嘱）
-                      └─ Session Manager（持久化、接管）
-                 ↓        ↓        ↓
+cmd（CLI）-> api（公共门面 + 健康服务）
+                 +- broker：MQTTServer（TCP/TLS/WS）+ Broker
+                      +- TopicTree（通配符匹配、$SYS 保护）
+                      +- QoSEngine（重试 + inflight）
+                      +- WillHandler（延迟遗嘱）
+                      +- Session Manager（持久化、接管）
+                 v        v        v
            protocol/  store/   pkg/
            （编解码）   （memory/ （logger/
                       redis/   metrics/
@@ -82,7 +82,7 @@ cmd（CLI）→ api（公共门面 + 健康服务）
 | `broker/` | 核心：服务端、Broker、TopicTree、QoSEngine、WillHandler、会话、认证 |
 | `protocol/` | MQTT 3.1.1 & 5.0 编解码（15 种报文、属性） |
 | `store/` | 存储接口 + memory（默认）；redis/badger 位于构建标签之后 |
-| `client/` | MQTT 3.1.1/5.0 客户端 |
+| `client/` | MQTT 3.1.1 客户端（5.0 支持在内核侧） |
 | `plugin/` `config/` `errs/` | 插件系统；配置；错误哨兵 |
 | `pkg/` | logger、metrics、分档缓冲池 |
 | `tests/` | integration/、bench/、defects/ + 日志与产物（gitignored） |
@@ -111,7 +111,7 @@ defer b.Stop()
 > broker 默认**拒绝一切连接**（deny-all）；未显式配置认证器（或未加 `-allow-all`）时，
 > 连接会被拒绝。
 
-更多：[示例](examples/) · [配置](docs/guides/CONFIGURATION.md) ·
+更多：[示例](examples/) ,  [配置](docs/guides/CONFIGURATION.md) , 
 [Docker 与 K8s](docs/architecture/DEPLOY.md)
 
 ## 性能
@@ -123,11 +123,11 @@ defer b.Stop()
 | 编解码 Encode Publish | 153 ns | 94 | 5 |
 | 编解码 Decode Publish | 446 ns | 429 | 7 |
 | 编解码 RoundTrip Publish | 565 ns | 528 | 12 |
-| E2E QoS 0（完整往返） | 68 µs | 956 | 34 |
-| E2E QoS 1 | 105 µs | 1,705 | 54 |
-| E2E QoS 2 | 226 µs | 2,876 | 87 |
-| E2E 64 KB 负载 | 226 µs | 181 KB | 36 |
-| 编解码 128 KB 负载 | 103 µs | 135 KB | 24 |
+| E2E QoS 0（完整往返） | 68 us | 956 | 34 |
+| E2E QoS 1 | 105 us | 1,705 | 54 |
+| E2E QoS 2 | 226 us | 2,876 | 87 |
+| E2E 64 KB 负载 | 226 us | 181 KB | 36 |
+| 编解码 128 KB 负载 | 103 us | 135 KB | 24 |
 | TopicTree 匹配（精确） | 280 ns | 160 | 2 |
 | 缓冲池 Get/Put | 34 ns | 24 | 1 |
 
@@ -140,7 +140,7 @@ defer b.Stop()
 | 单元测试（含缺陷回归） | 533 | 通过 |
 | 集成测试（端到端，含部署校验） | 194 | 通过 |
 | 基准 | 72 | 通过 |
-| 竞态检测（全量） | — | 干净 |
+| 竞态检测（全量） | - | 干净 |
 | 协议 fuzz（2 个 fuzzer） | 840 万+ 次执行 | 无崩溃 |
 
 数量口径为**声明的测试/基准函数个数**，可用 `go test -list '.*' <packages> | grep -c '^Test'` 复现。

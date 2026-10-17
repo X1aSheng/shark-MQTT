@@ -12,11 +12,11 @@
 | 维度                            | 结论                                                                                                                                                                                                                                                                                |
 | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **MQTT 协议内核**               | shark-mqtt **已基本对齐，局部超越**（协议适配层抽象、MQTT 3.1 完整语义、AUTH 报文与重认证、fuzz、-race）                                                                                                                                                                            |
-| **单机 Broker 语义**            | QoS 0/1/2、持久会话、会话过期、接管、遗嘱（含延迟）、保留、共享订阅、主题别名、流控、$SYS —— 均已实现，**无实质缺口**                                                                                                                                                               |
+| **单机 Broker 语义**            | QoS 0/1/2、持久会话、会话过期、接管、遗嘱（含延迟）、保留、共享订阅、主题别名、流控、$SYS -- 均已实现，**无实质缺口**                                                                                                                                                               |
 | **平台化能力（主要差距）**      | 插件体系深度、HTTP 管理面、集群、数据出口 4 项为**结构性缺失**                                                                                                                                                                                                                      |
 | **优先级分布**                  | P0 结构性 4 项 / P1 功能 9 项 / P2 次要 8 项                                                                                                                                                                                                                                        |
-| **最危险的一项**                | `deploy/k8s/` 曾默认给出多副本模板（`deploy/k8s/app/deployment.yaml` `replicas: 2`、`hpa.yaml` `minReplicas: 2`、Helm `values-prod.yaml` `replicaCount: 3`），但节点间**零通信**——多副本 ≠ 集群，会导致漏投 / 重复投 / 保留消息分裂。**已修正默认值并补告警**（commit `f229539dd`） |
-| **本轮已修复（合规 + 健壮性）** | Retain As Published 投递（`be8021a91`）· 优雅停机遗嘱风暴 + DISCONNECT 0x8B（`b1b011794`）· k8s 多副本告警（`f229539dd`）· 拒绝连接审计日志 + 指标标签基数收敛（`ebe4aa52d`）                                                                                                       |
+| **最危险的一项**                | `deploy/k8s/` 曾默认给出多副本模板（`deploy/k8s/app/deployment.yaml` `replicas: 2`、`hpa.yaml` `minReplicas: 2`、Helm `values-prod.yaml` `replicaCount: 3`），但节点间**零通信**--多副本 != 集群，会导致漏投 / 重复投 / 保留消息分裂。**已修正默认值并补告警**（commit `f229539dd`） |
+| **本轮已修复（合规 + 健壮性）** | Retain As Published 投递（`be8021a91`）,  优雅停机遗嘱风暴 + DISCONNECT 0x8B（`b1b011794`）,  k8s 多副本告警（`f229539dd`）,  拒绝连接审计日志 + 指标标签基数收敛（`ebe4aa52d`）                                                                                                       |
 
 > 修订说明：第 3.4 节原有的两条"真缺口"（Maximum QoS 通告、Request Problem Information）
 > 经复核为**误判**，已在该节标注并给出反证；同时把本轮已修复项就地标记。其余结论不变。
@@ -51,7 +51,7 @@
 
 ---
 
-## 2. P0 — 结构性缺失（4 项）
+## 2. P0 - 结构性缺失（4 项）
 
 ### 2.1 插件体系：从"4 个钩子"到"完整生命周期 + 双总线"
 
@@ -76,10 +76,10 @@
 | Provider 扩展点：会话状态 / 订阅管理                                                                                            | `provider/Providers.java:18-55`、`SessionStateProvider.java:20-35`、`SubscribeProvider.java:40-56` |
 
 **shark-mqtt（现状）**
-- 钩子仅 4 个：`OnAccept` / `OnConnected` / `OnMessage` / `OnClose` —— `plugin/manager.go:15-20`
-- HookContext 未携带 Topic/Payload（OnMessage 只有 ClientID）—— `plugin/manager.go:22-32`
-- 仅 `Register`/`Unregister` 进程内注册，**无动态加载** —— `plugin/manager.go:67-96`
-- 分发有超时与 panic 隔离（这点做得比 smart-mqtt 更硬） —— `plugin/manager.go:98-161`
+- 钩子仅 4 个：`OnAccept` / `OnConnected` / `OnMessage` / `OnClose` -- `plugin/manager.go:15-20`
+- HookContext 未携带 Topic/Payload（OnMessage 只有 ClientID）-- `plugin/manager.go:22-32`
+- 仅 `Register`/`Unregister` 进程内注册，**无动态加载** -- `plugin/manager.go:67-96`
+- 分发有超时与 panic 隔离（这点做得比 smart-mqtt 更硬） -- `plugin/manager.go:98-161`
 
 **未完成清单**
 - [ ] 插件生命周期抽象（版本/厂商/优先级/初始化/销毁/卸载回调）
@@ -98,9 +98,9 @@
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
 | `ConnectionsController`      | `/api/connections`（分页+ClientID 模糊搜索）、`/api/disconnection`（强制断开）、`/internal/clients/report`                                                      | `:276`、`:301`、`:77`                                    |
 | `TopicController`            | 订阅关系查询、Topic 统计                                                                                                                                        | `:49`、`:120`、`:132`                                    |
-| `PluginManagerController`    | `/current`、`/:id/schema`、`/:id/config`、`/:id/config/save`、`/market`、`/list`、`/download`、`/uninstall`、`/enable`、`/:id/logs`(SSE)、`/disable`、`/upload` | `:72`…`:477`                                             |
+| `PluginManagerController`    | `/current`、`/:id/schema`、`/:id/config`、`/:id/config/save`、`/market`、`/list`、`/download`、`/uninstall`、`/enable`、`/:id/logs`(SSE)、`/disable`、`/upload` | `:72`...`:477`                                             |
 | `PluginRepositoryController` | 插件市场仓库 `/`、`/:plugin/download`                                                                                                                           | `:46`、`:51`、`:85`                                      |
-| `SystemController`           | 登录、用户增删改查、系统设置读写                                                                                                                                | `:49`…`:180`                                             |
+| `SystemController`           | 登录、用户增删改查、系统设置读写                                                                                                                                | `:49`...`:180`                                             |
 | `MetricController`           | `/api/cluster/metricCodes`、`/metrics`(Prometheus)                                                                                                              | `:62`、`:197`、`:207`                                    |
 | `LicenseController`          | License 导入 / 查询                                                                                                                                             | `:54`、`:146`、`:176`                                    |
 | `VersionController`          | 版本检查                                                                                                                                                        | `:34`、`:66`                                             |
@@ -134,7 +134,7 @@
 - `broker/broker.go:67` `connections map` 进程私有
 - `broker/session.go:129-134` `Manager.sessions` 进程私有
 - `broker/topic_tree.go` 每实例一份全量订阅树，无跨节点传播
-- ~~`broker/broker.go:905-939` Stop() 立即关连接、无 drain、**不抑制遗嘱 → 滚动重启会引发遗嘱风暴**~~
+- ~~`broker/broker.go:905-939` Stop() 立即关连接、无 drain、**不抑制遗嘱 -> 滚动重启会引发遗嘱风暴**~~
   **已修复**（commit `b1b011794`）：`Stop()` 先置 `shuttingDown` 再关连接，抑制遗嘱；并对 MQTT 5.0 连接发送
   `DISCONNECT 0x8B`。注意根因在 API 层顺序（`api.Broker.Stop()` 原先先 `srv.Stop()` 关 socket、后 `broker.Stop()`），
   仅改 broker 层是死代码。
@@ -144,22 +144,22 @@
 - [ ] 订阅关系 delta 广播 + anti-entropy
 - [ ] 跨节点消息路由（含 retained 与共享订阅的集群语义）
 - [ ] 全局唯一 msgID（当前为墙钟 + 进程内原子计数，无节点前缀）
-- [x] ~~优雅停机 drain（滚动升级不触发遗嘱风暴）~~ —— 遗嘱风暴已消除（`b1b011794`）；跨节点 drain 仍随集群一并搁置
-- [x] ~~**`deploy/k8s/` 文档修正**：`deployment.yaml` replicas/HPA 多副本模板必须标注"多副本 ≠ 集群，会导致漏投/重复投/retained 分裂"~~
+- [x] ~~优雅停机 drain（滚动升级不触发遗嘱风暴）~~ -- 遗嘱风暴已消除（`b1b011794`）；跨节点 drain 仍随集群一并搁置
+- [x] ~~**`deploy/k8s/` 文档修正**：`deployment.yaml` replicas/HPA 多副本模板必须标注"多副本 != 集群，会导致漏投/重复投/retained 分裂"~~
   **已完成**（commit `f229539dd`）：默认值改为 `replicas: 1` / Helm `replicaCount: 1` / `autoscaling.enabled: false`，
-  `hpa.yaml` 从默认 kustomization 注释掉，并在 manifest、Helm 模板、NOTES.txt、两个 README 中落地"多副本 ≠ 集群"告警
+  `hpa.yaml` 从默认 kustomization 注释掉，并在 manifest、Helm 模板、NOTES.txt、两个 README 中落地"多副本 != 集群"告警
 
 ### 2.4 数据出口（Redis 桥接 / Kafka）
 
 **smart-mqtt**
 | 能力                                                                                                                                                | 证据                                                                  |
 | --------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| Redis 桥接：消费消息总线 → `ZADD {topic}` score=timestamp，多实例并行，编码 bytes/string/base64                                                     | `BridgeService.java:16,31-38,52-71`；`PayloadEncodeEnum`              |
+| Redis 桥接：消费消息总线 -> `ZADD {topic}` score=timestamp，多实例并行，编码 bytes/string/base64                                                     | `BridgeService.java:16,31-38,52-71`；`PayloadEncodeEnum`              |
 | Kafka：**服务端实现 9 类 Kafka 协议 API**（ApiVersions/Metadata/InitProducerId/Produce/Fetch/ListOffsets/FindCoordinator/OffsetCommit/OffsetFetch） | `KafkaServer.java:66,106-131,145-385`                                 |
 | 自研分段日志存储引擎：`PartitionLog`(TreeMap 分段/按时间与大小 cleanup/roll) / `LogSegment` / `TopicLog` / `ConsumerOffsetStore`                    | `PartitionLog.java:16,84,129-143,185,194`；`ConsumerOffsetStore.java` |
 | 分区策略 round_robin / topic_hash                                                                                                                   | `PartitionStrategy.java`、`TopicLog.java`                             |
 
-**shark-mqtt 现状**：`.go` 中 `bridge` / `kafka` 0 命中。`store/` 三个后端（memory/redis/badger）**只做持久化，不做出站桥接** —— `store/interfaces.go:9-38`。
+**shark-mqtt 现状**：`.go` 中 `bridge` / `kafka` 0 命中。`store/` 三个后端（memory/redis/badger）**只做持久化，不做出站桥接** -- `store/interfaces.go:9-38`。
 
 **未完成清单**（按定位取舍）
 - [ ] 消息出站抽象（Bridge/Exporter 接口 + 主题过滤器）
@@ -169,7 +169,7 @@
 
 ---
 
-## 3. P1 — 功能缺失（9 项）
+## 3. P1 - 功能缺失（9 项）
 
 ### 3.1 认证体系
 
@@ -178,7 +178,7 @@
 | 用户名/密码（配置内）                                                                   | `SimpleAuthPlugin.java:19,25-46`                                  | `StaticAuth`（`auth.go:52-251`，含 bcrypt）                                        | shark-mqtt **更优**  |
 | 文件型账户                                                                              | 无                                                                | `FileAuth`（`auth_file.go:16-139`）                                                | shark-mqtt **独有**  |
 | **Redis 认证器**（HMGET pwd_hash/salt/encoder，plain/md5/sha256）                       | `RedisAuthenticator.java`（`advanced-auth-plugin.mdx:101-118`）   | **缺失**                                                                           | **缺口**             |
-| **HTTP/Webhook 认证器**（POST JSON → 200/非 200）                                       | `HttpAuthenticator.java:58`                                       | **缺失**                                                                           | **缺口**             |
+| **HTTP/Webhook 认证器**（POST JSON -> 200/非 200）                                       | `HttpAuthenticator.java:58`                                       | **缺失**                                                                           | **缺口**             |
 | **全异步认证链**（不占用工作线程，抗集中重连）                                          | `AdvancedAuthPlugin.java:104-112`（`thenCompose`）                | `ChainAuth` 为同步 fail-closed（`auth_chain.go:10-59`）                            | **缺口**             |
 | **认证结果三态**（SUCCESS/FAILURE/**CONTINUE 降级**）+ `stopOnError` / `allowAnonymous` | `AdvancedAuthPlugin.java:176-181`                                 | 无 CONTINUE 语义                                                                   | **缺口**             |
 | 增强认证（AUTH 报文）                                                                   | 仅属性常量（`MqttPropertyConstant.java:69`），Broker 无 AUTH 处理 | AUTH 报文 + 握手 + 会话内重认证（`broker.go:581-670,1145-1180`），**无内置认证器** | shark-mqtt **更优**  |
@@ -186,7 +186,7 @@
 | ACL                                                                                     | 订阅/发布 Provider 拦截                                           | `StaticAuth` 内建 ACL（`auth.go:265-275`）                                         | 相当                 |
 | ACL 文件热重载                                                                          | 无                                                                | 无（`auth_file.go:49` 仅手动 LoadFile）                                            | 两者皆缺             |
 
-**未完成清单**：[ ] Redis 认证器 · [ ] HTTP 认证器 · [ ] 异步认证链 + CONTINUE 降级 · [ ] 增强认证内置实现（可选）
+**未完成清单**：[ ] Redis 认证器 ,  [ ] HTTP 认证器 ,  [ ] 异步认证链 + CONTINUE 降级 ,  [ ] 增强认证内置实现（可选）
 
 ### 3.2 运维与可观测
 
@@ -202,10 +202,10 @@
 | 结构化日志 / 健康探针             | 有                                                                                                          | **有**（`slog` + `/healthz` `/readyz`，`api.go:369-383`）             |
 | 僵尸连接回收                      | 有                                                                                                          | **有且更强**（`tcp_keepalive_period` 可配，写失败即断）               |
 
-**未完成清单**：[ ] 连接防抖闭环 · [ ] 日志轮转 · [ ] 指标项扩充 · [ ] 运行时日志 SSE · [ ] 版本检查
+**未完成清单**：[ ] 连接防抖闭环 ,  [ ] 日志轮转 ,  [ ] 指标项扩充 ,  [ ] 运行时日志 SSE ,  [ ] 版本检查
 
 **本轮已加固（commit `ebe4aa52d`）**：
-- 安全相关拒绝（认证失败 / 不支持的认证方法 / 会话归属冲突）原先**只计数不出日志**——默认 `info` 级别下
+- 安全相关拒绝（认证失败 / 不支持的认证方法 / 会话归属冲突）原先**只计数不出日志**--默认 `info` 级别下
   运维看不到任何记录。现补 `warn` 级审计日志（clientID + username + remote，**不含口令**）。
 - 指标字符串标签（`IncRejections` / `IncMessagesDropped` / `IncErrors` 的 `reason`、`component`）此前无
   约束，调用方一旦传入用户可控值（clientID / topic）即造成时间线爆炸。现由
@@ -224,7 +224,7 @@
 | 配置 schema（UI 元数据） | `Item.java:42-103`（string/int/password/textarea/object/array/enum/switch）                      | 无                                                                                                                      | **缺口**              |
 | Proxy Protocol           | 无                                                                                               | 无                                                                                                                      | 两者皆缺              |
 
-**未完成清单**：[ ] listener 数组化（多端口/多协议） · [ ] 插件化端口声明 · [ ] 插件配置 schema
+**未完成清单**：[ ] listener 数组化（多端口/多协议） ,  [ ] 插件化端口声明 ,  [ ] 插件配置 schema
 
 ### 3.4 MQTT 5.0 语义细节（**注：多数为"两者皆缺"，非对齐项**）
 
@@ -232,14 +232,14 @@
 | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------- |
 | User Property 转发                                                | 协议层可编解码（`properties.go:32,301-315`），Broker 投递时不转发（`broker.go:1929-1960` 仅带 SubID+MessageExpiry） | **同样不转发**（broker 内无 getU*Property 引用）                       | 两者皆缺                                    |
 | Content Type / Response Topic / Correlation Data / Payload Format | 可编解码，Broker 不处理                                                                                             | 同样不处理                                                             | 两者皆缺                                    |
-| Retain As Published                                               | ~~选项已解析存储（`subscribe.go:66`、`session.go:318`），投递未生效（`broker.go:1929-1937`）~~                      | —                                                                      | ~~真缺口~~ **已修复**（commit `be8021a91`） |
-| Maximum QoS 通告                                                  | CONNACK 未通告（`broker.go:2224-2260`）                                                                             | —                                                                      | ~~真缺口~~ **非缺口**（误判，见 3.4.1）     |
-| Request Problem Information                                       | 仅解析，未裁剪 Reason String                                                                                        | —                                                                      | ~~真缺口~~ **非缺口**（误判，见 3.4.2）     |
+| Retain As Published                                               | ~~选项已解析存储（`subscribe.go:66`、`session.go:318`），投递未生效（`broker.go:1929-1937`）~~                      | -                                                                      | ~~真缺口~~ **已修复**（commit `be8021a91`） |
+| Maximum QoS 通告                                                  | CONNACK 未通告（`broker.go:2224-2260`）                                                                             | -                                                                      | ~~真缺口~~ **非缺口**（误判，见 3.4.1）     |
+| Request Problem Information                                       | 仅解析，未裁剪 Reason String                                                                                        | -                                                                      | ~~真缺口~~ **非缺口**（误判，见 3.4.2）     |
 | 共享订阅策略                                                      | 仅 round-robin，无 `$queue`（`topic_tree.go:228-267,304-415`）                                                      | 仅 `$share` + round-robin（`SharedOrderedMessageDeliver.java:29-108`） | 两者皆有限                                  |
 
-#### 3.4.1 Maximum QoS 通告 —— 误判，实为合规
+#### 3.4.1 Maximum QoS 通告 -- 误判，实为合规
 
-初判"CONNACK 未通告 Maximum QoS"为缺口，**该结论错误**。MQTT 5.0 §3.2.2.3.4 明确规定：
+初判"CONNACK 未通告 Maximum QoS"为缺口，**该结论错误**。MQTT 5.0 Section 3.2.2.3.4 明确规定：
 Maximum QoS 只允许取值 0 或 1，**省略即表示支持 QoS 2**。shark-mqtt 支持 QoS 2，因此"省略"是
 唯一正确的编码；若强行通告 2 反而违反属性取值范围。
 
@@ -247,9 +247,9 @@ Maximum QoS 只允许取值 0 或 1，**省略即表示支持 QoS 2**。shark-mq
 `TestBroker_ConnAckPropertiesOmitMaximumQoSWhenQoS2Supported` 断言 `props.MaximumQoS == nil`，
 注释亦写明 "omission means QoS 2 supported"。此行为是**有意为之**，非遗漏。
 
-#### 3.4.2 Request Problem Information —— 误判，实为天然合规
+#### 3.4.2 Request Problem Information -- 误判，实为天然合规
 
-初判"仅解析、未裁剪 Reason String"为缺口，**该结论同样错误**。MQTT 5.0 §3.1.2.11.7 要求：
+初判"仅解析、未裁剪 Reason String"为缺口，**该结论同样错误**。MQTT 5.0 Section 3.1.2.11.7 要求：
 客户端将 Request Problem Information 置 0 时，服务端**不得**发送 Reason String / User Property。
 
 复核生产代码：`broker/` 中 `ReasonString`、`UserProperties` **零引用**（仅在 `protocol/properties.go`
@@ -261,7 +261,7 @@ Maximum QoS 只允许取值 0 或 1，**省略即表示支持 QoS 2**。shark-mq
 
 ---
 
-## 4. P2 — 次要项
+## 4. P2 - 次要项
 
 | # | 缺口                                          | smart-mqtt 证据                                                       | shark-mqtt                                                       |
 | - | --------------------------------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------- |
@@ -285,8 +285,8 @@ Maximum QoS 只允许取值 0 或 1，**省略即表示支持 QoS 2**。shark-mq
 | 增强认证框架（AUTH 报文 + 握手 + 重认证） | `broker.go:262-295,581-670,1145-1180`                                                      | smart-mqtt 仅有属性常量                                         |
 | 协议 fuzz（840 万+ 次执行无崩溃）         | `protocol/fuzz_test.go`                                                                    | smart-mqtt 无                                                   |
 | 单二进制 / 零外部依赖                     | `go.mod`（仅 badger/redis 可选构建标签）                                                   | smart-mqtt 需 JVM                                               |
-| 批量写队列有界 + 分档缓冲池               | `broker/write_queue_test.go`、`pkg/bufferpool/pool.go`                                     | —                                                               |
-| 存储后端 fail-fast 校验                   | `store/errors.go`、`store/interfaces.go`                                                   | —                                                               |
+| 批量写队列有界 + 分档缓冲池               | `broker/write_queue_test.go`、`pkg/bufferpool/pool.go`                                     | -                                                               |
+| 存储后端 fail-fast 校验                   | `store/errors.go`、`store/interfaces.go`                                                   | -                                                               |
 
 ---
 
@@ -297,7 +297,7 @@ Maximum QoS 只允许取值 0 或 1，**省略即表示支持 QoS 2**。shark-mq
   T01 listener 数组化 + 插件化端口
   T02 插件生命周期抽象（版本/优先级/初始化/销毁 + 配置模型）
   T03 事件总线（复用现有 OnAccept/OnConnected/OnMessage/OnClose 语义，扩展为全事件）
-  T04 k8s 模板"多副本 ≠ 集群"告警补丁   ← 已完成（f229539dd）
+  T04 k8s 模板"多副本 != 集群"告警补丁   <- 已完成（f229539dd）
 
 阶段 1（管理面）
   T05 HTTP 管理 API（只读：连接/订阅/主题统计）
@@ -307,33 +307,33 @@ Maximum QoS 只允许取值 0 或 1，**省略即表示支持 QoS 2**。shark-mq
 阶段 2（出口与集群）
   T08 消息出站抽象 + Redis/Webhook 出口
   T09 集群：节点发现 + 订阅 delta 广播 + 粘性路由
-  T10 优雅停机 drain（先行，独立于集群，解决遗嘱风暴）   ← 遗嘱风暴部分已完成（b1b011794）
+  T10 优雅停机 drain（先行，独立于集群，解决遗嘱风暴）   <- 遗嘱风暴部分已完成（b1b011794）
 ```
 
 ---
 
-## 附录 A — 证据索引速查
+## 附录 A - 证据索引速查
 
 **smart-mqtt**
 - 插件规范：`smart-mqtt-plugin-spec/src/main/java/tech/smartboot/mqtt/plugin/spec/`
-  `Plugin.java` · `BrokerContext.java` · `PluginRegistryImpl.java:35-48,61,145` · `bus/EventType.java:33-100` · `bus/AsyncEventObject.java` · `provider/Providers.java:18-55` · `schema/Item.java:42-103`
+  `Plugin.java` ,  `BrokerContext.java` ,  `PluginRegistryImpl.java:35-48,61,145` ,  `bus/EventType.java:33-100` ,  `bus/AsyncEventObject.java` ,  `provider/Providers.java:18-55` ,  `schema/Item.java:42-103`
 - Broker 核心：`smart-mqtt-broker/src/main/java/tech/smartboot/mqtt/broker/`
-  `BrokerContextImpl.java:275-322,476` · `processor/ConnectProcessor.java:113-197` · `processor/PublishProcessor.java:33-100` · `topic/SharedOrderedMessageDeliver.java:29-108` · `bus/event/KeepAliveMonitorSubscriber.java:36-63`
+  `BrokerContextImpl.java:275-322,476` ,  `processor/ConnectProcessor.java:113-197` ,  `processor/PublishProcessor.java:33-100` ,  `topic/SharedOrderedMessageDeliver.java:29-108` ,  `bus/event/KeepAliveMonitorSubscriber.java:36-63`
 - 协议层：`smart-mqtt-common/src/main/java/tech/smartboot/mqtt/common/`
-  `enums/MqttVersion.java:14` · `enums/MqttMessageType.java:18` · `util/MqttPropertyConstant.java:21-153` · `util/TopicByteTree.java:42,83,229` · `InflightQueue.java:46-237`
+  `enums/MqttVersion.java:14` ,  `enums/MqttMessageType.java:18` ,  `util/MqttPropertyConstant.java:21-153` ,  `util/TopicByteTree.java:42,83,229` ,  `InflightQueue.java:46-237`
 - 插件：`plugins/`
-  `enterprise-plugin/.../openapi/controller/`（9 个）· `enterprise-plugin/.../flapping/FlappingDetector.java` · `cluster-plugin/.../Coordinator.java:22,195,274` · `kafka-storage-plugin/.../kafka/server/KafkaServer.java:106-385` · `kafka-storage-plugin/.../store/PartitionLog.java:84,129-143` · `advanced-auth-plugin/.../AdvancedAuthPlugin.java:104-112,176-181` · `redis-bridge-plugin/.../BridgeService.java:31-38`
+  `enterprise-plugin/.../openapi/controller/`（9 个）,  `enterprise-plugin/.../flapping/FlappingDetector.java` ,  `cluster-plugin/.../Coordinator.java:22,195,274` ,  `kafka-storage-plugin/.../kafka/server/KafkaServer.java:106-385` ,  `kafka-storage-plugin/.../store/PartitionLog.java:84,129-143` ,  `advanced-auth-plugin/.../AdvancedAuthPlugin.java:104-112,176-181` ,  `redis-bridge-plugin/.../BridgeService.java:31-38`
 
 **shark-mqtt**
-- 协议：`protocol/spec.go:40-92` · `protocol/constants.go:10-27,67-71` · `protocol/properties.go:11-74,119-629` · `protocol/topic.go:26-102` · `protocol/packets.go:20-150`
-- Broker：`broker/broker.go:26,67,179-568,905-939,1929-1960,2224-2260` · `broker/session.go:129-134,178-237,512-679` · `broker/qos_engine.go:54-109,318-414` · `broker/will_handler.go:19,66-157` · `broker/topic_tree.go:228-267,304-415` · `broker/server.go:27,251-307,415-492`
-- 扩展/配置：`plugin/manager.go:15-20,22-32,67-161` · `config/config.go:19-83` · `config/loader.go:50-100` · `cmd/main.go:96-101`
-- 存储/指标：`store/interfaces.go:9-38` · `pkg/metrics/prometheus.go:67-138`
-- 既有分析：`docs/reports/EMQX-GAP-ANALYSIS-260910.md` · `docs/architecture/CLUSTER-FEASIBILITY.md` · `docs/architecture/PROTOCOL-ADAPTER-DESIGN.md`
+- 协议：`protocol/spec.go:40-92` ,  `protocol/constants.go:10-27,67-71` ,  `protocol/properties.go:11-74,119-629` ,  `protocol/topic.go:26-102` ,  `protocol/packets.go:20-150`
+- Broker：`broker/broker.go:26,67,179-568,905-939,1929-1960,2224-2260` ,  `broker/session.go:129-134,178-237,512-679` ,  `broker/qos_engine.go:54-109,318-414` ,  `broker/will_handler.go:19,66-157` ,  `broker/topic_tree.go:228-267,304-415` ,  `broker/server.go:27,251-307,415-492`
+- 扩展/配置：`plugin/manager.go:15-20,22-32,67-161` ,  `config/config.go:19-83` ,  `config/loader.go:50-100` ,  `cmd/main.go:96-101`
+- 存储/指标：`store/interfaces.go:9-38` ,  `pkg/metrics/prometheus.go:67-138`
+- 既有分析：`docs/reports/EMQX-GAP-ANALYSIS-260910.md` ,  `docs/architecture/CLUSTER-FEASIBILITY.md` ,  `docs/architecture/PROTOCOL-ADAPTER-DESIGN.md`
 
 ---
 
-*生成时间：2026-10-12 · 对比基线：smart-mqtt v1.8.0 代码树 / shark-mqtt HEAD*
-*复核与修订：2026-10-12 第二轮 —— 修正 3.4 节两处误判（Maximum QoS、Request Problem Information），
+*生成时间：2026-10-12 ,  对比基线：smart-mqtt v1.8.0 代码树 / shark-mqtt HEAD*
+*复核与修订：2026-10-12 第二轮 -- 修正 3.4 节两处误判（Maximum QoS、Request Problem Information），
 并标注本轮已修复项（RAP `be8021a91`、遗嘱风暴 `b1b011794`、k8s 多副本告警 `f229539dd`、
 可观测加固 `ebe4aa52d`）。被评估的 shark-mqtt 基线推进到 `ebe4aa52d`。*
