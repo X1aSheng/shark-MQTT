@@ -46,6 +46,7 @@ docs/
 | [Testing](guides/TESTING.md) | Unit, integration, benchmark tests |
 | [Protocol Audit](reports/archive/PROTOCOL-AUDIT-260602-215254.md) | MQTT 3.1.1/5.0 compliance |
 | [Latest Review](reports/PROJECT-REVIEW-261017-100640.md) | Full-project review: architecture, tests, 23 defects, doc drift |
+| [Broker Comparison](reports/CROSS-BROKER-COMPARISON-261017-121500.md) | shark-mqtt vs smart-mqtt / smart-mqtt-4g / mica-mqtt: protocol, throughput, footprint |
 | [Previous Review](reports/PROJECT-REVIEW-260806-143527.md) | V7 reference comparison (smart-mqtt / mica-mqtt) |
 | [Smart-MQTT Gap Analysis](reports/SMART-MQTT-GAP-ANALYSIS-261012.md) | Unfinished-detail checklist vs Java smart-mqtt (P0/P1/P2) |
 | [K8s / Helm Validation](reports/K8S-HELM-VALIDATION-261016.md) | Real-cluster Helm rollout; multi-port IANA_SVC_NAME defect found and fixed |
