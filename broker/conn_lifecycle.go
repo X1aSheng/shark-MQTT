@@ -457,17 +457,23 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 	// i.e. a session that outlives the connection, which a server with no
 	// configured maximum would otherwise have to treat as "ends immediately".
 	serverMax := uint32(b.opts.sessionExpiry.Seconds())
+	var negotiatedExpiry uint32
 	if connectPkt.Properties != nil && connectPkt.Properties.SessionExpiryInterval != nil {
 		clientVal := *connectPkt.Properties.SessionExpiryInterval
 		if clientVal > serverMax {
 			clientVal = serverMax
 		}
-		sess.ExpiryInterval = clientVal
+		negotiatedExpiry = clientVal
 	} else if connectPkt.Flags.CleanSession {
-		sess.ExpiryInterval = 0 // session ends when the connection closes
+		negotiatedExpiry = 0 // session ends when the connection closes
 	} else {
-		sess.ExpiryInterval = serverMax // absent property: server default
+		negotiatedExpiry = serverMax // absent property: server default
 	}
+	// Written under the session lock: the session is already in the manager,
+	// and Session.Save snapshots these fields from another goroutine.
+	sess.mu.Lock()
+	sess.ExpiryInterval = negotiatedExpiry
+	sess.mu.Unlock()
 
 	// Negotiate Receive Maximum (MQTT 5.0 §3.1.2.11.6 / §3.2.2.3.3).
 	//
@@ -494,8 +500,15 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 	if connectPkt.Properties != nil && connectPkt.Properties.ReceiveMaximum != nil {
 		clientReceiveMax = *connectPkt.Properties.ReceiveMaximum
 	}
+	// The write is taken under the session lock because the session is already
+	// reachable: CreateSession published it in the manager a few hundred lines
+	// above, and CanSendOutbound reads OutboundWindow from another goroutine
+	// the moment a delivery is routed here. Without the lock a reconnect that
+	// raised or lowered the window raced those readers, and -race flagged it.
+	sess.mu.Lock()
 	sess.ReceiveMax = serverReceiveMax
 	sess.OutboundWindow = min(clientReceiveMax, serverReceiveMax)
+	sess.mu.Unlock()
 
 	// Negotiate Topic Alias Maximum (MQTT 5.0 §3.1.2.11.5 / §3.2.2.3.8).
 	//

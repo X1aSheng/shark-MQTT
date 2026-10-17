@@ -948,8 +948,16 @@ func (s *Session) TrackSent(msgSize int) {
 // client without exceeding the client's Receive Maximum (MQTT 5.0 §4.9). It is
 // the outbound window, not the server's inbound limit, that gates this; see
 // OutboundWindow.
+//
+// The window is read under the session lock rather than as a bare field: a
+// reconnect re-negotiates it on the existing session object (the socket may be
+// new, the session is not), while deliveries keep consulting it from the
+// routing goroutine.
 func (s *Session) CanSendOutbound() bool {
-	return int(atomic.LoadInt32(&s.outboundUnacked)) < int(s.OutboundWindow)
+	s.mu.RLock()
+	window := s.OutboundWindow
+	s.mu.RUnlock()
+	return int(atomic.LoadInt32(&s.outboundUnacked)) < int(window)
 }
 
 // IncOutboundUnacked increments the outbound unacknowledged counter.

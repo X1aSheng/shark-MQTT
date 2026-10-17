@@ -187,6 +187,7 @@
 | D18 | P1 | `broker/conn_lifecycle.go:67` | `maxConnections` 只采样 `len(connections)` 便放行, 而真正的注册发生在授权/会话恢复/store 写之后, 并发 CONNECT 突发可超限任意倍 | 新增 `pendingConns` 预留: `reserveConnectionSlot` / `releaseConnectionSlot`, 注册成功才占用名额, 失败路径由 defer 归还 |
 | D9 | P1 | `broker/qos_engine.go:459` | 重试耗尽时只删引擎自身 inflight 表项, 不同步删 `Session.Inflight`、不 `DecOutboundUnacked`; `SetErrorCallback` 从未被注册, 于是整条放弃路径无日志无指标。后果: 每条被放弃的投递永久占用出站窗口, 窗口逐条收紧至零, 且重连时还会被 `resendSessionInflight` 重放 | 新增 `SetGiveUpCallback`, broker 注册后同步清 session 记账 + 计数 `messages_dropped{reason=max_retries}` + 打日志 |
 | D15 | P1 | `broker/qos_outbound.go:206` | `republish` 在 session 中找不到该 packet id 时落入 PUBREC 分支。该分支本为入站 QoS 2 设计, 但入站路径 (`TrackQoS1/2`) 在生产代码中无调用者 (仅 benchmark 使用), 于是出站的重试回调在 ack 竞争或会话消失时会向客户端发一条无对应 PUBLISH 的 PUBREC | 找不到条目直接返回 nil; 注释写明入站方向若将来接入需独立回调, 不得复用此兜底 |
+| D8 | P1 | `broker/conn_lifecycle.go:465,503` | `CreateSession` 已把会话发布进 Manager 之后, 仍无锁写 `ExpiryInterval` / `ReceiveMax` / `OutboundWindow`; 而 `CanSendOutbound` 从投递 goroutine 无锁读窗口, `Session.Save` 也从别的 goroutine 快照这些字段 | 三处写入改持 `sess.mu`, `CanSendOutbound` 改 `RLock` 读窗口; `go test -race ./broker/` 14.4s 通过 |
 
 修复后复跑 (第二轮 D11 / D12 / D18): `go build ./...`、`go vet ./...`、`go test -count=1 ./...` 全部通过 (47 s, 其中 `tests/integration` 34.3 s)。新增回归 6 条: 单测 4 条 (`broker/rate_limit_test.go`), 集成 2 条 (`tests/integration/shared_subscription_test.go`); 因此本轮之后计数为 单测 537 / 集成 196。
 
@@ -197,7 +198,6 @@
 | ID | 位置 | 缺陷 | 影响 | 状态 |
 |----|------|------|------|------|
 | D7 | `cmd/main.go` | CLI 从不为 `storage_backend: redis/badger` 注入 store, 而 `api.NewBroker` 见到非 memory 后端却未注入 store 时返回 `initErr`。`docs/guides/CONFIGURATION.md` 与 `DEPLOY.md` 都按可用功能描述 | 按文档配置必然启动失败 | **已确证** |
-| D8 | `broker/conn_lifecycle.go:418` | `CreateSession` 已把 Session 放入 Manager 之后, 仍无锁写 `ExpiryInterval` / `ReceiveMax` / `OutboundWindow` / `TopicAliasMax`; 读侧 `CanSendOutbound` 完全无锁 | 重连期间并发投递可读到半初始化窗口 (race detector 可复现) | 待确证 |
 | D10 | `broker/pub_sub.go:337` | `handleRetainedMessage` 持 `b.retainedMu` 调 store (redis 是网络 I/O, badger 是磁盘 I/O); 清理循环同样 | redis 后端的保留消息发布被全局串行化, 延迟等于 Redis RTT | 待确证 |
 | D13 | `plugin/manager.go:209`、`eventbus.go:286` | Execute 超时返回后执行 goroutine 仍在, 且每个报文新起一个; 插件忽略 ctx 时永不退出 | 一个阻塞插件可让 goroutine 数随流量线性增长 | 待确证 |
 | D14 | `broker/server.go:583` | WS handler 在 HTTP goroutine 里 `wg.Add(1)`, 与 `Stop()` 的 `wg.Wait()` 并发 | 握手恰好与 Stop 并发时触发 `sync: WaitGroup misuse` panic | 待确证 |
