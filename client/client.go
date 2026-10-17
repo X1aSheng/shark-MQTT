@@ -298,7 +298,14 @@ func (c *MQTTClient) Publish(ctx context.Context, topic string, qos byte, retain
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case resp := <-respCh:
+	case resp, ok := <-respCh:
+		if !ok {
+			// The response channel closes when the connection dies. Reporting
+			// "unexpected response: <nil>" here described the symptom and hid
+			// the cause: the publish did not fail because of a bad packet, it
+			// failed because there was no longer a connection to answer.
+			return fmt.Errorf("connection closed before PUBACK")
+		}
 		switch r := resp.(type) {
 		case *protocol.PubAckPacket:
 			if r.ReasonCode != protocol.ReasonCodeSuccess {
@@ -333,7 +340,10 @@ func (c *MQTTClient) Publish(ctx context.Context, topic string, qos byte, retain
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case compResp := <-respCh:
+			case compResp, open := <-respCh:
+				if !open {
+					return fmt.Errorf("connection closed before PUBCOMP")
+				}
 				comp, ok := compResp.(*protocol.PubCompPacket)
 				if !ok {
 					return fmt.Errorf("expected PUBCOMP, got %T", compResp)

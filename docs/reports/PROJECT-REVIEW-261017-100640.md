@@ -226,6 +226,16 @@
 | D22 | `client/client.go:301` 连接断开时 Publish 收到 nil 响应, 报 `unexpected response: <nil>`, 与真实原因无关 |
 | D23 | `protocol/codec.go:259` `outboundMax <= 0` 时流式编码, 单个报文拆成多次 socket write。TSO 掩盖带宽影响, 但仍是每报文多一次 syscall |
 
+**D19-D23 的处理结果 (2026-10-17 晚)**
+
+| 项 | 处理 |
+|----|------|
+| D21 | **已修**。同 QoS 多匹配时按过滤器字典序取第一个, 消除 map 遍历顺序带来的 `RetainAsPublished` / `RetainHandling` 不确定性。测试 `broker/session_tiebreak_test.go` 连续 100 次调用断言结果不变, 另一条测试守住"最高 QoS 优先"的原有规则。**注意**: 不采用"最具体优先", 因为规范未定义如何在字面量级别之间比较, 而稳定性本身已足够 |
+| D22 | **已修**。`respCh` 关闭时返回 `connection closed before PUBACK` / `before PUBCOMP`, 不再报 `unexpected response: <nil>` |
+| D20 | **保留不改**。`RegisterWill` 目前无返回错误的路径, 但签名声明了 `error`, 调用点的错误分支是接口契约的一部分。删掉它会在将来 `RegisterWill` 真的开始失败时, 变成一个静默丢遗嘱的缺陷 |
+| D19 | **保留不改**。这些标识符在仓库内无调用者, 但 `QoSEngine` / `TopicTree` / `Session` 都是导出类型, 属于嵌入方可用的 API 面。删除是破坏性变更, 收益只是"看起来干净"。若确实要清理, 应先标注 `Deprecated` 并等一个大版本 |
+| D23 | **保留不改**。`outboundMax <= 0` 时的流式编码只在显式关闭出站尺寸上限时触发, 不是默认路径。2026-10-17 的 profile 显示 `write(2)` 占扇出 CPU 的 50%, 但那是数据拷贝成本; 同一轮实测证明合并 syscall (批量写) 会让 P99 变差 47%, 见 [CROSS-BROKER-COMPARISON](CROSS-BROKER-COMPARISON-261017-121500.md) 4.10 节 |
+
 ---
 
 ## 6. 改进计划

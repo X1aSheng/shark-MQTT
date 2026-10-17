@@ -464,6 +464,17 @@ func (s *Session) matchSubscriptions(topic string, sysProtect bool) (bool, uint8
 	matched := false
 	var bestQoS uint8
 	var bestOpts SubscriptionOptions
+	// bestPattern breaks ties between matching filters at the same QoS. Without
+	// it, which one supplies RetainAsPublished / RetainHandling / Retain depends
+	// on map iteration order, so two identical publishes could deliver with
+	// different retain semantics.
+	//
+	// The rule is lexicographic order on the filter. MQTT says nothing about
+	// which of two equal-QoS matches supplies the options, so the requirement is
+	// stability, not a particular winner: any total order removes the
+	// nondeterminism, and picking the "most specific" would need a rule for
+	// comparing literal levels that the spec does not define.
+	var bestPattern string
 	// Allocated lazily: the common case is a session that set no identifiers at
 	// all, and it should not pay for an allocation on every delivery.
 	var identifiers []uint32
@@ -488,9 +499,10 @@ func (s *Session) matchSubscriptions(topic string, sysProtect bool) (bool, uint8
 			// bestOpts at its zero value for QoS 0 subscriptions and silently
 			// dropped RetainAsPublished and SubscriptionIdentifier.
 			opts := s.SubOptions[pattern]
-			if !matched || qos > bestQoS {
+			if !matched || qos > bestQoS || (qos == bestQoS && moreSpecific(pattern, bestPattern)) {
 				bestQoS = qos
 				bestOpts = opts
+				bestPattern = pattern
 			}
 			if opts.SubscriptionIdentifier != nil {
 				identifiers = append(identifiers, *opts.SubscriptionIdentifier)
@@ -503,6 +515,12 @@ func (s *Session) matchSubscriptions(topic string, sysProtect bool) (bool, uint8
 		identifiers = slices.Compact(identifiers)
 	}
 	return matched, bestQoS, bestOpts, identifiers
+}
+
+// moreSpecific reports whether candidate should win a tie against current.
+// Plain lexicographic order: stable, total, and independent of map iteration.
+func moreSpecific(candidate, current string) bool {
+	return candidate < current
 }
 
 // MatchesSubscription checks if a topic matches any of the session's
