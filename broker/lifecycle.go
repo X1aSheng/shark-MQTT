@@ -354,30 +354,69 @@ func (b *Broker) Stop() {
 
 	// 3. Close all client connections to stop the readLoops for good.
 	//
-	// The map is detached under the lock and the sockets are closed outside it:
-	// conn.Close() is a syscall, and doing N of them while holding b.mu
-	// serializes every concurrent HandleConnection / registration path behind
-	// the slowest close. Detaching first also makes the shutdown state visible
-	// to new connections immediately, instead of after the last close returns.
+	// The registry is deliberately NOT detached first. Every readLoop calls
+	// disconnect() when its socket returns, and disconnect() refuses to clean up
+	// unless the conn is still the one registered for that client id. Detaching
+	// the map here made every one of those identity checks fail, so Stop left
+	// the session map, the topic tree and the QoS table populated with entries
+	// from the run that had just ended: a following Start reported those clients
+	// as online, shared subscriptions routed messages to sessions with no
+	// connection, and a non-clean reconnect was told SessionPresent=1 for state
+	// nobody maintained.
+	//
+	// Closing still happens outside b.mu: conn.Close() is a syscall, and doing N
+	// of them under the lock serializes every concurrent registration behind the
+	// slowest close.
+	b.mu.RLock()
+	conns := make([]net.Conn, 0, len(b.connections))
+	for _, cs := range b.connections {
+		conns = append(conns, cs.conn)
+	}
+	b.mu.RUnlock()
+
+	for _, c := range conns {
+		if err := c.Close(); err != nil {
+			b.logger.Debug("failed to close client connection", "error", err)
+		}
+	}
+
+	// Give the readLoops a bounded window to finish their own teardown. The
+	// window is short by design: a readLoop notices the closed socket within
+	// microseconds, and this is already the second wait of the shutdown
+	// (drainInflight was the first). Anything still registered afterwards is
+	// taken out below rather than waited on -- a clientState built without a
+	// readLoop (unit tests, embedders that drive the broker directly) would
+	// otherwise burn the whole window on every Stop.
+	stopWait := 200 * time.Millisecond
+	deadline := time.Now().Add(stopWait)
+	for time.Now().Before(deadline) {
+		b.mu.RLock()
+		remaining := len(b.connections)
+		b.mu.RUnlock()
+		if remaining == 0 {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	// Safety net for connections that did not deregister themselves: remove them
+	// from the registry and publish the writer stop signal, so no goroutine is
+	// left waiting on a queue nobody drains.
 	type pendingClose struct {
 		id      string
-		conn    net.Conn
 		cs      *clientState
 		hasStop bool
 	}
 	b.mu.Lock()
 	pending := make([]pendingClose, 0, len(b.connections))
 	for id, cs := range b.connections {
-		p := pendingClose{id: id, conn: cs.conn, cs: cs, hasStop: cs.out != nil}
-		pending = append(pending, p)
+		pending = append(pending, pendingClose{id: id, cs: cs, hasStop: cs.out != nil})
 		delete(b.connections, id)
 	}
 	b.mu.Unlock()
 
 	for _, p := range pending {
-		if err := p.conn.Close(); err != nil {
-			b.logger.Debug("failed to close client connection", "clientID", p.id, "error", err)
-		}
+		b.logger.Debug("connection still registered after the shutdown window", "clientID", p.id)
 		if p.hasStop {
 			p.cs.stopWriter()
 		}

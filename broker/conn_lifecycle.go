@@ -823,6 +823,24 @@ func (b *Broker) sendAuthPacketToClient(clientID string, reason byte, method str
 }
 
 func (b *Broker) disconnect(ctx context.Context, clientID string, conn net.Conn) {
+	// Identity first, before any store write. Everything below -- saving the
+	// session, deleting it when the expiry interval is 0, clearing the offline
+	// queue -- is scoped to "the session this connection owned", and after a
+	// takeover that session belongs to the new connection. A readLoop that
+	// notices its closed socket late used to reach the store writes before the
+	// identity check and delete the replacement's persistent record.
+	//
+	// The authoritative check is repeated under the write lock before state is
+	// removed; this early one only keeps store writes from being issued on
+	// behalf of a connection that is already gone.
+	b.mu.RLock()
+	cur, registered := b.connections[clientID]
+	ownConn := registered && cur.conn == conn
+	b.mu.RUnlock()
+	if !ownConn {
+		return
+	}
+
 	// The will is NOT touched here. gracefulDisconnect removes it and
 	// abnormalDisconnect triggers it; calling RemoveWill here cancelled a
 	// just-armed delayed will (P2-5b) and, on takeover, deleted the NEW
