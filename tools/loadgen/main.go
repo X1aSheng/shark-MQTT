@@ -80,6 +80,11 @@ type config struct {
 	online int
 }
 
+// maxLatencySamples bounds the per-subscriber latency histogram. See the note
+// where the buffers are allocated for why an unbounded one is a memory bug and
+// not just a large number.
+const maxLatencySamples = 500000
+
 var cfg config
 
 func init() {
@@ -251,7 +256,9 @@ func main() {
 					return
 				}
 				sent := int64(binary.BigEndian.Uint64(payload[:8]))
-				latency[idx] = append(latency[idx], time.Now().UnixNano()-sent)
+				if len(latency[idx]) < maxLatencySamples {
+					latency[idx] = append(latency[idx], time.Now().UnixNano()-sent)
+				}
 			})
 			if _, err := c.Subscribe(ctx, []client.TopicSubscription{
 				{Topic: cfg.topic, QoS: subQoS},
@@ -271,9 +278,19 @@ func main() {
 
 	// Latency buffers are sized after connections exist, because a subscriber
 	// count in the thousands makes the per-connection estimate matter.
+	//
+	// The cap is what keeps a long run from being killed. Each sample is an
+	// int64, and a 30-minute run at 190k deliveries/s accumulates 350 million of
+	// them - 2.8 GB, which is how a soak on a 4 GB host dies with no error
+	// message and no output file. Once the cap is reached recording stops and
+	// the report says so, because a silently truncated distribution is worse
+	// than an announced one.
 	perSub := cfg.rate * int(cfg.duration.Seconds()) / cfg.subscribers / 4
 	if perSub < 512 {
 		perSub = 512
+	}
+	if perSub > maxLatencySamples {
+		perSub = maxLatencySamples
 	}
 	for i := range latency {
 		latency[i] = make([]int64, 0, perSub)
@@ -554,6 +571,7 @@ func report(st *stats, lat []int64, samples []rssSample, elapsed float64, pid in
 		"deliver_rate_msg_s":  float64(recv) / elapsed,
 		"delivery_ratio":      ratio(recv, sent),
 		"latency_samples":     len(lat),
+		"latency_capped":      len(lat) >= maxLatencySamples*cfg.subscribers,
 		"latency_p50_us":      percentile(lat, 50) / 1000,
 		"latency_p90_us":      percentile(lat, 90) / 1000,
 		"latency_p99_us":      percentile(lat, 99) / 1000,
