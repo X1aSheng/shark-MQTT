@@ -51,6 +51,8 @@ docs/
 | [Smart-MQTT Gap Analysis](reports/SMART-MQTT-GAP-ANALYSIS-261012.md) | Unfinished-detail checklist vs Java smart-mqtt (P0/P1/P2) |
 | [K8s / Helm Validation](reports/K8S-HELM-VALIDATION-261016.md) | Real-cluster Helm rollout; multi-port IANA_SVC_NAME defect found and fixed |
 | [Cross-Host Throughput](benchmarks/2026-10-15-cross-host-throughput.md) | Cross-host saturation ceiling, QoS 1 RTT bound, write-queue sizing |
+| [Load Test Plan](benchmarks/LOAD-TEST-PLAN.md) | How to measure: dimensions, environment rules, pass thresholds, ten measurement traps |
+| [Aliyun Baseline](benchmarks/2026-10-17-aliyun-2c4g.md) | 2C4G numbers: rate/payload/fanout sweeps, saturation point, per-connection cost |
 | [Latest Deployment Validation](reports/archive/DEPLOYMENT-VALIDATION-260806-124906.md) | Cloud server cleanup + docker/k8s validation |
 
 ---

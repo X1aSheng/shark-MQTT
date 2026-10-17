@@ -21,6 +21,17 @@ go test -bench=BenchmarkPublishQos0 -benchmem ./tests/bench/...
 
 ## Latest Reference Run
 
+For **end-to-end load tests** -- how many messages a machine can carry, where the
+fan-out knee sits, what an idle connection costs -- follow the
+[Load Test Plan](../benchmarks/LOAD-TEST-PLAN.md). It fixes the dimensions, the
+environment rules and the pass thresholds; without those, two runs of the same
+binary are not comparable.
+
+The most recent numbers are the
+[Aliyun 2C4G baseline](../benchmarks/2026-10-17-aliyun-2c4g.md), and the
+cross-broker analysis is in
+[CROSS-BROKER-COMPARISON](../reports/CROSS-BROKER-COMPARISON-261017-121500.md).
+
 For end-to-end server measurements (throughput, latency distribution, CPU and
 memory under sustained load), see
 [`docs/benchmarks/2026-10-15-server-baseline.md`](../benchmarks/2026-10-15-server-baseline.md).

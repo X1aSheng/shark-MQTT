@@ -27,6 +27,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -59,6 +61,10 @@ type config struct {
 	// many dials are in flight at once.
 	connections  int
 	idleParallel int
+	// note is free text copied into the JSON _meta block. Numbers without the
+	// environment they came from are not comparable three months later, and a
+	// hand-written sidecar file is the first thing to be forgotten.
+	note string
 }
 
 var cfg config
@@ -81,6 +87,7 @@ func init() {
 	flag.StringVar(&cfg.mode, "mode", "load", "what to measure: load (pub/sub benchmark) or idle (connections only)")
 	flag.IntVar(&cfg.connections, "connections", 1000, "connection count for -mode idle")
 	flag.IntVar(&cfg.idleParallel, "idle-parallel", 64, "concurrent dials for -mode idle")
+	flag.StringVar(&cfg.note, "note", "", "free text stored in the JSON _meta block (host, topology, anything needed to interpret the run)")
 }
 
 // stats aggregates counters across all connections.
@@ -398,6 +405,22 @@ func percentile(sorted []int64, p float64) int64 {
 	return sorted[idx]
 }
 
+// buildRevision returns the VCS revision stamped into the binary by the Go
+// toolchain, so a measurement always points back at the code that produced it.
+func buildRevision() string {
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		for _, s := range bi.Settings {
+			if s.Key == "vcs.revision" {
+				if s.Value == "" {
+					return "unknown"
+				}
+				return s.Value
+			}
+		}
+	}
+	return "unknown"
+}
+
 func report(st *stats, lat []int64, samples []rssSample, elapsed float64, pid int) {
 	sent := st.sent.Load()
 	recv := st.received.Load()
@@ -426,6 +449,21 @@ func report(st *stats, lat []int64, samples []rssSample, elapsed float64, pid in
 		"broker_rss_peak_mb":  peakRSS(samples),
 		"broker_threads_peak": peakThreads(samples),
 		"broker_cpu_cores":    cpuCores(samples),
+	}
+
+	// _meta travels with the numbers. A bare throughput figure is unreadable
+	// three months later: it needs the commit it was built from, the platform,
+	// and whatever the operator knows about the topology.
+	out["_meta"] = map[string]any{
+		"tool":       "loadgen",
+		"commit":     buildRevision(),
+		"timestamp":  time.Now().Format(time.RFC3339),
+		"go_version": runtime.Version(),
+		"platform":   runtime.GOOS + "/" + runtime.GOARCH,
+		"mode":       cfg.mode,
+		"note":       cfg.note,
+		"resource_sampling": "broker_* fields need -pid and a readable /proc; " +
+			"they are zero on Windows",
 	}
 
 	if cfg.jsonOut {
