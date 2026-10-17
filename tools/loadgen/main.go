@@ -93,7 +93,7 @@ func init() {
 	flag.IntVar(&cfg.payload, "payload", 256, "payload bytes")
 	flag.DurationVar(&cfg.duration, "duration", 20*time.Second, "how long to sustain load")
 	flag.StringVar(&cfg.topic, "topic", "loadgen/topic", "topic to publish and subscribe")
-	flag.IntVar(&cfg.pid, "pid", 0, "broker PID for resource sampling; 0 finds it automatically")
+	flag.IntVar(&cfg.pid, "pid", 0, "broker PID for resource sampling; 0 finds it automatically, negative disables (use for cross-host runs)")
 	flag.BoolVar(&cfg.jsonOut, "json", false, "emit JSON instead of a table")
 	flag.BoolVar(&cfg.latency, "latency", true, "record end-to-end latency samples; "+
 		"disable at very high subscriber counts, where the recording itself becomes load")
@@ -168,6 +168,12 @@ func main() {
 			fmt.Fprintln(os.Stderr, "warning: broker process not found; "+
 				"resource columns will be empty (pass -pid)")
 		}
+	} else if brokerPID < 0 {
+		// Explicitly disabled. Auto-discovery is wrong for a cross-host run: the
+		// broker is not on this machine, and the lookup can latch onto an
+		// unrelated process, which then gets reported as the broker's RSS. A
+		// negative -pid says "I know it is remote, do not guess".
+		brokerPID = 0
 	}
 
 	var st stats
