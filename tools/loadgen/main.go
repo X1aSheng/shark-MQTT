@@ -65,6 +65,11 @@ type config struct {
 	// environment they came from are not comparable three months later, and a
 	// hand-written sidecar file is the first thing to be forgotten.
 	note string
+	// mix is a QoS ratio such as "qos0:70,qos1:30"; when set it overrides -qos
+	// per message. sampleInterval, when positive, records a timeline point at
+	// that cadence so a soak can show whether RSS climbs.
+	mix            string
+	sampleInterval time.Duration
 }
 
 var cfg config
@@ -88,6 +93,8 @@ func init() {
 	flag.IntVar(&cfg.connections, "connections", 1000, "connection count for -mode idle")
 	flag.IntVar(&cfg.idleParallel, "idle-parallel", 64, "concurrent dials for -mode idle")
 	flag.StringVar(&cfg.note, "note", "", "free text stored in the JSON _meta block (host, topology, anything needed to interpret the run)")
+	flag.StringVar(&cfg.mix, "mix", "", "QoS ratio, e.g. \"qos0:70,qos1:30\"; overrides -qos per message")
+	flag.DurationVar(&cfg.sampleInterval, "sample-interval", 0, "record a timeline point every N (0 disables); use during soaks to see RSS trend")
 }
 
 // stats aggregates counters across all connections.
@@ -126,6 +133,16 @@ func main() {
 	if cfg.publishers <= 0 || cfg.subscribers <= 0 {
 		fmt.Fprintln(os.Stderr, "need at least one publisher and one subscriber")
 		os.Exit(2)
+	}
+
+	mixPattern, err := parseMix(cfg.mix)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	subQoS := byte(cfg.qos)
+	if mixPattern != nil {
+		subQoS = maxQoS(mixPattern)
 	}
 
 	brokerPID := cfg.pid
@@ -178,7 +195,7 @@ func main() {
 				latency[idx] = append(latency[idx], time.Now().UnixNano()-sent)
 			})
 			if _, err := c.Subscribe(ctx, []client.TopicSubscription{
-				{Topic: cfg.topic, QoS: byte(cfg.qos)},
+				{Topic: cfg.topic, QoS: subQoS},
 			}); err != nil {
 				subErr <- fmt.Errorf("subscriber %d subscribe: %w", i, err)
 				return
@@ -261,7 +278,13 @@ func main() {
 					return
 				}
 				binary.BigEndian.PutUint64(payload[:8], uint64(time.Now().UnixNano()))
-				if err := c.Publish(ctx, cfg.topic, byte(cfg.qos), false, payload); err != nil {
+				pubQoS := byte(cfg.qos)
+				if mixPattern != nil {
+					// Shared across publishers: the global send counter keeps the
+					// ratio exact without per-publisher bookkeeping.
+					pubQoS = mixPattern[int(st.sent.Load())%len(mixPattern)]
+				}
+				if err := c.Publish(ctx, cfg.topic, pubQoS, false, payload); err != nil {
 					if ctx.Err() != nil {
 						return
 					}
@@ -421,6 +444,35 @@ func buildRevision() string {
 	return "unknown"
 }
 
+// timelineFrom downsamples the resource samples to one point per interval.
+//
+// A soak produces a sample every 250 ms; half an hour of that is 7,200 points in
+// one JSON file, which hides the trend in noise instead of showing it. One point
+// per interval keeps the file readable and still exposes a monotonic climb,
+// which is the only thing a soak is looking for.
+func timelineFrom(samples []rssSample, every time.Duration) []map[string]any {
+	if every <= 0 || len(samples) == 0 {
+		return nil
+	}
+	start := samples[0].at
+	out := make([]map[string]any, 0, 32)
+	next := start
+	for _, s := range samples {
+		if s.at.Before(next) {
+			continue
+		}
+		next = s.at.Add(every)
+		out = append(out, map[string]any{
+			"t_s":      s.at.Sub(start).Seconds(),
+			"rss_mb":   float64(s.rss) / (1 << 20),
+			"peak_mb":  float64(s.peakRSS) / (1 << 20),
+			"threads":  s.threads,
+			"cpu_nano": s.cpuNano,
+		})
+	}
+	return out
+}
+
 func report(st *stats, lat []int64, samples []rssSample, elapsed float64, pid int) {
 	sent := st.sent.Load()
 	recv := st.received.Load()
@@ -464,6 +516,10 @@ func report(st *stats, lat []int64, samples []rssSample, elapsed float64, pid in
 		"note":       cfg.note,
 		"resource_sampling": "broker_* fields need -pid and a readable /proc; " +
 			"they are zero on Windows",
+	}
+
+	if tl := timelineFrom(samples, cfg.sampleInterval); len(tl) > 0 {
+		out["rss_timeline"] = tl
 	}
 
 	if cfg.jsonOut {

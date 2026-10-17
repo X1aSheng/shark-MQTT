@@ -80,9 +80,19 @@ Linux 不允许覆盖正在执行的 ELF, SFTP 会报 `OSError: Failure`。顺�
 ./loadgen -addr <broker> -qos 0 -rate 20000 -subscribers 4 -publishers 8 \
           -payload 256 -duration 20s -pid <broker-pid>
 
+# 混合 QoS (70% QoS 0 + 30% QoS 1); 订阅自动取最高 QoS
+./loadgen -addr <broker> -mix "qos0:70,qos1:30" -rate 20000 \
+          -subscribers 4 -publishers 8 -duration 20s
+
+# 长稳, 每 30 秒记录一个资源点, 落盘带 timeline
+./loadgen -addr <broker> -mix "qos0:70,qos1:30" -rate 20000 -duration 10m \
+          -sample-interval 30s -json -note "soak 10min" > soak.json
+
 # 空闲连接模式
 ./loadgen -addr <broker> -mode idle -connections 5000 -idle-parallel 64 -duration 10s
 ```
+
+**`-mix` 用固定模式而不是随机抽样**: 权重整除时任意窗口内的比例都精确, 这样不同长度的两次运行才可比。订阅 QoS 自动取模式里的最高值 -- 否则 broker 会把投递降级, 测的就不是混合负载的成本。
 
 `-pid` 让 loadgen 采样 broker 的 `/proc`, 输出 RSS 均值/峰值/线程数/CPU 核数。**只有 Linux 可用**; Windows 上该列为空, 需另行用 `Get-Process` 采样。
 
@@ -187,7 +197,7 @@ awk '{print $14, $15}' /proc/<pid>/stat; getconf CLK_TCK
 
 ### 5.6 长稳 (可选, 30 分钟以上)
 
-固定一个 70% 负载点跑 30 分钟, 每 5 分钟记录一次 RSS 与投递率。判据:
+固定一个 70% 负载点跑 30 分钟, 加 `-sample-interval 30s` 让 JSON 里带 `rss_timeline` 数组 (每次采样含 `t_s` / `rss_mb` / `peak_mb` / `threads` / `cpu_nano`), 再按序列判断趋势而不是只看首尾两个数。判据:
 
 - RSS 不持续增长 (允许 GC 锯齿, 不允许单调爬升)
 - 投递率不衰减
@@ -260,9 +270,9 @@ C_idle5000_261017.json
 
 ---
 
-## 9. 工具现状与缺口
+## 9. 工具能力
 
-`-json` 输出现在自带 `_meta`:
+`-json` 输出自带 `_meta`, 并在 `-sample-interval > 0` 时附带 `rss_timeline`:
 
 ```json
 "_meta": {
@@ -272,17 +282,23 @@ C_idle5000_261017.json
   "go_version": "go1.26.1",
   "platform": "linux/amd64",
   "mode": "load",
-  "note": "<-note 的内容>",
-  "resource_sampling": "broker_* fields need -pid and a readable /proc; they are zero on Windows"
-}
+  "note": "<-note 的内容>"
+},
+"rss_timeline": [
+  {"t_s": 0.0, "rss_mb": 16.4, "peak_mb": 16.6, "threads": 9, "cpu_nano": 120000000},
+  {"t_s": 30.1, "rss_mb": 17.1, "peak_mb": 17.9, "threads": 9, "cpu_nano": 3800000000}
+]
 ```
 
-`commit` 读自二进制里的 `vcs.revision`, 所以 **用 `go build` 构建时是真实值, `go run` 下是 `unknown`**。正式测量必须用构建产物, 不要用 `go run`。
+`commit` 读自二进制里的 `vcs.revision`, 所以 **用 `go build` 构建时是真实值, `go run` 下是 `unknown`**。正式测量必须用构建产物。
 
-还缺两项, 都是第 5.6 节长稳测试的前置:
+timeline 由已有的 250 ms 资源采样降采样得到: 半小时长稳原始有 7,200 个点, 全塞进 JSON 只会把趋势埋进噪声。按 `-sample-interval` 抽点后既保留单调爬升的可辨识性, 又不至于让人读不下去。
 
-1. **混合负载模式**。现在一次只有一种 QoS 和一种 payload, 真实设备群是混合的。需要 `-mix "qos0:70,qos1:30"`。
-2. **长稳模式的周期采样**。现在只输出最终聚合值, 看不出 RSS 是否单调爬升。需要在 `-duration` 内每 N 秒打一个点, 序列化进 JSON 的 `timeline` 数组。
+**跨机时 `-pid` 采不到 broker 资源** -- loadgen 只能读本机的 `/proc`。跨机长稳要在 broker 主机上另起一个采样循环 (第 3.3 节的命令), 再与 loadgen 的吞吐数据对齐时间戳。
+
+### 仍缺
+
+**多 payload 混合**。QoS 已经可以按比例混, payload 还是一次一个尺寸。真实设备群同时有 64 B 心跳和 4 KB 遥测, 需要 `-payload-mix "64:80,4096:20"`。这个缺口影响的是"混合尺寸下的分片与拷贝成本", 对容量结论有影响但不算致命。
 
 ## 10. 与微基准的分工
 
