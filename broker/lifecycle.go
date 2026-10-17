@@ -202,25 +202,60 @@ func (b *Broker) cleanupExpiredRetained() {
 		return
 	}
 
-	b.retainedMu.Lock()
-	defer b.retainedMu.Unlock()
-
+	// The sweep collects candidates under the lock and deletes outside it: one
+	// DeleteRetained is a Redis round trip or a Badger fsync, and holding
+	// retainedMu across the whole batch froze every retained publish and every
+	// management read for the duration of the slowest delete.
 	now := time.Now()
+	var expired []string
+	b.retainedMu.Lock()
 	for topic, expiry := range b.retainedExpirations {
 		if now.After(expiry) {
-			if err := b.retainedStore.DeleteRetained(b.ctx, topic); err != nil {
-				b.logger.Warn("failed to delete expired retained message", "topic", topic, "error", err)
-				b.metrics.IncErrors("retained_store")
-				continue
-			}
-			b.retainedCount.Add(-1)
-			delete(b.retainedExpirations, topic)
-			b.logger.Debug("expired retained message cleaned up", "topic", topic)
+			expired = append(expired, topic)
 		}
 	}
-	b.metrics.SetRetainedMessages(int(b.retainedCount.Load()))
+	b.retainedMu.Unlock()
+
+	removed := 0
+	for _, topic := range expired {
+		// Same stripe a publisher of this topic takes, so a republish that
+		// refreshed the deadline between the scan above and here is not deleted
+		// out from under its new owner. Lock order (stripe then retainedMu)
+		// matches handleRetainedMessage.
+		stripe := &b.retainedStripes[retainedStripeIndex(topic)]
+		stripe.Lock()
+
+		b.retainedMu.Lock()
+		cur, tracked := b.retainedExpirations[topic]
+		b.retainedMu.Unlock()
+		if !tracked || !now.After(cur) {
+			stripe.Unlock()
+			continue // refreshed or already gone
+		}
+
+		err := b.retainedStore.DeleteRetained(b.ctx, topic)
+		if err == nil {
+			b.retainedMu.Lock()
+			delete(b.retainedExpirations, topic)
+			b.retainedMu.Unlock()
+		}
+		stripe.Unlock()
+
+		if err != nil {
+			b.logger.Warn("failed to delete expired retained message", "topic", topic, "error", err)
+			b.metrics.IncErrors("retained_store")
+			continue
+		}
+		b.retainedCount.Add(-1)
+		removed++
+		b.logger.Debug("expired retained message cleaned up", "topic", topic)
+	}
+	if removed > 0 {
+		b.metrics.SetRetainedMessages(int(b.retainedCount.Load()))
+	}
 }
 
+// sysStatusLoop publishes the $SYS tree on a ticker until the broker stops.
 func (b *Broker) sysStatusLoop() {
 	b.publishSystemStatus()
 	ticker := time.NewTicker(b.opts.sysInterval)

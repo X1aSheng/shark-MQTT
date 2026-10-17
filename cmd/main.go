@@ -177,6 +177,23 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Open the persistence backends the configuration selects. A backend this
+	// binary was not built with is a startup error naming the required build
+	// tag, never a silent fallback to memory: falling back would start cleanly
+	// and lose every session on the next restart while looking healthy.
+	ps, err := openPersistence(cfg)
+	if err != nil {
+		log.Fatalf("Failed to open storage backend: %v", err)
+	}
+	defer ps.close()
+	if ps.session != nil {
+		brokerOpts = append(brokerOpts,
+			api.WithSessionStore(ps.session),
+			api.WithMessageStore(ps.message),
+			api.WithRetainedStore(ps.retained),
+		)
+	}
+
 	b := api.NewBroker(brokerOpts...)
 
 	// Start the broker

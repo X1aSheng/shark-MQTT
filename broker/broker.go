@@ -127,6 +127,12 @@ type Broker struct {
 
 	retainedMu    sync.Mutex
 	retainedCount atomic.Int64 // count of retained messages maintained with retainedMu
+	// retainedStripes serializes publishers of the same topic without making
+	// every retained publish queue behind one global lock. The store round trip
+	// (Redis RTT, Badger fsync) happens under a stripe, not under retainedMu, so
+	// two publishers of different topics, and every management read, proceed in
+	// parallel. See retainedStripeIndex.
+	retainedStripes [retainedStripeCount]sync.Mutex
 	// retainedExpirations tracks expiry times for retained messages when
 	// retainedExpiry is configured (> 0). Keyed by topic name.
 	retainedExpirations map[string]time.Time

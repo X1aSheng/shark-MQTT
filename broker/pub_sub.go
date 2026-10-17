@@ -331,13 +331,36 @@ func (b *Broker) closeProtocolViolationWithReason(clientID string, sess *Session
 		cs.conn.Close()
 	}
 }
+// retainedStripeCount is the number of retained-message mutexes. A power of two
+// keeps the modulo cheap; 64 stripes already lets a multi-client workload spread
+// out, and the memory cost is one mutex each.
+const retainedStripeCount = 64
+
+// retainedStripeIndex maps a topic to its stripe. The FNV-1a constants are used
+// inline rather than through hash/fnv to avoid an allocation on the publish
+// path.
+func retainedStripeIndex(topic string) uint32 {
+	h := uint32(2166136261)
+	for i := 0; i < len(topic); i++ {
+		h ^= uint32(topic[i])
+		h *= 16777619
+	}
+	return h % retainedStripeCount
+}
+
 func (b *Broker) handleRetainedMessage(ctx context.Context, pkt *protocol.PublishPacket) {
 	if b.retainedStore == nil {
 		return
 	}
 
-	b.retainedMu.Lock()
-	defer b.retainedMu.Unlock()
+	// The stripe serializes publishers of THIS topic, which is all the
+	// check-then-write below needs. It deliberately is not a global lock: the
+	// store calls in this function are a network round trip (Redis) or an fsync
+	// (Badger), and holding one mutex across them turned every retained publish
+	// into a queue and stalled the management endpoints with it.
+	stripe := &b.retainedStripes[retainedStripeIndex(pkt.Topic)]
+	stripe.Lock()
+	defer stripe.Unlock()
 
 	existed := true
 	if _, err := b.retainedStore.GetRetained(ctx, pkt.Topic); err != nil {
@@ -370,7 +393,9 @@ func (b *Broker) handleRetainedMessage(ctx context.Context, pkt *protocol.Publis
 		if existed {
 			b.retainedCount.Add(-1)
 		}
+		b.retainedMu.Lock()
 		delete(b.retainedExpirations, pkt.Topic)
+		b.retainedMu.Unlock()
 		b.metrics.SetRetainedMessages(int(b.retainedCount.Load()))
 		return
 	}
@@ -408,11 +433,13 @@ func (b *Broker) handleRetainedMessage(ctx context.Context, pkt *protocol.Publis
 			deadline = ttl
 		}
 	}
+	b.retainedMu.Lock()
 	if deadline.IsZero() {
 		delete(b.retainedExpirations, pkt.Topic)
 	} else {
 		b.retainedExpirations[pkt.Topic] = deadline
 	}
+	b.retainedMu.Unlock()
 	b.metrics.SetRetainedMessages(int(b.retainedCount.Load()))
 }
 
