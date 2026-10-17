@@ -1,6 +1,6 @@
 # Testing Guide
 
-Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。当前基线为 **538 个单元测试**、**194 个集成测试**、**72 个基准测试**（口径：源码中声明的顶层 `Test*` / `Benchmark*` 函数数，复现方式见 [测试统计](#测试统计)）。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
+Shark-MQTT 的测试体系覆盖协议层、业务层和性能层三个维度，包含单元测试、集成测试、缺陷回归测试和基准测试。当前基线为 **547 个单元测试**、**196 个集成测试**、**72 个基准测试**（口径：源码中声明的顶层 `Test*` / `Benchmark*` 函数数，复现方式见 [测试统计](#测试统计)）。脚本 `unit` 模式已纳入 `tests/defects/...` 缺陷回归套件。
 
 ---
 
@@ -96,23 +96,37 @@ grep -rhE '^func Benchmark' --include='*_test.go' ./tests/bench ./plugin ./pkg/m
 
 ### 各包测试明细
 
+> **分项数字会漂移, 合计才是口径。** 下表只列主要包, 且每次加测试都要手动同步 --
+> 分项之和原本就不等于合计 (未列出的包仍有测试)。合计数由下面的命令得出, 那是唯一
+> 权威来源:
+
+```bash
+# 单元测试 (排除集成与 store 的 build-tag 包)
+grep -rn "^func Test" --include=*_test.go . | grep -v "tests/integration\|store/redis\|store/badger" | wc -l
+# 集成测试
+grep -rn "^func Test" --include=*_test.go tests/integration | wc -l
+# 基准 (tests/bench + plugin + pkg/metrics; store/redis 与 store/badger 需 build tag, 不计)
+grep -rn "^func Benchmark" --include=*_test.go tests/bench plugin pkg | wc -l
+```
+
+
 | 包 | 测试数 | 基准测试数 | 说明 |
 |----|--------|-----------|------|
-| broker/ | 237 | 0 | 核心逻辑：TopicTree、QoS 引擎、会话、遗嘱、认证、服务器、retained metrics、MQTT 5.0 属性中继与过期边界、重连重传、按协议版本门控的连接内重传、解码失败与 keepalive 超时的原因码回执、会话接管拆除（Section 3.1.4 确定性 DISCONNECT 0x8E）、入站 Receive Maximum 超限拆除（Section 3.3.4 DISCONNECT 0x93，预算取 CONNACK 广播值）、畸形主题名/过滤器的 Protocol Error 拆链（Section 4.7.1 / Section 4.13.1 DISCONNECT 0x82）、Clean Start 与 Session Expiry Interval 解耦（Section 3.1.2.4 / Section 3.1.2.11.2：按协商值留存会话、CONNACK 广播实际采用值、遗嘱延迟不再被折零）、插件钩子上下文 |
+| broker/ | 248 | 0 | 核心逻辑：TopicTree、QoS 引擎、会话、遗嘱、认证、服务器、retained metrics、MQTT 5.0 属性中继与过期边界、重连重传、按协议版本门控的连接内重传、解码失败与 keepalive 超时的原因码回执、会话接管拆除（Section 3.1.4 确定性 DISCONNECT 0x8E）、入站 Receive Maximum 超限拆除（Section 3.3.4 DISCONNECT 0x93，预算取 CONNACK 广播值）、畸形主题名/过滤器的 Protocol Error 拆链（Section 4.7.1 / Section 4.13.1 DISCONNECT 0x82）、Clean Start 与 Session Expiry Interval 解耦（Section 3.1.2.4 / Section 3.1.2.11.2：按协商值留存会话、CONNACK 广播实际采用值、遗嘱延迟不再被折零）、插件钩子上下文 |
 | protocol/ | 95 | 0 | MQTT 3.1 / 3.1.1 / 5.0 编解码、属性、报文 flags 校验（解码与编码对称）、流对齐不变量、属性出现次数与所属报文类型校验（Table 2-4，解码与编码双向）、DISCONNECT 原因码的协议版本门控、协议适配层（15 种报文；握手失败仍返回 codec，供服务端回 CONNACK） |
 | client/ | 40 | 0 | MQTT 客户端连接、发布、订阅、断开清理、QoS 2 入站 ack（PUBREC 保留 flags）与对端 reason-code 守卫 |
-| config/ | 34 | 0 | 配置解析与校验 |
+| config/ | 35 | 0 | 配置解析与校验 |
 | store/memory/ | 23 | 0 | 内存存储：会话、消息、保留消息 |
 | api/ | 25 | 0 | 公共 API、健康端点与健康监听的生命周期（Stop 释放端口/幂等、重启可重绑） |
-| plugin/ | 37 | 3 | 插件系统：注册、分发、超时与 panic 隔离 |
+| plugin/ | 38 | 3 | 插件系统：注册、分发、超时与 panic 隔离 |
 | pkg/bufferpool/ | 10 | 0 | 缓冲池管理 |
 | pkg/metrics/ | 10 | 1 | Prometheus 指标 |
 | store/ | 8 | 0 | 存储层 JSON 格式：会话与保留消息的中继属性编解码及向后兼容 |
 | pkg/logger/ | 7 | 0 | slog 日志适配 |
 | errs/ | 4 | 0 | 错误定义 |
 | tests/defects/ | 8 | 0 | 审查发现缺陷的最小复现和回归测试 |
-| **单元测试合计** | **538** | **4** | |
-| tests/integration/ | 194 | 0 | 端到端集成测试（含部署验证） |
+| **单元测试合计** | **547** | **4** | |
+| tests/integration/ | 196 | 0 | 端到端集成测试（含部署验证） |
 | tests/bench/ | 0 | 68 | 全栈 TCP、E2E 数据验证、微基准 |
 | **基准测试合计** | | **72** | |
 | store/redis/（`store_redis`） | 18 | 9 | Redis 存储：消息、保留、会话（默认不编译） |

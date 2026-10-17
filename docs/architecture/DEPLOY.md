@@ -104,7 +104,7 @@ docker compose -f deploy/docker/docker-compose.yml down
 
 ### Full Stack with Redis
 
-Edit `deploy/docker/docker-compose.yml` and uncomment the `redis` and `mqtt-redis` service blocks,
+Edit `deploy/docker/docker-compose.yml` and uncomment the `redis` and `shark-mqtt-redis` service blocks,
 then:
 
 ```bash
@@ -178,10 +178,13 @@ kubectl delete -k deploy/k8s/app/
 
 The deployment uses HTTP probes against the health server (port 18999):
 
-| Probe | Path | Port | Initial Delay |
-|-------|------|------|---------------|
-| liveness | `/healthz` | 18999 | 10s |
-| readiness | `/readyz` | 18999 | 5s |
+| Probe | Path | Port | initialDelay | period | timeout |
+|-------|------|------|--------------|--------|---------|
+| liveness | `/healthz` | 18999 | 5s | 10s | 3s |
+| readiness | `/readyz` | 18999 | 3s | 5s | 2s |
+
+The numbers come from `deploy/k8s/app/deployment.yaml`; the Helm chart uses the
+same values unless overridden in `values.yaml`.
 
 `/healthz` always returns 200 while the process is running.
 `/readyz` returns 200 once the MQTT server is accepting connections, 503 otherwise.

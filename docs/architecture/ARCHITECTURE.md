@@ -1,6 +1,10 @@
 # Shark-MQTT Architecture Design Document
 
-> Status: partially outdated | Last Updated: 2026-10-17 | Go Version: 1.26.1
+> **哪个部分可信**: 设计原则 (P1-P5)、层间边界、连接拆除/重传/会话/消息过期的
+> 语义, 以本文为准。**逐字段的 struct 清单与函数签名仅供理解结构, 以源码为准** --
+> 它们随重构漂移, 逐字段同步的成本高于收益。文件清单见 Directory Structure。
+>
+> Last Updated: 2026-10-17 | Go Version: 1.26.1
 >
 > This document predates the protocol-adapter refactor and the split of
 > broker/broker.go into conn_lifecycle.go, pub_sub.go and qos_outbound.go. The
@@ -266,132 +270,54 @@ Structured logging: all operations carry clientID, topic, QoS and other fields
 
 ## Directory Structure
 
+逐文件清单维护不住: 每次加一个文件, 树状图就错一行, 而错一行之后没人敢信整张图。这里改成**按职责分组**, 只在包级别和"哪一类东西在哪个文件"这个粒度上做承诺。具体文件用 `ls <pkg>/*.go` 查, 那是唯一不会过期的来源。
+
+### Layers
+
 ```
-shark-mqtt/
-|
-|-- go.mod                            # module github.com/X1aSheng/shark-mqtt
-|-- go.sum
-|-- README.md
-|-- CONTRIBUTING.md
-|-- Makefile
-|
-|-- api/
-|   |-- api.go                        # Unified public API, factory methods, option functions
-|   |-- api_test.go
-|   |-- doc.go                        # Package documentation with usage examples
-|
-|-- broker/
-|   |-- server.go                     # MQTTServer: network layer entry point
-|   |-- broker.go                     # Broker: core business orchestration (implements ConnectionHandler)
-|   |-- session.go                    # Session: per-client state + Manager: lifecycle
-|   |-- session_types.go              # State, CloseReason, Stats type definitions
-|   |-- manager.go                    # Manager (session management, also in session.go)
-|   |-- topic_tree.go                 # TopicTree: trie subscription tree + wildcards
-|   |-- qos_engine.go                 # QoSEngine: QoS 1/2 state machine + retry
-|   |-- will_handler.go               # WillHandler: will message registration and trigger
-|   |-- auth.go                       # Authenticator, Authorizer, StaticAuth, AllowAllAuth, DenyAllAuth
-|   |-- auth_file.go                  # FileAuth: YAML/JSON file-based authentication
-|   |-- auth_noop.go                  # NoopAuth: development-only pass-through
-|   |-- auth_chain.go                 # ChainAuth: chain multiple authenticators
-|   |-- options.go                    # Broker Option functions
-|   |-- options_server.go             # MQTTServer ServerOption functions
-|   |-- broker_test.go
-|   |-- server_test.go
-|   |-- session_test.go
-|   |-- topic_tree_test.go
-|   |-- qos_engine_boundary_test.go
-|   |-- qos_engine_test.go
-|   |-- will_handler_test.go
-|   |-- auth_test.go
-|
-|-- protocol/
-|   |-- codec.go                      # Codec: encode/decode all MQTT packets
-|   |-- packets.go                    # All 15 packet type definitions, FixedHeader, TopicFilter
-|   |-- constants.go                  # PacketType constants, version constants, reason codes
-|   |-- properties.go                 # MQTT 5.0 Properties encoding/decoding
-|   |-- connect.go                    # CONNECT packet encode/decode
-|   |-- publish.go                    # PUBLISH packet encode/decode
-|   |-- subscribe.go                  # SUBSCRIBE/UNSUBSCRIBE encode/decode
-|   |-- topic.go                      # MatchTopic utility function
-|   |-- errors.go                     # Protocol-level error definitions
-|   |-- codec_test.go
-|
-|-- store/
-|   |-- interfaces.go                 # SessionStore, MessageStore, RetainedStore interfaces
-|   |-- types.go                      # SessionData, StoredMessage, RetainedMessage, Subscription, InflightMessage
-|   |-- errors.go                     # Store-level error definitions
-|   |-- memory/
-|   |   |-- memory.go                 # All in-memory store implementations
-|   |   |-- memory_test.go
-|   |   |-- memory_store_test.go
-|   |-- redis/
-|   |   |-- session_store.go          # Redis session store
-|   |   |-- message_store.go          # Redis message store
-|   |   |-- retained_store.go         # Redis retained store
-|   |-- badger/
-|   |   |-- session_store.go          # BadgerDB session store
-|   |   |-- message_store.go          # BadgerDB message store
-|   |   |-- retained_store.go         # BadgerDB retained store
-|   |   |-- badger_store_test.go
-|
-|-- plugin/
-|   |-- manager.go                    # Plugin interface, Manager, Hook constants, Context
-|   |-- manager_test.go
-|
-|-- pkg/
-|   |-- logger/
-|   |   |-- logger.go                 # Logger interface + slog implementation + Noop
-|   |-- metrics/
-|   |   |-- metrics.go                # Metrics interface (12 methods) + Noop implementation
-|   |-- bufferpool/
-|       |-- pool.go                   # Read buffer pool
-|       |-- pool_test.go
-|
-|-- config/
-|   |-- config.go                     # Config struct + DefaultConfig() + TLSConfig()
-|   |-- loader.go                     # YAML/ENV config loader
-|   |-- config_test.go
-|
-|-- errs/
-|   |-- errors.go                     # Global sentinel error definitions
-|   |-- errors_test.go
-|
-|-- client/
-|   |-- client.go                     # MQTTClient implementation
-|   |-- options.go                    # Client Option functions
-|   |-- client_test.go
-|
-|-- testutils/
-|   |-- mock_conn.go                  # MockConn (mock net.Conn)
-|   |-- mock_store.go                 # MockSessionStore, MockMessageStore, MockRetainedStore
-|   |-- bench.go                      # BenchResult, LatencyRecorder, ThroughputCalculator
-|   |-- helpers.go                    # Packet encoding helpers, pipe connections, test utilities
-|
-|-- cmd/
-|   |-- main.go                       # CLI entry point
-|
-|-- examples/
-|   |-- standalone.go                 # Standalone broker example
-|   |-- custom_auth.go                # Custom authentication example
-|   |-- tls_broker.go                 # TLS broker example
-|
-|-- tests/
-|   |-- integration/
-|   |   |-- connect_test.go
-|   |   |-- pubsub_test.go
-|   |   |-- delivery_test.go
-|   |   |-- qos_test.go
-|   |   |-- persistent_session_test.go
-|   |   |-- will_test.go
-|   |   |-- topic_wildcard_test.go
-|   |   |-- unsubscribe_test.go
-|   |   |-- retained_test.go
-|   |   |-- edge_case_test.go
-|   |-- bench/
-|   |   |-- broker_bench_test.go
-|   |   |-- data_delivery_bench_test.go
-|   |   |-- micro_bench_test.go
+cmd/ ----------- CLI: flags, config load, store wiring (stores_*.go are build-tagged)
+
+api/ ----------- public facade: NewBroker, Option functions, health/metrics server
+                  |
+broker/ -------- core: network layer + business logic (25 files, see below)
+                  |
+protocol/ ------ MQTT 3.1/3.1.1/5.0 codec: packets, properties, spec capability table
+
+store/ --------- SessionStore / MessageStore / RetainedStore interfaces
+                  + memory (default), redis and badger behind build tags
+
+pkg/ ----------- logger, metrics, tiered buffer pool     (no dependency on broker/)
+errs/ ---------- error sentinels shared by every layer
+client/ -------- MQTT 3.1.1 client (5.0 support lives in the broker)
+plugin/ -------- plugin registry, hook dispatch, per-hook timeouts
+config/ -------- Config struct, YAML/TOML/env loading, Validate
 ```
+
+### broker/ by responsibility
+
+| 职责 | 文件 |
+|------|------|
+| 网络层入口, 连接生命周期 | `server.go` `conn.go` `ws_conn.go` `connack.go` |
+| 核心编排, 拆除路径 | `broker.go` `conn_lifecycle.go` `lifecycle.go` |
+| 会话与连接状态 | `session.go` `session_types.go` `client_state.go` |
+| 订阅树与投递 | `topic_tree.go` `pub_sub.go` `publish_properties.go` |
+| QoS 1/2 状态机与重传 | `qos_engine.go` `qos_outbound.go` |
+| 认证与授权 | `auth.go` `auth_chain.go` `auth_file.go` `auth_noop.go` |
+| 运维保护 | `admin.go` `rate_limit.go` `flapping.go` |
+| 构造选项 | `options.go` `options_server.go` |
+| 遗嘱 | `will_handler.go` |
+
+### Other trees
+
+| 目录 | 内容 |
+|------|------|
+| `tests/` | `integration/` (real TCP end-to-end), `bench/` (micro-benchmarks), `defects/` (regression cases), `logs/` (gitignored) |
+| `deploy/` | `docker/`, `k8s/app/` (raw manifests), `k8s/helm/shark-mqtt/` |
+| `examples/` | minimal embedder examples |
+| `scripts/` | `check_links.go` (doc link gate), release helpers |
+| `docs/` | see [docs/README.md](../README.md) |
+
+**How to update this section**: when a package gains a new *responsibility*, add it to the table above. When it gains another file inside an existing responsibility, do nothing - that is the point of grouping by responsibility.
 
 ---
 
