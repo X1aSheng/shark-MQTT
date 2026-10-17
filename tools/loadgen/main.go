@@ -70,6 +70,9 @@ type config struct {
 	// that cadence so a soak can show whether RSS climbs.
 	mix            string
 	sampleInterval time.Duration
+	// payloadMix is a size ratio such as "64:80,4096:20"; when set it overrides
+	// -payload per message.
+	payloadMix string
 }
 
 var cfg config
@@ -95,6 +98,7 @@ func init() {
 	flag.StringVar(&cfg.note, "note", "", "free text stored in the JSON _meta block (host, topology, anything needed to interpret the run)")
 	flag.StringVar(&cfg.mix, "mix", "", "QoS ratio, e.g. \"qos0:70,qos1:30\"; overrides -qos per message")
 	flag.DurationVar(&cfg.sampleInterval, "sample-interval", 0, "record a timeline point every N (0 disables); use during soaks to see RSS trend")
+	flag.StringVar(&cfg.payloadMix, "payload-mix", "", "payload size ratio, e.g. \"64:80,4096:20\"; overrides -payload per message")
 }
 
 // stats aggregates counters across all connections.
@@ -143,6 +147,12 @@ func main() {
 	subQoS := byte(cfg.qos)
 	if mixPattern != nil {
 		subQoS = maxQoS(mixPattern)
+	}
+
+	payPlan, err := parsePayloadMix(cfg.payloadMix)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
 	}
 
 	brokerPID := cfg.pid
@@ -277,14 +287,18 @@ func main() {
 				if ctx.Err() != nil {
 					return
 				}
-				binary.BigEndian.PutUint64(payload[:8], uint64(time.Now().UnixNano()))
+				frame := payload
+				if payPlan != nil {
+					frame = payPlan.frame(st.sent.Load())
+				}
+				binary.BigEndian.PutUint64(frame[:8], uint64(time.Now().UnixNano()))
 				pubQoS := byte(cfg.qos)
 				if mixPattern != nil {
 					// Shared across publishers: the global send counter keeps the
 					// ratio exact without per-publisher bookkeeping.
 					pubQoS = mixPattern[int(st.sent.Load())%len(mixPattern)]
 				}
-				if err := c.Publish(ctx, cfg.topic, pubQoS, false, payload); err != nil {
+				if err := c.Publish(ctx, cfg.topic, pubQoS, false, frame); err != nil {
 					if ctx.Err() != nil {
 						return
 					}
@@ -482,6 +496,7 @@ func report(st *stats, lat []int64, samples []rssSample, elapsed float64, pid in
 		"config": map[string]any{
 			"addr": cfg.addr, "subscribers": cfg.subscribers, "publishers": cfg.publishers,
 			"qos": cfg.qos, "rate_target": cfg.rate, "payload": cfg.payload,
+			"mix": cfg.mix, "payload_mix": cfg.payloadMix,
 			"duration_s": cfg.duration.Seconds(),
 		},
 		"sent": sent, "received": recv, "errors": errs,
@@ -529,8 +544,16 @@ func report(st *stats, lat []int64, samples []rssSample, elapsed float64, pid in
 		return
 	}
 
-	fmt.Printf("配置       : %d 订阅者 / %d 发布者, QoS%d, %dB payload, 目标 %d msg/s\n",
-		cfg.subscribers, cfg.publishers, cfg.qos, cfg.payload, cfg.rate)
+	qosDesc := fmt.Sprintf("QoS%d", cfg.qos)
+	if cfg.mix != "" {
+		qosDesc = "QoS mix " + cfg.mix
+	}
+	payDesc := fmt.Sprintf("%dB", cfg.payload)
+	if cfg.payloadMix != "" {
+		payDesc = "payload mix " + cfg.payloadMix
+	}
+	fmt.Printf("配置       : %d 订阅者 / %d 发布者, %s, %s, 目标 %d msg/s\n",
+		cfg.subscribers, cfg.publishers, qosDesc, payDesc, cfg.rate)
 	fmt.Printf("时长       : %.1fs（实际 %.1fs）\n", cfg.duration.Seconds(), elapsed)
 	fmt.Println()
 	fmt.Printf("发送       : %d 条  (%.0f msg/s)\n", sent, float64(sent)/elapsed)
