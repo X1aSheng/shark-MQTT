@@ -37,7 +37,31 @@ func (cs *clientState) writeOrEnqueue(pkt protocol.Packet) error {
 	return nil
 }
 
+// stopWriter closes stopWrites exactly once.
+//
+// stopWrites has several closers -- session takeover, connection teardown and
+// broker Stop all reach it, and so does the writer goroutine itself when a
+// write fails -- so a bare close() would panic the second time. Closing it is
+// how producers learn the writer is gone: writeOrEnqueue and writeFinal both
+// select on it.
+func (cs *clientState) stopWriter() {
+	cs.stopOnce.Do(func() {
+		if cs.stopWrites != nil {
+			close(cs.stopWrites)
+		}
+	})
+}
+
 func (cs *clientState) writeLoop() {
+	// Every exit path must publish the stop signal, not just the shutdown one.
+	// A failed write returned without closing stopWrites, so the queue was left
+	// with no consumer and the channel open: writeOrEnqueue then blocked as soon
+	// as the queue filled, and the callers that reach it -- the readLoop of the
+	// publishing connection, the QoS retry republish and the will publisher --
+	// stayed blocked for good. The retry republish runs on a single goroutine
+	// for the whole broker, so one dead peer could stop retransmission for
+	// every client.
+	defer cs.stopWriter()
 	for {
 		select {
 		case req := <-cs.syncWrites:
@@ -49,7 +73,8 @@ func (cs *clientState) writeLoop() {
 			if err := cs.writeOne(pkt, cs.writeTimeout); err != nil {
 				// Same zombie-connection guard as writePacket: a failed write
 				// closes the socket so the reader notices and tears the
-				// connection down promptly.
+				// connection down promptly. The deferred stopWriter unblocks any
+				// producer still trying to enqueue.
 				cs.conn.Close()
 				return
 			}

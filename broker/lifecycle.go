@@ -190,7 +190,15 @@ func (b *Broker) retainedCleanupLoop() {
 	}
 }
 func (b *Broker) cleanupExpiredRetained() {
-	if b.retainedStore == nil || b.opts.retainedExpiry <= 0 {
+	// Only the store matters here. An operator TTL is folded into the recorded
+	// deadline when the retained message is written (see handleRetainedMessage),
+	// and a retained message carrying its own MQTT 5.0 Message Expiry Interval
+	// records a deadline even when no operator TTL is configured. Gating this
+	// sweep on retainedExpiry > 0 therefore meant those per-message expiries
+	// were never reaped under the default configuration: they accumulated until
+	// maxRetainedTopics was full, after which every new retained message was
+	// dropped.
+	if b.retainedStore == nil {
 		return
 	}
 
@@ -317,15 +325,15 @@ func (b *Broker) Stop() {
 	// the slowest close. Detaching first also makes the shutdown state visible
 	// to new connections immediately, instead of after the last close returns.
 	type pendingClose struct {
-		id         string
-		conn       net.Conn
-		stopWrites chan struct{}
-		hasStop    bool
+		id      string
+		conn    net.Conn
+		cs      *clientState
+		hasStop bool
 	}
 	b.mu.Lock()
 	pending := make([]pendingClose, 0, len(b.connections))
 	for id, cs := range b.connections {
-		p := pendingClose{id: id, conn: cs.conn, stopWrites: cs.stopWrites, hasStop: cs.out != nil}
+		p := pendingClose{id: id, conn: cs.conn, cs: cs, hasStop: cs.out != nil}
 		pending = append(pending, p)
 		delete(b.connections, id)
 	}
@@ -336,7 +344,7 @@ func (b *Broker) Stop() {
 			b.logger.Debug("failed to close client connection", "clientID", p.id, "error", err)
 		}
 		if p.hasStop {
-			close(p.stopWrites)
+			p.cs.stopWriter()
 		}
 	}
 

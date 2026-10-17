@@ -279,15 +279,27 @@ func (tt *TopicTree) Stats() []TopicFilterStat {
 	}
 	walk(tt.root, "")
 
-	// Shared subscriptions live outside the trie.
+	// Shared subscriptions live outside the trie, under their own lock. Take it
+	// once for the whole snapshot rather than per iteration:
+	//
+	//   - ranging the outer map without the lock races with SubscribeShared and
+	//     UnsubscribeShared, and Go's concurrent map iteration check aborts the
+	//     process (a management-endpoint read could kill the broker);
+	//   - the previous per-iteration RLock/Unlock pair released the lock inside
+	//     the inner loop, so a group whose filter map was empty leaked a read
+	//     lock and blocked every later shared subscribe forever.
+	//
+	// Lock order is tt.mu then sharedSubsMu, matching nothing that takes them in
+	// the opposite order: SubscribeShared/UnsubscribeShared/MatchShared take only
+	// sharedSubsMu, and the trie paths take only tt.mu.
+	tt.sharedSubsMu.RLock()
+	defer tt.sharedSubsMu.RUnlock()
 	for group, filters := range tt.sharedSubs {
-		tt.sharedSubsMu.RLock()
 		for filter, clients := range filters {
 			subs := make(map[string]uint8, len(clients))
 			for clientID, qos := range clients {
 				subs[clientID] = qos
 			}
-			tt.sharedSubsMu.RUnlock()
 			out = append(out, TopicFilterStat{
 				Filter:      filter,
 				Shared:      true,

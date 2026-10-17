@@ -73,6 +73,10 @@ type clientState struct {
 	// writes under wmu. stopWrites is closed to stop the writer goroutine.
 	out        chan protocol.Packet
 	stopWrites chan struct{}
+	// stopOnce guards stopWrites so that every party that can end the writer
+	// goroutine -- session takeover, connection teardown, broker Stop and the
+	// writer's own failed-write path -- can signal it without a double close.
+	stopOnce sync.Once
 
 	// syncWrites carries writeFinal requests. Every socket write belongs to the
 	// writer goroutine, so a packet that must not race the teardown has to go

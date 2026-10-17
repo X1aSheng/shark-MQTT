@@ -251,6 +251,22 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 			if err == nil && restored != nil {
 				isResuming = true
 				for topic, qos := range restored.Subscriptions {
+					// A restored filter may be a shared subscription. Those live
+					// in TopicTree.sharedSubs, not in the trie: re-inserting
+					// "$share/g/a" through Subscribe would park it under a
+					// literal "$share" node that never matches a real topic, so
+					// the subscription silently stopped receiving anything and
+					// left an entry UnsubscribeShared could not remove.
+					if IsSharedSubscription(topic) {
+						group, filter, ok := ParseSharedFilter(topic)
+						if !ok {
+							b.logger.Debug("skipping malformed shared filter in restored session",
+								"clientID", connectPkt.ClientID, "filter", topic)
+							continue
+						}
+						b.topics.SubscribeShared(group, filter, connectPkt.ClientID, qos)
+						continue
+					}
 					b.topics.Subscribe(topic, connectPkt.ClientID, qos)
 				}
 				b.restoreSessionInflight(connectPkt.ClientID, restored)
@@ -482,7 +498,7 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 		// later call disconnect() and bail out on the conn identity check, so
 		// it must be stopped here (R1).
 		if old.out != nil {
-			close(old.stopWrites)
+			old.stopWriter()
 		}
 		b.logger.Info("session takeover", "clientID", clientID)
 	}
@@ -810,7 +826,7 @@ func (b *Broker) disconnect(ctx context.Context, clientID string, conn net.Conn)
 	// the map lookup select on stopWrites and back off instead of enqueuing to
 	// a torn-down connection (R1).
 	if cs.out != nil {
-		close(cs.stopWrites)
+		cs.stopWriter()
 	}
 	online := len(b.connections)
 	b.mu.Unlock()
@@ -1023,11 +1039,21 @@ func (b *Broker) readLoop(ctx context.Context, clientID string, sess *Session, c
 					return
 				}
 				b.sendAuthPacketToClient(clientID, reason, cs.enhancedAuth.Method(), respData)
-				if reason != protocol.AuthContinueAuth {
-					b.gracefulDisconnect(clientID, conn)
-					return
+				// §4.12.1: the exchange ends with either 0x18 (Continue
+				// authentication, the client sends another AUTH) or 0x00
+				// (Success, re-authentication completed and the connection
+				// carries on). Only the success and continue codes keep the
+				// connection; anything else is a failure and ends it.
+				//
+				// Treating every code other than 0x18 as a failure disconnected
+				// each client immediately after it re-authenticated
+				// successfully, and published its will on the way out.
+				if reason == protocol.AuthContinueAuth || reason == protocol.ReasonCodeSuccess {
+					continue
 				}
-				continue
+				b.logger.Debug("re-auth rejected", "clientID", clientID, "reasonCode", reason)
+				b.gracefulDisconnect(clientID, conn)
+				return
 			}
 			// No enhanced auth: reject AUTH per §4.12.
 			b.logger.Debug("AUTH packet received but no enhanced auth in use",

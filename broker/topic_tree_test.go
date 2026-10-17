@@ -1,9 +1,78 @@
 package broker
 
 import (
+	"fmt"
 	"slices"
+	"sync"
 	"testing"
 )
+
+// TestTopicTree_StatsConcurrentWithSharedMutations pins the locking contract of
+// TopicTree.Stats against the shared-subscription side of the tree.
+//
+// Stats reads tt.sharedSubs while SubscribeShared/UnsubscribeShared write it.
+// The map has its own mutex, and a snapshot that ranges the map without holding
+// it makes the Go runtime abort the process on its concurrent-map-iteration
+// check. That turns a read-only management endpoint into a broker crash, so the
+// test drives both sides concurrently: under -race it fails deterministically
+// if the guard is dropped, and without -race it still samples the window.
+func TestTopicTree_StatsConcurrentWithSharedMutations(t *testing.T) {
+	tt := NewTopicTree()
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			group := fmt.Sprintf("g%d", i%4)
+			filter := fmt.Sprintf("a/%d", i%8)
+			client := fmt.Sprintf("c%d", i%16)
+			tt.SubscribeShared(group, filter, client, uint8(i%3))
+			tt.UnsubscribeShared(group, filter, client)
+		}
+	}()
+
+	for i := 0; i < 300; i++ {
+		tt.SubscribeShared("stable", "a/0", "watcher", 1)
+		_ = tt.Stats()
+	}
+
+	close(stop)
+	wg.Wait()
+}
+
+// TestTopicTree_StatsReportsSharedSubscriptions checks the content side: shared
+// subscriptions live outside the trie, so a listing that only walks the trie
+// would silently hide every $share subscription from an operator.
+func TestTopicTree_StatsReportsSharedSubscriptions(t *testing.T) {
+	tt := NewTopicTree()
+	tt.Subscribe("plain/topic", "c1", 1)
+	tt.SubscribeShared("g1", "shared/topic", "c2", 2)
+
+	var found *TopicFilterStat
+	for _, stat := range tt.Stats() {
+		if stat.Filter == "shared/topic" {
+			s := stat
+			found = &s
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("shared subscription missing from Stats()")
+	}
+	if !found.Shared || found.Group != "g1" {
+		t.Fatalf("shared stat = %+v, want Shared=true Group=g1", *found)
+	}
+	if qos, ok := found.Subscribers["c2"]; !ok || qos != 2 {
+		t.Fatalf("subscriber c2 = %d,%v, want 2,true", qos, ok)
+	}
+}
 
 // --- Subscribe tests ---
 

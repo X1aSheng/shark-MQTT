@@ -150,3 +150,63 @@ func TestWriteQueue_QoS1BackpressureReleases(t *testing.T) {
 		t.Fatal("QoS 1 write did not unblock after the writer drained the queue")
 	}
 }
+
+// TestWriteLoop_StopSignalOnOwnWriteFailure pins the other half of the
+// write-queue contract: the writer goroutine publishes the stop signal when it
+// dies, not only when someone else tears the connection down.
+//
+// writeLoop used to close the socket and return on a failed write without
+// touching stopWrites. Nothing drains the queue after that, so every producer
+// that reaches writeOrEnqueue -- the publishing connection's readLoop, the QoS
+// retry republish, the will publisher -- blocked as soon as the queue filled,
+// while the connection stayed registered in b.connections. Because the retry
+// republish runs on one goroutine for the whole broker, a single peer that
+// stopped reading could stop retransmission for every client.
+func TestWriteLoop_StopSignalOnOwnWriteFailure(t *testing.T) {
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+	// Closing the peer end makes every Encode on serverConn fail.
+	clientConn.Close()
+
+	cs := &clientState{
+		conn:       serverConn,
+		codec:      protocol.NewCodec(0),
+		out:        make(chan protocol.Packet, 2),
+		stopWrites: make(chan struct{}),
+		syncWrites: make(chan syncWrite),
+	}
+	go cs.writeLoop()
+
+	// One packet is enough: the writer picks it up, fails to encode, and exits.
+	cs.out <- &protocol.PublishPacket{
+		FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish},
+		Topic:       "t",
+		Payload:     []byte("x"),
+	}
+
+	select {
+	case <-cs.stopWrites:
+	case <-time.After(2 * time.Second):
+		t.Fatal("writeLoop died on a failed write without closing stopWrites")
+	}
+
+	// With the signal closed, producers must return instead of blocking on a
+	// queue nobody drains.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 100; i++ {
+			cs.writeOrEnqueue(&protocol.PublishPacket{
+				FixedHeader: protocol.FixedHeader{PacketType: protocol.PacketTypePublish, QoS: 1},
+				Topic:       "t",
+				Payload:     []byte{byte(i)},
+			})
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("writeOrEnqueue blocked forever after the writer goroutine died")
+	}
+}
