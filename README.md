@@ -147,14 +147,37 @@ Measured on AMD Ryzen 7 8845HS / Windows 11 / Go 1.26.1 (`go test -bench . ./tes
 | TopicTree match (exact) | 280 ns | 160 | 2 |
 | Buffer pool Get/Put | 34 ns | 24 | 1 |
 
+### Server Capacity
+
+The table above measures individual functions. This measures a running broker:
+2 vCPU / 4 GB Alibaba Cloud ECS, load generator on a **separate host** over the
+private network (0.12 ms RTT).
+
+| Scenario | Result |
+|---|---|
+| Idle connections | 10,000 at **~25 KB each** (258 MB RSS, 9 threads) |
+| Mixed fleet: 10k online, 10 subscribers, 100 publishers | **193,838 msg/s** delivered, 0.82 of 2 cores, 423 MB |
+| Saturation, 1 KB payload, 4 subscribers | **353,855 msg/s** delivered |
+| Binary size | 11.2 MiB (7.7 MiB with `-tags nometrics`) |
+
+Two qualifiers matter more than the numbers. The 353k run is where the
+**network** gave out, not the broker - CPU sat at 1.37 of 2 cores while pushing
+2.9 Gbps. And 10,000 idle connections is what was measured, not a ceiling: the
+limit is `max_connections` (10,000 by default, configurable).
+
+Method, raw data, and the fan-out knee: [LOAD-TEST-PLAN](docs/benchmarks/LOAD-TEST-PLAN.md),
+[Aliyun baseline](docs/benchmarks/2026-10-17-aliyun-2c4g.md),
+[cross-broker comparison](docs/reports/CROSS-BROKER-COMPARISON-261017-121500.md).
+
+
 Details: [docs/guides/PERFORMANCE.md](docs/guides/PERFORMANCE.md)
 
 ## Testing
 
 | Suite | Count | Status |
 |---|---|---|
-| Unit tests (incl. defect regressions) | 533 | Pass |
-| Integration tests (end-to-end, incl. deploy verification) | 194 | Pass |
+| Unit tests (incl. defect regressions) | 547 | Pass |
+| Integration tests (end-to-end, incl. deploy verification) | 196 | Pass |
 | Benchmarks | 72 | Pass |
 | Race detector | full suite | Clean |
 | Protocol fuzz (2 fuzzers) | 8.4M+ executions | No crashes |
