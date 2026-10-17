@@ -103,6 +103,12 @@ type Broker struct {
 	mu sync.RWMutex
 	// connections maps clientID -> clientState
 	connections map[string]*clientState
+	// pendingConns counts connections that already passed the maxConnections
+	// check but are not registered in connections yet. CONNECT processing is
+	// long -- authentication, session restore, store writes -- and only ends by
+	// inserting into connections, so testing len(connections) alone let a burst
+	// of concurrent CONNECTs pass the limit in any multiple. Guarded by mu.
+	pendingConns int
 
 	// Inbound QoS 2 duplicate detection lives in the session (inboundQoS2),
 	// not in broker-wide maps, so packet-id state travels with the session and

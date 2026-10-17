@@ -475,6 +475,17 @@ func (b *Broker) handleSubscribe(ctx context.Context, clientID string, sess *Ses
 			}
 			aclFilter = realFilter
 			shared = true
+
+			// [MQTT-3.8.3-4]: it is a Protocol Error to set the No Local bit
+			// on a Shared Subscription. Accepting it made No Local silently
+			// ineffective -- AllowsLocalPublish matches the delivered topic
+			// against the stored filter, and "$share/g/a" never matches "a" --
+			// so the subscriber kept receiving its own messages after asking
+			// not to. Tear the connection down as the specification requires.
+			if topic.NoLocal {
+				b.closeProtocolViolation(clientID, sess)
+				return
+			}
 		} else if !protocol.ValidateTopicFilter(topic.Topic) {
 			b.rejectMalformedTopic(clientID, sess, "subscribe")
 			return

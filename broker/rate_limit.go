@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"math"
 	"sync"
 	"time"
 )
@@ -44,8 +45,15 @@ func (r *connRateLimiter) Allow() bool {
 	}
 	r.timestamps = r.timestamps[firstValid:]
 
-	// Check rate limit
-	maxInWindow := int(r.maxRate * r.window.Seconds())
+	// Check rate limit. Round up and keep at least one slot: maxRate is a rate
+	// in connections per second over a window that may be shorter than a
+	// second, so "0.5 per second in a 1s window" truncates to 0 and the
+	// comparison below (len >= 0) rejects every connection -- the setting did
+	// the opposite of what it said.
+	maxInWindow := int(math.Ceil(r.maxRate * r.window.Seconds()))
+	if maxInWindow < 1 {
+		maxInWindow = 1
+	}
 	if len(r.timestamps) >= maxInWindow {
 		return false
 	}

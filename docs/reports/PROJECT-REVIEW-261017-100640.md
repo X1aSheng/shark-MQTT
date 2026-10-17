@@ -182,8 +182,13 @@
 | D4 | P1 | `broker/conn_lifecycle.go:1026` | 会话中重认证收到 AUTH 0x00 (Success) 后, 走 `reason != 0x18 -> gracefulDisconnect`, 把认证成功的活连接断开并发布其遗嘱。规范 §4.12.1 要求成功后连接继续 | 0x18 (Continue) 与 0x00 (Success) 均保持连接, 其余原因码才断开 |
 | D5 | P1 | `broker/conn_lifecycle.go:254` | 从存储恢复持久会话时, 所有 filter 一律走 `TopicTree.Subscribe`, 包括 `$share/g/a`。共享订阅存放在 `sharedSubs` 而非 trie, 被写进 trie 后挂在字面 `$share` 节点下永不匹配真实 topic: 订阅静默失效, 且留下 `UnsubscribeShared` 删不掉的残留 | 恢复时按 `IsSharedSubscription` 分流到 `SubscribeShared` |
 | D6 | P2 | `broker/broker.go`、`server.go`、`options.go` | 文件拆分时注释未随函数体迁移: 7 处重复注释块, 5 处悬空注释。其中 `HandleConnection` 的完整契约 (含 ctx 作用域说明, 本包最关键的注释) 挂到了 `FlappingEnabled` 上; `Addr` 的注释挂在 `Addrs` 上; `WithPluginManager` 的注释挂在 `WithFlappingDetection` 上 | 去重 + 归位, 无行为变更 (5 文件, -78/+40 行) |
+| D11 | P1 | `broker/pub_sub.go:488` | 共享订阅分支未检查 `NoLocal`。No Local 由下游"投递 topic 与已存 filter 匹配"实现, 而共享订阅存的 filter 是 `$share/g/a`, 永不匹配真实 topic `a`, 于是 No Local 静默失效, 订阅方仍收到自己发布的消息。违反 [MQTT-3.8.3-4] (Protocol Error) | 判定为 Protocol Error, 按 `closeProtocolViolation` 送 DISCONNECT 0x82 并拆链 |
+| D12 | P1 | `broker/rate_limit.go:48` | `int(maxRate*window.Seconds())` 在速率小于 1/窗口时截断为 0, 随后 `len(timestamps) >= 0` 恒真, 全部连接被拒 —— 配置项做的事与字面相反 | `math.Ceil` 向上取整并保底 1 个名额 |
+| D18 | P1 | `broker/conn_lifecycle.go:67` | `maxConnections` 只采样 `len(connections)` 便放行, 而真正的注册发生在授权/会话恢复/store 写之后, 并发 CONNECT 突发可超限任意倍 | 新增 `pendingConns` 预留: `reserveConnectionSlot` / `releaseConnectionSlot`, 注册成功才占用名额, 失败路径由 defer 归还 |
 
-修复后复跑: `go build ./...`、`go vet ./...`、`go test ./broker/ ./tests/integration/ ./tests/defects/` 全部通过。
+修复后复跑 (第二轮 D11 / D12 / D18): `go build ./...`、`go vet ./...`、`go test -count=1 ./...` 全部通过 (47 s, 其中 `tests/integration` 34.3 s)。新增回归 6 条: 单测 4 条 (`broker/rate_limit_test.go`), 集成 2 条 (`tests/integration/shared_subscription_test.go`); 因此本轮之后计数为 单测 537 / 集成 196。
+
+三条缺陷均做了破坏性验证 (先让测试在缺陷下变红): D11 去掉 `NoLocal` 判定后返回 `SUBACK` 而非 `DISCONNECT`; D12 去掉向上取整与保底后 `0.5/s` 拒绝第一个连接; D18 的测试锁定新契约 (旧实现仅采样计数, 无法用单测复现超限, 见测试注释)。
 
 ### 5.2 待修复 (P1)
 
@@ -193,14 +198,11 @@
 | D8 | `broker/conn_lifecycle.go:418` | `CreateSession` 已把 Session 放入 Manager 之后, 仍无锁写 `ExpiryInterval` / `ReceiveMax` / `OutboundWindow` / `TopicAliasMax`; 读侧 `CanSendOutbound` 完全无锁 | 重连期间并发投递可读到半初始化窗口 (race detector 可复现) | 待确证 |
 | D9 | `broker/qos_engine.go:459` | 超过 `maxRetries` 时只删引擎自身 inflight, 不同步删 `Session.Inflight`, 也不 `DecOutboundUnacked`; `onError` 回调从未注册 | 半死 TCP 下窗口逐条收紧至零, 后续消息只能进缓冲, 全程无日志无指标 | 待确证 |
 | D10 | `broker/pub_sub.go:337` | `handleRetainedMessage` 持 `b.retainedMu` 调 store (redis 是网络 I/O, badger 是磁盘 I/O); 清理循环同样 | redis 后端的保留消息发布被全局串行化, 延迟等于 Redis RTT | 待确证 |
-| D11 | `broker/pub_sub.go:488` | 共享订阅分支接受 `NoLocal=1` 的订阅选项, 未按 [MQTT-3.8.3-4] 判 Protocol Error | 客户端把 `$share` 过滤器置 NoLocal 后 No Local 实际失效, 会收到自己发布的消息 | 待确证 |
-| D12 | `broker/rate_limit.go:48` | `int(maxRate*window.Seconds())` 在 `maxRate < 1` 时为 0, `len(timestamps) >= 0` 恒真 | 配置小数速率会拒绝全部连接 | 待确证 |
 | D13 | `plugin/manager.go:209`、`eventbus.go:286` | Execute 超时返回后执行 goroutine 仍在, 且每个报文新起一个; 插件忽略 ctx 时永不退出 | 一个阻塞插件可让 goroutine 数随流量线性增长 | 待确证 |
 | D14 | `broker/server.go:583` | WS handler 在 HTTP goroutine 里 `wg.Add(1)`, 与 `Stop()` 的 `wg.Wait()` 并发 | 握手恰好与 Stop 并发时触发 `sync: WaitGroup misuse` panic | 待确证 |
 | D15 | `broker/qos_outbound.go:206` | `republish` 在 `sess.Inflight` 找不到条目时落入 PUBREC 分支 | 重试回调与 ack 竞争时向客户端发出未曾对应 PUBLISH 的 PUBREC | 待确证 |
 | D16 | `broker/lifecycle.go:325` | `Stop()` 先把 `b.connections` 整体摘除再关 socket, 各 readLoop 的 `disconnect()` 在身份校验处提前 return | Stop -> Start 后 session map 与 topic tree 残留旧订阅, `Clients()` 误报在线 | 待确证 |
 | D17 | `broker/conn_lifecycle.go:751` | `disconnect` 在连接身份校验之前就按 clientID 执行 Save/Delete/ClearMessages | 同 ID 接管后, 旧连接迟到的拆除会删掉新会话的持久记录 | 待确证 |
-| D18 | `broker/conn_lifecycle.go:38` | `maxConnections` 检查与 map 写入之间无预留 | 突发并发 CONNECT 可超限任意倍 | 待确证 |
 
 ### 5.3 文档缺陷
 

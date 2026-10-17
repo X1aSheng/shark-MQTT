@@ -18,6 +18,36 @@ import (
 	"github.com/X1aSheng/shark-mqtt/store"
 )
 
+// reserveConnectionSlot reserves one connection slot against maxConnections.
+//
+// A limit of zero or less means unlimited: nothing is reserved, and
+// releaseConnectionSlot is then a no-op as well.
+func (b *Broker) reserveConnectionSlot() bool {
+	if b.opts.maxConnections <= 0 {
+		return true
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.connections)+b.pendingConns >= b.opts.maxConnections {
+		return false
+	}
+	b.pendingConns++
+	return true
+}
+
+// releaseConnectionSlot gives back an unused reservation. It is safe to call
+// after the connection was registered: registration consumes the reservation.
+func (b *Broker) releaseConnectionSlot() {
+	if b.opts.maxConnections <= 0 {
+		return
+	}
+	b.mu.Lock()
+	if b.pendingConns > 0 {
+		b.pendingConns--
+	}
+	b.mu.Unlock()
+}
+
 // connAckForConnectRejection maps a ValidateConnect failure to the CONNACK
 // return/reason code. MQTT 5.0 uses 0x82 Protocol Error; MQTT 3.1.1 uses the
 // 0x01 Unacceptable Protocol Version code; MQTT 3.1 reports a ClientID rule
@@ -63,17 +93,22 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 	conn := c.Raw
 	codec := c.Codec
 
-	// Check connection limit
-	if b.opts.maxConnections > 0 {
-		b.mu.RLock()
-		count := len(b.connections)
-		b.mu.RUnlock()
-		if count >= b.opts.maxConnections {
-			b.metrics.IncRejections("max_connections")
-			_ = conn.Close()
-			return fmt.Errorf("broker: max connections (%d) reached", b.opts.maxConnections)
-		}
+	// Check connection limit. The slot is reserved, not just sampled: the rest
+	// of CONNECT (authorization, session restore, store writes) takes long
+	// enough that a concurrent burst would otherwise all see the same count and
+	// all be admitted. The reservation is released below unless the connection
+	// actually reaches the registry.
+	if !b.reserveConnectionSlot() {
+		b.metrics.IncRejections("max_connections")
+		_ = conn.Close()
+		return fmt.Errorf("broker: max connections (%d) reached", b.opts.maxConnections)
 	}
+	registered := false
+	defer func() {
+		if !registered {
+			b.releaseConnectionSlot()
+		}
+	}()
 
 	// Check connection rate limit
 	if b.opts.maxConnRate > 0 {
@@ -548,6 +583,9 @@ func (b *Broker) HandleConnection(ctx context.Context, c *Conn) error {
 	b.connections[clientID] = cs
 	online := len(b.connections)
 	b.mu.Unlock()
+	// The reservation made at the top of HandleConnection is now spent: this
+	// connection is counted by len(b.connections) from here on.
+	registered = true
 	go cs.writeLoop()
 	b.metrics.SetOnlineSessions(online)
 
