@@ -33,10 +33,6 @@ so a result without it cannot be compared against another run.
 | `Q1_sub200_5k.json` | 200 | 10 | 0 | 5,000 | 128 B | same-host, upstream-shaped |
 | `R1_1sub_100mbit.json` | 1 | 8 | 0 | 20,000 | 256 B | cross-host, 100 Mbps link |
 | `R2_8sub_100mbit.json` | 8 | 8 | 0 | 5,000 | 256 B | cross-host, 100 Mbps link |
-| `P1_sub200.json` | 200 | 10 | 0 | 1,000 | 128 B | same-host, upstream-shaped |
-| `P2_sub2000.json` | 2000 | 10 | 0 | 1,000 | 128 B | same-host, upstream-shaped |
-| `P3_sub2000_5k.json` | 2000 | 10 | 0 | 5,000 | 128 B | same-host, upstream-shaped |
-| `Q1_sub200_5k.json` | 200 | 10 | 0 | 5,000 | 128 B | same-host, upstream-shaped |
 
 "pinned 4/4" means the broker ran on cores 0-3 and the load generator on 4-7.
 "pinned 6/2" means the broker got six cores and the generator two, which turned
@@ -60,10 +56,12 @@ publishes (128-byte payload, 2000 connections, QoS 0). Their interpretation,
 including why the upstream headline figure could not be matched, is in
 [`../2026-10-15-upstream-comparison.md`](../2026-10-15-upstream-comparison.md).
 
-The `P*` and `Q*` files reproduce the scenario shape upstream smart-mqtt
-publishes (128-byte payload, 2000 connections, QoS 0). Their interpretation,
-including why the upstream headline figure could not be matched, is in
-[`../2026-10-15-upstream-comparison.md`](../2026-10-15-upstream-comparison.md).
+`cross-host/L_*` files are the completed 2-hour soak on the 2 vCPU / 4 GB
+Aliyun pair (2026-10-18): the loadgen JSON plus 60 s RSS samplers on both
+hosts. `L_broker_rss.txt` columns are unix time, RSS kB, VmHWM kB, threads,
+CPU jiffies; the `dead` marker in `L_loadgen_rss.txt` means the sampler saw
+the generator exit normally after writing its JSON. Interpretation is in
+[`../2026-10-17-aliyun-2c4g.md`](../2026-10-17-aliyun-2c4g.md), section L.
 
 Findings and interpretation are in
 [`../2026-10-15-server-baseline.md`](../2026-10-15-server-baseline.md).

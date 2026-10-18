@@ -158,11 +158,13 @@ private network (0.12 ms RTT).
 | Idle connections | 10,000 at **~25 KB each** (258 MB RSS, 9 threads) |
 | Mixed fleet: 10k online, 10 subscribers, 100 publishers | **193,838 msg/s** delivered, 0.82 of 2 cores, 423 MB |
 | Saturation, 1 KB payload, 4 subscribers | **353,855 msg/s** delivered |
-| 30-minute soak, mixed QoS and payloads | **360M messages, 0 errors**, RSS 109.8 -> 112.0 MB (+2%) |
+| 2-hour soak, mixed QoS and payloads | **1.44B messages delivered, 0 errors**, RSS peak 110.1 MB, back to 22.5 MB after load |
 | Binary size | 11.2 MiB (7.7 MiB with `-tags nometrics`) |
 
-The soak line is the one that answers "does it leak". Half an hour, 360 million
-messages, and resident memory moved 2 MB with the thread count never leaving 9.
+The soak line is the one that answers "does it leak". Two hours, 1.44 billion
+delivered messages, and the RSS peak stayed at the same 110-112 MB level the
+30-minute and 9-hour runs showed - then returned to the idle 22.5 MB once every
+client disconnected.
 
 Two qualifiers matter more than the numbers. The 353k run is where the
 **network** gave out, not the broker - CPU sat at 1.37 of 2 cores while pushing
